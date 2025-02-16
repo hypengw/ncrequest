@@ -8,8 +8,8 @@
 
 #include "curl_error.h"
 #include "curl_easy.h"
-#include "request/session.h"
-#include "request/http_header.h"
+#include "ncrequest/session.h"
+#include "ncrequest/http_header.h"
 
 #include "core/str_helper.h"
 

@@ -6,7 +6,7 @@
 #include <optional>
 
 #include "core/type_list.h"
-#include "request/session_share.h"
+#include "ncrequest/session_share.h"
 
 namespace request
 {

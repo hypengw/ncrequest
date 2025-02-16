@@ -8,7 +8,7 @@
 #include "core/core.h"
 #include "core/variant_helper.h"
 
-#include "request/uri.h"
+#include "ncrequest/uri.h"
 
 namespace request
 {

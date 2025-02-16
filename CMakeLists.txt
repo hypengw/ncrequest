@@ -35,12 +35,12 @@ endif()
 add_library(
   ncrequest STATIC
 
-  include/request/request.h
-  include/request/response.h
-  include/request/response_p.h
-  include/request/session.h
-  include/request/session_p.h
-  include/request/type.h
+  include/ncrequest/request.h
+  include/ncrequest/response.h
+  include/ncrequest/response_p.h
+  include/ncrequest/session.h
+  include/ncrequest/session_p.h
+  include/ncrequest/type.h
 
   src/peg/uri.h
   src/peg/http.h
@@ -60,7 +60,7 @@ add_library(ncrequest::ncrequest ALIAS ncrequest)
 target_include_directories(
   ncrequest 
   PUBLIC include
-  PRIVATE include/request .)
+  PRIVATE include/ncrequest .)
 
 if(PROJECT_IS_TOP_LEVEL)
 install(

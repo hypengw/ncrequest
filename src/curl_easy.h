@@ -9,7 +9,7 @@
 
 #include "core/core.h"
 #include "core/fmt.h"
-#include "request/type.h"
+#include "ncrequest/type.h"
 
 namespace request
 {

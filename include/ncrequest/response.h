@@ -20,8 +20,8 @@
 #include "core/variant_helper.h"
 #include "core/expected_helper.h"
 
-#include "request/request.h"
-#include "request/http_header.h"
+#include "ncrequest/request.h"
+#include "ncrequest/http_header.h"
 
 namespace request
 {

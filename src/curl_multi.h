@@ -17,7 +17,7 @@
 #include "curl_error.h"
 
 #include "core/core.h"
-#include "request/response.h"
+#include "ncrequest/response.h"
 
 namespace request
 {

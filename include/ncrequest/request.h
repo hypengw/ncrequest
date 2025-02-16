@@ -3,8 +3,8 @@
 #include <string_view>
 
 #include "core/core.h"
-#include "request/type.h"
-#include "request/request_opt.h"
+#include "ncrequest/type.h"
+#include "ncrequest/request_opt.h"
 
 namespace request
 {

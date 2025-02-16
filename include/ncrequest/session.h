@@ -10,8 +10,8 @@
 #include <asio/strand.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
-#include "request/type.h"
-#include "request/request_opt.h"
+#include "ncrequest/type.h"
+#include "ncrequest/request_opt.h"
 
 #include "core/core.h"
 #include "core/expected_helper.h"

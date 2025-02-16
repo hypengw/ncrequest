@@ -1,8 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include "request/response.h"
-#include "request/session.h"
+#include "ncrequest/response.h"
+#include "ncrequest/session.h"
 
 namespace request
 {
