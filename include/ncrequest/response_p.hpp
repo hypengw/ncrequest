@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <asio/streambuf.hpp>
 
 #include "ncrequest/response.hpp"

@@ -2,6 +2,7 @@
 
 #include <string_view>
 
+#include "ncrequest/uri.hpp"
 #include "ncrequest/type.hpp"
 #include "ncrequest/request_opt.hpp"
 #include "ncrequest/type_list.hpp"
