@@ -5,6 +5,15 @@
 namespace ncrequest::helper
 {
 
+template<typename T, typename... Args>
+auto make_up(Args&&... args) {
+    return std::make_unique<T>(std::forward<Args>(args)...);
+}
+template<typename T, typename... Args>
+auto make_rc(Args&&... args) {
+    return std::make_shared<T>(std::forward<Args>(args)...);
+}
+
 template<class... Ts>
 struct overloaded : Ts... {
     using Ts::operator()...;

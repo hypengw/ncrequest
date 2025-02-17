@@ -38,15 +38,6 @@ using weak = std::weak_ptr<T>;
 template<typename T, typename D = std::default_delete<T>>
 using up = std::unique_ptr<T, D>;
 
-template<typename T, typename... Args>
-auto make_up(Args&&... args) {
-    return std::make_unique<T>(std::forward<Args>(args)...);
-}
-template<typename T, typename... Args>
-auto make_rc(Args&&... args) {
-    return std::make_shared<T>(std::forward<Args>(args)...);
-}
-
 struct NoCopy {
 protected:
     NoCopy()  = default;
