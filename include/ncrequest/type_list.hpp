@@ -1,6 +1,5 @@
 #pragma once
 
-#include <numeric>
 #include <utility>
 #include <type_traits>
 

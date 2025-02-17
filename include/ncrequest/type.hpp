@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <memory>
 
-#include "ncrequest/uri.hpp"
-
 namespace ncrequest
 {
 
