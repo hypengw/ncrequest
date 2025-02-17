@@ -5,18 +5,18 @@
 
 #include <iostream>
 
-#include "session.h"
-#include "session_p.h"
+#include "session.hpp"
+#include "session_p.hpp"
 
-#include "request.h"
-#include "request_p.h"
+#include "request.hpp"
+#include "request_p.hpp"
 
-#include "response.h"
-#include "response_p.h"
+#include "response.hpp"
+#include "response_p.hpp"
 
-#include "curl_multi.h"
-#include "connection.h"
-#include "log.h"
+#include "curl_multi.hpp"
+#include "connection.hpp"
+#include "log.hpp"
 
 using namespace ncrequest;
 

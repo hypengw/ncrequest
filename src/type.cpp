@@ -1,8 +1,8 @@
-#include "type.h"
+#include "type.hpp"
 
 #include <curl/curl.h>
 #include <fmt/core.h>
-#include "ncrequest/helper.h"
+#include "ncrequest/helper.hpp"
 
 using namespace ncrequest;
 

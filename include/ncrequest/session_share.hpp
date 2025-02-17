@@ -1,6 +1,6 @@
 #pragma once
 #include <filesystem>
-#include "ncrequest/type.h"
+#include "ncrequest/type.hpp"
 
 namespace ncrequest
 {

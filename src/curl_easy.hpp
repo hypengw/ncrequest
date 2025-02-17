@@ -4,7 +4,7 @@
 
 #include <curl/curl.h>
 
-#include "ncrequest/type.h"
+#include "ncrequest/type.hpp"
 
 namespace ncrequest
 {

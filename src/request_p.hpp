@@ -1,7 +1,7 @@
 #pragma once
 
-#include "request.h"
-#include "macro.h"
+#include "request.hpp"
+#include "macro.hpp"
 
 namespace ncrequest
 {

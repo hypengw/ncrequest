@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "ncrequest/uri.h"
+#include "ncrequest/uri.hpp"
 
 namespace ncrequest
 {

@@ -1,17 +1,17 @@
-#include "request.h"
-#include "request_p.h"
+#include "request.hpp"
+#include "request_p.hpp"
 
 #include <iostream>
 #include <fmt/core.h>
 
-#include "session.h"
-#include "session_p.h"
+#include "session.hpp"
+#include "session_p.hpp"
 
-#include "response.h"
-#include "curl_multi.h"
-#include "curl_easy.h"
+#include "response.hpp"
+#include "curl_multi.hpp"
+#include "curl_easy.hpp"
 
-#include "ncrequest/type_list.h"
+#include "ncrequest/type_list.hpp"
 
 using namespace ncrequest;
 

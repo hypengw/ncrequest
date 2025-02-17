@@ -16,11 +16,11 @@
 #include <asio/bind_executor.hpp>
 #include <asio/streambuf.hpp>
 
-#include "ncrequest/type.h"
-#include "ncrequest/helper.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/helper.hpp"
 
-#include "ncrequest/request.h"
-#include "ncrequest/http_header.h"
+#include "ncrequest/request.hpp"
+#include "ncrequest/http_header.hpp"
 
 namespace ncrequest
 {

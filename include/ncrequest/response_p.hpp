@@ -3,8 +3,8 @@
 #include <atomic>
 #include <asio/streambuf.hpp>
 
-#include "ncrequest/response.h"
-#include "ncrequest/session.h"
+#include "ncrequest/response.hpp"
+#include "ncrequest/session.hpp"
 
 namespace ncrequest
 {
