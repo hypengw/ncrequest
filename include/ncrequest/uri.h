@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-namespace request
+namespace ncrequest
 {
 
 class URI {
@@ -32,4 +32,4 @@ private:
     std::string m_holder;
 };
 
-} // namespace request
+} // namespace ncrequest

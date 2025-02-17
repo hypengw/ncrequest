@@ -1,8 +1,11 @@
 #include "ncrequest/session_share.h"
-#include "curl_easy.h"
+
 #include <mutex>
 
-namespace request
+#include "curl_easy.h"
+#include "macro.h"
+
+namespace ncrequest
 {
 
 class SessionShare::Private {
@@ -62,4 +65,4 @@ void SessionShare::save(const std::filesystem::path& p) const {
     // save when x destruct
 }
 
-} // namespace request
+} // namespace ncrequest

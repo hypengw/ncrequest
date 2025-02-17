@@ -2,8 +2,6 @@
 
 #include <fmt/core.h>
 #include <cstdio>
-#include <asio_helper/helper.h>
-#include "core/str_helper.h"
 
 #include "response_p.h"
 #include "request_p.h"
@@ -16,7 +14,7 @@
 
 #include <assert.h>
 
-using namespace request;
+using namespace ncrequest;
 
 namespace
 {
@@ -59,11 +57,10 @@ void apply_easy_request(Response::Private* rsp, CurlEasy& easy, const Request& r
 template<Attribute A, CURLINFO Info = to_curl_info(A)>
 attr_value attr_from_easy(CurlEasy& easy) {
     auto res = easy.template get_info<attr_type<A>>(Info);
-    return res
-        .map([](auto a) {
-            return attr_value(a);
-        })
-        .value_or(attr_value { std::monostate {} });
+    return std::visit(helper::overloaded { [](auto a) {
+                          return attr_value(a);
+                      } },
+                      res);
 }
 
 } // namespace

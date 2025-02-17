@@ -16,13 +16,13 @@
 #include "curl_easy.h"
 #include "curl_error.h"
 
-#include "core/core.h"
+#include "ncrequest/type.h"
 #include "ncrequest/response.h"
 
-namespace request
+namespace ncrequest
 {
 
-class CurlMulti : NoCopy {
+class CurlMulti : public NoCopy {
 public:
     struct InfoMsg {
         CURLMSG  msg;
@@ -91,13 +91,13 @@ public:
 
         x.setopt(CURLOPT_SHARE, m_share);
         auto list_ = x.get_info<curl_slist*>(CURLINFO_COOKIELIST);
-        if (list_) {
-            auto list = *list_;
+        if (auto plist = std::get_if<curl_slist*>(&list_)) {
+            auto list = *plist;
             while (list) {
                 out.emplace_back(list->data);
                 list = list->next;
             }
-            curl_slist_free_all(*list_);
+            curl_slist_free_all(*plist);
         }
         return out;
     }
@@ -139,4 +139,4 @@ private:
 
     std::mutex m_share_mutex;
 };
-} // namespace request
+} // namespace ncrequest

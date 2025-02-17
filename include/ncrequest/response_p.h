@@ -1,17 +1,23 @@
 #pragma once
 
 #include <atomic>
+#include <asio/streambuf.hpp>
+
 #include "ncrequest/response.h"
 #include "ncrequest/session.h"
 
-namespace request
+namespace ncrequest
 {
 
 class Connection;
 class Response::Private {
 public:
     Private(Response*, const Request&, Operation, rc<Session>) noexcept;
-    C_DECLARE_PUBLIC(Response, m_q)
+
+    inline Response*       q_func() { return static_cast<Response*>(m_q); }
+    inline const Response* q_func() const { return static_cast<const Response*>(m_q); }
+    friend class Response;
+
     void set_share(const std::optional<SessionShare>& share) { m_share = share; }
 
 private:
@@ -28,4 +34,4 @@ private:
     std::pmr::polymorphic_allocator<char> m_allocator;
 };
 
-} // namespace request
+} // namespace ncrequest

@@ -12,7 +12,7 @@ template<>
 struct is_error_code_enum<CURLcode> : true_type {};
 } // namespace std
 
-namespace request
+namespace ncrequest
 {
 class CURLMEcategory : public std::error_category {
 public:
@@ -41,17 +41,17 @@ public:
 };
 
 const CURLEcategory theCURLEcategory {};
-} // namespace request
+} // namespace ncrequest
 
 inline std::error_code make_error_code(CURLMcode code) {
     return {
         static_cast<int>(code),
-        request::theCURLMEcategory,
+        ncrequest::theCURLMEcategory,
     };
 }
 inline std::error_code make_error_code(CURLcode code) {
     return {
         static_cast<int>(code),
-        request::theCURLEcategory,
+        ncrequest::theCURLEcategory,
     };
 }

@@ -3,10 +3,10 @@
 #include <set>
 #include <memory_resource>
 
-#include "core/core.h"
+#include "ncrequest/type.h"
 #include "ncrequest/session.h"
 
-namespace request
+namespace ncrequest
 {
 
 class Connection;
@@ -45,4 +45,4 @@ private:
     std::pmr::synchronized_pool_resource m_memory;
 };
 
-} // namespace request
+} // namespace ncrequest

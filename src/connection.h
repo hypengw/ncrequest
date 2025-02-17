@@ -8,12 +8,12 @@
 
 #include "curl_error.h"
 #include "curl_easy.h"
+#include "log.h"
 #include "ncrequest/session.h"
+#include "ncrequest/helper.h"
 #include "ncrequest/http_header.h"
 
-#include "core/str_helper.h"
-
-namespace request
+namespace ncrequest
 {
 class Session;
 class Connection : public std::enable_shared_from_this<Connection> {
@@ -354,4 +354,4 @@ private:
     asio::any_completion_handler<void(asio::error_code)> m_write_some_handler;
 };
 
-} // namespace request
+} // namespace ncrequest
