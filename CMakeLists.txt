@@ -32,6 +32,7 @@ if(NOT pegtl_FOUND)
   FetchContent_MakeAvailable(pegtl)
 endif()
 # asio
+if(NOT TARGET asio)
 add_library(asio INTERFACE)
 target_compile_definitions(asio INTERFACE ASIO_NO_DEPRECATED)
 pkg_check_modules(ASIO QUIET asio>=1.30.2)
@@ -47,6 +48,7 @@ if(NOT ASIO_FOUND)
   target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
 else()
   target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIRS})
+endif()
 endif()
 
 add_library(
