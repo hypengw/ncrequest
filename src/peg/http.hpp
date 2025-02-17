@@ -2,7 +2,7 @@
 
 #include <tao/pegtl/ascii.hpp>
 #include <tao/pegtl/contrib/remove_first_state.hpp>
-#include "peg/uri.h"
+#include "peg/uri.hpp"
 
 // https://datatracker.ietf.org/doc/html/rfc7230
 namespace grammer_http

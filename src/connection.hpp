@@ -6,12 +6,12 @@
 #include <asio/any_completion_handler.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
-#include "curl_error.h"
-#include "curl_easy.h"
-#include "log.h"
-#include "ncrequest/session.h"
-#include "ncrequest/helper.h"
-#include "ncrequest/http_header.h"
+#include "curl_error.hpp"
+#include "curl_easy.hpp"
+#include "log.hpp"
+#include "ncrequest/session.hpp"
+#include "ncrequest/helper.hpp"
+#include "ncrequest/http_header.hpp"
 
 namespace ncrequest
 {

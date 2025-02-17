@@ -5,9 +5,9 @@
 #include <functional>
 #include <optional>
 
-#include "ncrequest/type.h"
-#include "ncrequest/type_list.h"
-#include "ncrequest/session_share.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/type_list.hpp"
+#include "ncrequest/session_share.hpp"
 
 namespace ncrequest
 {

@@ -54,24 +54,26 @@ endif()
 add_library(
   ncrequest STATIC
 
-  include/ncrequest/request.h
-  include/ncrequest/response.h
-  include/ncrequest/response_p.h
-  include/ncrequest/session.h
-  include/ncrequest/session_p.h
-  include/ncrequest/type.h
+  include/ncrequest/request.hpp
+  include/ncrequest/response.hpp
+  include/ncrequest/response_p.hpp
+  include/ncrequest/session.hpp
+  include/ncrequest/session_p.hpp
+  include/ncrequest/type.hpp
+  include/ncrequest/type_list.hpp
+  include/ncrequest/uri.hpp
 
-  src/peg/uri.h
-  src/peg/http.h
-  src/connection.h
-  src/request_p.h
+  src/peg/uri.hpp
+  src/peg/http.hpp
+  src/connection.hpp
+  src/request_p.hpp
   src/request.cpp
   src/response.cpp
   src/session.cpp
   src/session_share.cpp
-  src/curl_easy.h
-  src/curl_multi.h
-  src/curl_error.h
+  src/curl_easy.hpp
+  src/curl_multi.hpp
+  src/curl_error.hpp
   src/type.cpp
   src/peg.cpp)
 add_library(ncrequest::ncrequest ALIAS ncrequest)

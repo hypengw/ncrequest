@@ -2,9 +2,9 @@
 
 #include <string_view>
 
-#include "ncrequest/type.h"
-#include "ncrequest/request_opt.h"
-#include "ncrequest/type_list.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/request_opt.hpp"
+#include "ncrequest/type_list.hpp"
 
 namespace ncrequest
 {

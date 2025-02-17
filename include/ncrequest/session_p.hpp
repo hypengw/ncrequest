@@ -3,8 +3,8 @@
 #include <set>
 #include <memory_resource>
 
-#include "ncrequest/type.h"
-#include "ncrequest/session.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/session.hpp"
 
 namespace ncrequest
 {

@@ -1,13 +1,13 @@
-#include "uri.h"
-#include "http_header.h"
+#include "uri.hpp"
+#include "http_header.hpp"
 
 #include <charconv>
 #include <algorithm>
 
-#include "ncrequest/type.h"
-#include "ncrequest/helper.h"
-#include "peg/uri.h"
-#include "peg/http.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/helper.hpp"
+#include "peg/uri.hpp"
+#include "peg/http.hpp"
 
 namespace pegtl = tao::pegtl;
 

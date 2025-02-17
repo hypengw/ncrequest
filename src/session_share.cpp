@@ -1,9 +1,9 @@
-#include "ncrequest/session_share.h"
+#include "ncrequest/session_share.hpp"
 
 #include <mutex>
 
-#include "curl_easy.h"
-#include "macro.h"
+#include "curl_easy.hpp"
+#include "macro.hpp"
 
 namespace ncrequest
 {

@@ -1,16 +1,16 @@
-#include "response.h"
+#include "response.hpp"
 
 #include <fmt/core.h>
 #include <cstdio>
 
-#include "response_p.h"
-#include "request_p.h"
-#include "session.h"
+#include "response_p.hpp"
+#include "request_p.hpp"
+#include "session.hpp"
 
-#include "connection.h"
+#include "connection.hpp"
 
-#include "curl_easy.h"
-#include "curl_error.h"
+#include "curl_easy.hpp"
+#include "curl_error.hpp"
 
 #include <assert.h>
 

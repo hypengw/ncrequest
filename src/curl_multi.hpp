@@ -13,11 +13,11 @@
 #include <asio/experimental/channel.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
-#include "curl_easy.h"
-#include "curl_error.h"
+#include "curl_easy.hpp"
+#include "curl_error.hpp"
 
-#include "ncrequest/type.h"
-#include "ncrequest/response.h"
+#include "ncrequest/type.hpp"
+#include "ncrequest/response.hpp"
 
 namespace ncrequest
 {
