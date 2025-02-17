@@ -3,6 +3,7 @@
 #include <string>
 #include <functional>
 #include <iostream>
+#include <limits>
 
 #include <asio/any_completion_handler.hpp>
 #include <asio/dispatch.hpp>
@@ -12,18 +13,16 @@
 #include <asio/strand.hpp>
 #include <asio/thread_pool.hpp>
 #include <asio/associated_executor.hpp>
+#include <asio/bind_executor.hpp>
+#include <asio/streambuf.hpp>
 
-#include "asio_helper/helper.h"
-
-#include "core/core.h"
-#include "core/callable.h"
-#include "core/variant_helper.h"
-#include "core/expected_helper.h"
+#include "ncrequest/type.h"
+#include "ncrequest/helper.h"
 
 #include "ncrequest/request.h"
 #include "ncrequest/http_header.h"
 
-namespace request
+namespace ncrequest
 {
 
 class Session;
@@ -42,7 +41,11 @@ public:
 
     template<Attribute A, typename T = attr_type<A>>
     auto attribute(void) const -> std::optional<T> {
-        return helper::to_optional<T>(attribute(A));
+        auto a = attribute(A);
+        if (a.index() == 0) {
+            return std::nullopt;
+        }
+        return std::get<T>(a);
     }
 
     auto attribute(Attribute) const -> attr_value;
@@ -126,7 +129,9 @@ private:
     auto connection() const -> const Connection&;
 
 private:
-    C_DECLARE_PRIVATE(Response, m_d)
+    up<Private>           m_d;
+    inline Private*       d_func() { return m_d.get(); }
+    inline const Private* d_func() const { return m_d.get(); }
 };
 
-} // namespace request
+} // namespace ncrequest

@@ -2,6 +2,7 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/bind_cancellation_slot.hpp>
+
 #include <iostream>
 
 #include "session.h"
@@ -14,10 +15,10 @@
 #include "response_p.h"
 
 #include "curl_multi.h"
-
 #include "connection.h"
+#include "log.h"
 
-using namespace request;
+using namespace ncrequest;
 
 constexpr static auto POLL_TIMEOUT { std::chrono::milliseconds(1000) };
 namespace sm = session_message;
@@ -29,13 +30,13 @@ template<typename T>
 T get_curl_private(CURL* c) {
     T        easy { nullptr };
     CURLcode rc = curl_easy_getinfo(c, CURLINFO_PRIVATE, &easy);
-    _assert_(! rc);
+    assert(! rc);
     return easy;
 }
 
 } // namespace
 
-Session::Session(executor_type ex): m_p(std::make_unique<Private>(*this, ex)) {
+Session::Session(executor_type ex): m_d(std::make_unique<Private>(*this, ex)) {
     C_D(Session);
     asio::dispatch(d->m_poll_thread.get_executor(), [this, d]() {
         auto self = get_rc();
@@ -123,8 +124,8 @@ auto Session::post(const Request& req) -> asio::awaitable<std::optional<rc<Respo
     co_return std::nullopt;
 }
 
-auto Session::post(const Request&     req,
-                   asio::const_buffer buf) -> asio::awaitable<std::optional<rc<Response>>> {
+auto Session::post(const Request& req, asio::const_buffer buf)
+    -> asio::awaitable<std::optional<rc<Response>>> {
     C_D(Session);
     rc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
@@ -246,7 +247,7 @@ auto Session::Private::run() -> asio::awaitable<void> {
 
 void Session::Private::handle_message(const SessionMessage& msg) {
     namespace sm = session_message;
-    std::visit(overloaded { [this](sm::Stop) {
+    std::visit(helper::overloaded { [this](sm::Stop) {
                                m_stopped = true;
                                while (m_connect_set.size()) {
                                    auto& con = *m_connect_set.begin();

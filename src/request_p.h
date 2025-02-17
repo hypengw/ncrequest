@@ -1,8 +1,9 @@
 #pragma once
 
 #include "request.h"
+#include "macro.h"
 
-namespace request
+namespace ncrequest
 {
 
 class Request::Private {
@@ -18,4 +19,4 @@ private:
 
     RequestOpts::to<std::tuple> m_opts;
 };
-} // namespace request
+} // namespace ncrequest

@@ -5,9 +5,9 @@
 #include <vector>
 #include <optional>
 
-#include "core/core.h"
+#include "ncrequest/type.h"
 
-namespace request
+namespace ncrequest
 {
 
 struct HttpHeader {
@@ -36,4 +36,4 @@ struct HttpHeader {
     static auto parse_field_line(std::string_view) -> Field;
 };
 
-} // namespace request
+} // namespace ncrequest

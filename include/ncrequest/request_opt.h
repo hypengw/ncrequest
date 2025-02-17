@@ -5,10 +5,11 @@
 #include <functional>
 #include <optional>
 
-#include "core/type_list.h"
+#include "ncrequest/type.h"
+#include "ncrequest/type_list.h"
 #include "ncrequest/session_share.h"
 
-namespace request
+namespace ncrequest
 {
 namespace req_opt
 {
@@ -61,11 +62,11 @@ struct Share {
 
 #undef REQ_OPT_PROP
 
-using opts = ycore::type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
+using opts = ncrequest::type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 
 } // namespace req_opt
 
 using RequestOpts = req_opt::opts;
 using RequestOpt  = RequestOpts::to<std::variant>;
 
-} // namespace request
+} // namespace ncrequest

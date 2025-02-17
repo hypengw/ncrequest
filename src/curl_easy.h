@@ -1,17 +1,12 @@
 #pragma once
 
-#include <functional>
-#include <string_view>
-#include <optional>
+#include <format>
 
-#include <tl/expected.hpp>
 #include <curl/curl.h>
 
-#include "core/core.h"
-#include "core/fmt.h"
 #include "ncrequest/type.h"
 
-namespace request
+namespace ncrequest
 {
 constexpr CURLINFO to_curl_info(Attribute A) noexcept {
     switch (A) {
@@ -58,10 +53,10 @@ public:
     }
 
     template<typename T>
-    inline auto get_info(CURLINFO info) noexcept -> nstd::expected<T, CURLcode> {
+    inline auto get_info(CURLINFO info) noexcept -> std::variant<T, CURLcode> {
         T inst;
         if (auto res = curl_easy_getinfo(handle(), info, &inst)) {
-            return nstd::unexpected(res);
+            return res;
         }
         return inst;
     }
@@ -86,7 +81,7 @@ public:
     void set_header(const Header& headers) {
         reset_header();
         for (auto& [k, v] : headers) {
-            std::string header = fmt::format("{}: {}", k, v);
+            std::string header = std::format("{}: {}", k, v);
             m_headers          = curl_slist_append(m_headers, header.c_str());
         }
         if (m_headers != NULL) setopt<CURLOPT_HTTPHEADER>(m_headers);
@@ -107,8 +102,8 @@ private:
 };
 
 template<>
-inline auto
-CurlEasy::setopt<CURLoption::CURLOPT_SHARE, CURLSH*>(CURLSH* para) noexcept -> CURLcode {
+inline auto CurlEasy::setopt<CURLoption::CURLOPT_SHARE, CURLSH*>(CURLSH* para) noexcept
+    -> CURLcode {
     auto code = curl_easy_setopt(handle(), CURLoption::CURLOPT_SHARE, para);
     m_share   = para;
     return code;
@@ -118,4 +113,4 @@ template<>
 inline auto CurlEasy::getopt<CURLoption::CURLOPT_SHARE>() noexcept -> CURLSH* {
     return m_share;
 }
-} // namespace request
+} // namespace ncrequest

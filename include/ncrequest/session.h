@@ -13,10 +13,7 @@
 #include "ncrequest/type.h"
 #include "ncrequest/request_opt.h"
 
-#include "core/core.h"
-#include "core/expected_helper.h"
-
-namespace request
+namespace ncrequest
 {
 
 class Request;
@@ -59,7 +56,9 @@ private:
     auto perform(rc<Response>&) -> asio::awaitable<bool>;
     auto prepare_req(const Request&) const -> Request;
 
-    C_DECLARE_PRIVATE(Session, m_p)
+    up<Private>           m_d;
+    inline Private*       d_func() { return m_d.get(); }
+    inline const Private* d_func() const { return m_d.get(); }
 };
 
-} // namespace request
+} // namespace ncrequest

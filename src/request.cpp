@@ -11,12 +11,11 @@
 #include "curl_multi.h"
 #include "curl_easy.h"
 
-#include "core/type_list.h"
-#include "core/variant_helper.h"
+#include "ncrequest/type_list.h"
 
-using namespace request;
+using namespace ncrequest;
 
-std::error_code request::global_init() {
+std::error_code ncrequest::global_init() {
     return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
 }
 
@@ -111,7 +110,7 @@ void Request::set_opt(const RequestOpt& opt) {
     C_D(Request);
 
     std::get<req_opt::Proxy>(d->m_opts);
-    std::visit(overloaded { [d](const auto& t) {
+    std::visit(helper::overloaded { [d](const auto& t) {
                    std::get<std::decay_t<decltype(t)>>(d->m_opts) = t;
                } },
                opt);

@@ -2,18 +2,16 @@
 #include "http_header.h"
 
 #include <charconv>
+#include <algorithm>
 
-#include "core/core.h"
+#include "ncrequest/type.h"
+#include "ncrequest/helper.h"
 #include "peg/uri.h"
 #include "peg/http.h"
 
-#include "core/log.h"
-#include "core/variant_helper.h"
-#include "core/str_helper.h"
-
 namespace pegtl = tao::pegtl;
 
-namespace request
+namespace ncrequest
 {
 
 namespace uri_rule
@@ -62,11 +60,11 @@ void reset(URI& uri) {
 template<typename Rule>
 struct control : pegtl::normal<Rule> {
     static constexpr bool enable = pegtl::internal::enable_control<Rule> ||
-                                   ycore::is_specialization_of_v<Rule, pegtl::internal::seq>;
+                                   ncrequest::is_specialization_of_v<Rule, pegtl::internal::seq>;
 
     template<typename ParseInput, typename... States>
     static void failure(const ParseInput&, States&&... states) noexcept {
-        auto resets = []<typename... Rules>(pegtl::type_list<Rules...>, request::URI& uri) {
+        auto resets = []<typename... Rules>(pegtl::type_list<Rules...>, ncrequest::URI& uri) {
             (reset<Rules>(uri), ...);
         };
         resets(typename Rule::subs_t(), states...);
@@ -139,7 +137,7 @@ template<>
 struct action<grammer_http::HTTP_version> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s) {
-        std::visit(overloaded { [&in](auto& s) {
+        std::visit(helper::overloaded { [&in](auto& s) {
                        s.version = in.string_view();
                    } },
                    s);
@@ -243,6 +241,6 @@ auto HttpHeader::has_field(std::string_view name) const -> bool {
                return helper::starts_with_i(f.name, name);
            });
 }
-} // namespace request
+} // namespace ncrequest
 
 // namespace test

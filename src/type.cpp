@@ -2,18 +2,17 @@
 
 #include <curl/curl.h>
 #include <fmt/core.h>
+#include "ncrequest/helper.h"
 
-#include "core/str_helper.h"
+using namespace ncrequest;
 
-using namespace request;
-
-std::string request::url_encode(std::string_view c) {
+std::string ncrequest::url_encode(std::string_view c) {
     char*       curl_out = curl_easy_escape(NULL, c.data(), c.size());
     std::string out      = curl_out;
     curl_free(curl_out);
     return out;
 }
-std::string request::url_decode(std::string_view c) {
+std::string ncrequest::url_decode(std::string_view c) {
     int         len { 0 };
     char*       curl_out = curl_easy_unescape(NULL, c.data(), c.size(), &len);
     usize       slen     = len > 0 ? (usize)len : 0u;

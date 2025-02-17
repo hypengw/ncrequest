@@ -31,6 +31,23 @@ if(NOT pegtl_FOUND)
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(pegtl)
 endif()
+# asio
+add_library(asio INTERFACE)
+target_compile_definitions(asio INTERFACE ASIO_NO_DEPRECATED)
+pkg_check_modules(ASIO QUIET asio>=1.30.2)
+if(NOT ASIO_FOUND)
+  message(STATUS "asio not found, fetching it...")
+  FetchContent_Declare(
+    asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG asio-1-30-2
+    GIT_SHALLOW TRUE
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(asio)
+  target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
+else()
+  target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIRS})
+endif()
 
 add_library(
   ncrequest STATIC
@@ -60,7 +77,7 @@ add_library(ncrequest::ncrequest ALIAS ncrequest)
 target_include_directories(
   ncrequest 
   PUBLIC include
-  PRIVATE include/ncrequest .)
+  PRIVATE include/ncrequest src)
 
 if(PROJECT_IS_TOP_LEVEL)
 install(

@@ -2,11 +2,11 @@
 
 #include <string_view>
 
-#include "core/core.h"
 #include "ncrequest/type.h"
 #include "ncrequest/request_opt.h"
+#include "ncrequest/type_list.h"
 
-namespace request
+namespace ncrequest
 {
 
 std::error_code global_init();
@@ -51,10 +51,11 @@ public:
     void set_opt(const RequestOpt&);
 
 private:
-    const_voidp get_opt(usize) const;
-    voidp       get_opt(usize);
-
-    C_DECLARE_PRIVATE(Request, m_d)
+    const_voidp           get_opt(usize) const;
+    voidp                 get_opt(usize);
+    up<Private>           m_d;
+    inline Private*       d_func() { return m_d.get(); }
+    inline const Private* d_func() const { return m_d.get(); }
 };
 
-} // namespace request
+} // namespace ncrequest
