@@ -1,7 +1,9 @@
-#pragma once
+module;
 
 #include <system_error>
 #include <curl/curl.h>
+
+export module ncrequest.curl:error;
 
 namespace std
 {
@@ -43,13 +45,13 @@ public:
 const CURLEcategory theCURLEcategory {};
 } // namespace ncrequest
 
-inline std::error_code make_error_code(CURLMcode code) {
+export inline std::error_code make_error_code(CURLMcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLMEcategory,
     };
 }
-inline std::error_code make_error_code(CURLcode code) {
+export inline std::error_code make_error_code(CURLcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLEcategory,

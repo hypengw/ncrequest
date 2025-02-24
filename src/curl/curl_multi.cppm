@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 #include <unordered_map>
 #include <filesystem>
@@ -13,16 +13,15 @@
 #include <asio/experimental/channel.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
-#include "curl_easy.hpp"
-#include "curl_error.hpp"
-
-#include "ncrequest/type.hpp"
-#include "ncrequest/response.hpp"
+export module ncrequest.curl:multi;
+export import :easy;
+export import :error;
+export import ncrequest.type;
 
 namespace ncrequest
 {
 
-class CurlMulti : public NoCopy {
+export class CurlMulti : public NoCopy {
 public:
     struct InfoMsg {
         CURLMSG  msg;

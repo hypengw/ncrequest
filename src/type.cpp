@@ -1,8 +1,10 @@
-#include "type.hpp"
+module;
 
 #include <curl/curl.h>
-#include <fmt/core.h>
-#include "ncrequest/helper.hpp"
+#include <format>
+#include <vector>
+
+module ncrequest.type;
 
 using namespace ncrequest;
 
@@ -72,10 +74,10 @@ std::string UrlParams::encode() const {
         if (v.size() > 1) {
             usize i = 0;
             for (auto& el : v) {
-                res.append(fmt::format("{}[{}]={}", url_encode(k), i, url_encode(el)));
+                res.append(std::format("{}[{}]={}", url_encode(k), i, url_encode(el)));
             }
         } else {
-            res.append(fmt::format("{}={}", url_encode(k), url_encode(v.front())));
+            res.append(std::format("{}={}", url_encode(k), url_encode(v.front())));
         }
     }
     return res;

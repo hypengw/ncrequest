@@ -8,4 +8,3 @@
     inline Class*       q_func() { return static_cast<Class*>(QName); }             \
     inline const Class* q_func() const { return static_cast<const Class*>(QName); } \
     friend class Class;
-

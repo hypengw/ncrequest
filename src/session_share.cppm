@@ -1,10 +1,12 @@
-#pragma once
+module;
 #include <filesystem>
-#include "ncrequest/type.hpp"
+
+export module ncrequest:session_share;
+export import ncrequest.type;
 
 namespace ncrequest
 {
-class SessionShare {
+export class SessionShare {
 public:
     class Private;
     SessionShare();
@@ -15,7 +17,7 @@ public:
     void save(const std::filesystem::path& p) const;
 
 private:
-    rc<Private>           d_ptr;
+    arc<Private>           d_ptr;
     inline Private*       d_func() { return d_ptr.get(); }
     inline const Private* d_func() const { return d_ptr.get(); }
 };

@@ -1,6 +1,7 @@
-#pragma once
+module;
 
 #include <limits>
+#include <optional>
 
 #include <asio/any_completion_handler.hpp>
 #include <asio/dispatch.hpp>
@@ -13,17 +14,16 @@
 #include <asio/bind_executor.hpp>
 #include <asio/streambuf.hpp>
 
-#include "ncrequest/type.hpp"
-#include "ncrequest/helper.hpp"
-
-#include "ncrequest/request.hpp"
-#include "ncrequest/http_header.hpp"
+export module ncrequest:response;
+export import :request;
+export import :http;
+export import :connection;
 
 namespace ncrequest
 {
 
 class Session;
-class Connection;
+
 class Response : public std::enable_shared_from_this<Response>, NoCopy {
     friend class Session;
 
@@ -94,8 +94,8 @@ public:
         co_return size;
     }
 
-    static auto make_response(const Request&, Operation, rc<Session>) -> rc<Response>;
-    Response(const Request&, Operation, rc<Session>) noexcept;
+    static auto make_response(const Request&, Operation, arc<Session>) -> arc<Response>;
+    Response(const Request&, Operation, arc<Session>) noexcept;
     ~Response() noexcept;
 
     auto is_finished() const -> bool;
@@ -107,7 +107,7 @@ public:
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
 
-    auto get_rc() -> rc<Response>;
+    auto get_rc() -> arc<Response>;
 
     void cancel();
     auto allocator() const -> const allocator_type&;
@@ -126,9 +126,30 @@ private:
     auto connection() const -> const Connection&;
 
 private:
-    up<Private>           m_d;
+    box<Private>          m_d;
     inline Private*       d_func() { return m_d.get(); }
     inline const Private* d_func() const { return m_d.get(); }
+};
+
+class Response::Private {
+public:
+    Private(Response*, const Request&, Operation, arc<Session>);
+    friend class Response;
+
+    void set_share(const std::optional<SessionShare>& share) { m_share = share; }
+
+private:
+    Response* m_q;
+    Request   m_req;
+
+    Operation m_operation;
+    bool      m_finished;
+
+    asio::streambuf             m_send_buffer;
+    arc<Connection>             m_connect;
+    std::optional<SessionShare> m_share;
+
+    std::pmr::polymorphic_allocator<char> m_allocator;
 };
 
 } // namespace ncrequest

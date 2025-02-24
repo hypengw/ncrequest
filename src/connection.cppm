@@ -1,22 +1,55 @@
-#pragma once
+module;
 
 #include <atomic>
 #include <mutex>
 #include <asio/streambuf.hpp>
+#include <asio/strand.hpp>
+#include <asio/thread_pool.hpp>
 #include <asio/any_completion_handler.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
+#include <curl/curl.h>
 
-#include "curl_error.hpp"
-#include "curl_easy.hpp"
 #include "log.hpp"
-#include "ncrequest/session.hpp"
-#include "ncrequest/helper.hpp"
-#include "ncrequest/http_header.hpp"
+
+export module ncrequest:connection;
+export import ncrequest.type;
+export import ncrequest.curl;
+export import :http;
+export import :request;
 
 namespace ncrequest
 {
-class Session;
-class Connection : public std::enable_shared_from_this<Connection> {
+export class Session;
+
+export class Connection;
+namespace session_message
+{
+struct Stop {};
+
+struct ConnectAction {
+    enum class Action
+    {
+        Add,
+        Cancel,
+        PauseRecv,
+        UnPauseRecv,
+        PauseSend,
+        UnPauseSend,
+    };
+    arc<Connection> con;
+    Action          action;
+};
+
+using msg = std::variant<Stop, ConnectAction>;
+} // namespace session_message
+
+export using SessionMessage = session_message::msg;
+
+export using SessionChannel =
+    asio::experimental::concurrent_channel<asio::strand<asio::thread_pool::executor_type>,
+                                           void(asio::error_code, SessionMessage)>;
+
+export class Connection : public std::enable_shared_from_this<Connection> {
     friend Session;
 
 public:
@@ -86,7 +119,7 @@ public:
         Allocator                        m_alloc;
     };
 
-    Connection(executor_type::inner_executor_type ex, rc<Session::channel_type> session_channel,
+    Connection(executor_type::inner_executor_type ex, arc<SessionChannel> session_channel,
                allocator_type allocator)
         : m_finish_ec(CURLE_OK),
           m_state(State::NotStarted),
@@ -336,9 +369,9 @@ private:
     std::atomic<bool>  m_recv_paused;
     std::atomic<bool>  m_send_paused;
 
-    executor_type             m_ex;
-    up<CurlEasy>              m_easy;
-    rc<Session::channel_type> m_session_channel;
+    executor_type              m_ex;
+    box<CurlEasy>              m_easy;
+    arc<SessionChannel> m_session_channel;
 
     std::string                                          m_header_raw;
     HttpHeader                                           m_header_;

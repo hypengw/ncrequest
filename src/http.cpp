@@ -1,13 +1,17 @@
-#include "uri.hpp"
-#include "http_header.hpp"
+module;
 
 #include <charconv>
 #include <algorithm>
+#include <variant>
 
-#include "ncrequest/type.hpp"
-#include "ncrequest/helper.hpp"
 #include "peg/uri.hpp"
 #include "peg/http.hpp"
+
+module ncrequest;
+
+import :http;
+import ncrequest.type;
+
 
 namespace pegtl = tao::pegtl;
 

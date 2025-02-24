@@ -1,15 +1,17 @@
-#pragma once
+module;
 
 #include <utility>
 #include <type_traits>
+#include <variant>
 
-#include "ncrequest/type.hpp"
+export module ncrequest.type_list;
+export import ncrequest.type;
 
 namespace ncrequest
 {
 
 // forward
-template<typename... TS>
+export template<typename... TS>
 struct type_list;
 
 namespace detail

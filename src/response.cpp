@@ -1,18 +1,18 @@
-#include "response.hpp"
+module;
 
-#include <fmt/core.h>
+#include <format>
 #include <cstdio>
+#include <cassert>
+#include <variant>
 
-#include "response_p.hpp"
-#include "request_p.hpp"
-#include "session.hpp"
+#include <curl/curl.h>
+#include <asio/buffer.hpp>
+#include <asio/any_completion_handler.hpp>
+#include "macro.hpp"
 
-#include "connection.hpp"
-
-#include "curl_easy.hpp"
-#include "curl_error.hpp"
-
-#include <assert.h>
+module ncrequest;
+import :response;
+import :session;
 
 using namespace ncrequest;
 
@@ -65,17 +65,15 @@ attr_value attr_from_easy(CurlEasy& easy) {
 
 } // namespace
 
-Response::Private::Private(Response* res, const Request& req, Operation oper,
-                           rc<Session> ses) noexcept
+Response::Private::Private(Response* res, const Request& req, Operation oper, arc<Session> ses)
     : m_q(res),
       m_req(req),
       m_operation(oper),
-      m_connect(
-          std::make_shared<Connection>(ses->get_executor(), ses->channel_rc(), ses->allocator())),
+      m_connect(make_arc<Connection>(ses->get_executor(), ses->channel_rc(), ses->allocator())),
       m_allocator(ses->allocator()) {}
 
-Response::Response(const Request& req, Operation oper, rc<Session> ses) noexcept
-    : m_d(std::make_unique<Private>(this, req, oper, ses)) {
+Response::Response(const Request& req, Operation oper, arc<Session> ses) noexcept
+    : m_d(make_box<Private>(this, req, oper, ses)) {
     C_D(Response);
     auto& easy = connection().easy();
     switch (oper) {
@@ -103,7 +101,7 @@ auto Response::allocator() const -> const std::pmr::polymorphic_allocator<char>&
     return d->m_allocator;
 }
 
-rc<Response> Response::make_response(const Request& req, Operation oper, rc<Session> ses) {
+arc<Response> Response::make_response(const Request& req, Operation oper, arc<Session> ses) {
     return std::make_shared<Response>(req, oper, ses);
 }
 
@@ -193,7 +191,7 @@ attr_value Response::attribute(Attribute A) const {
     return {};
 }
 
-rc<Response> Response::get_rc() { return shared_from_this(); }
+arc<Response> Response::get_rc() { return shared_from_this(); }
 
 auto Response::header() const -> const HttpHeader& { return connection().header(); }
 auto Response::code() const -> std::optional<i32> {

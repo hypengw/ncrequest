@@ -1,22 +1,26 @@
+module;
 #include <asio/deferred.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/strand.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/buffer.hpp>
+#include <asio/thread_pool.hpp>
 #include <asio/bind_cancellation_slot.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
 #include <iostream>
+#include <chrono>
+#include <set>
+#include <filesystem>
+#include <memory_resource>
+#include <curl/curl.h>
 
-#include "session.hpp"
-#include "session_p.hpp"
-
-#include "request.hpp"
-#include "request_p.hpp"
-
-#include "response.hpp"
-#include "response_p.hpp"
-
-#include "curl_multi.hpp"
-#include "connection.hpp"
 #include "log.hpp"
+#include "macro.hpp"
+
+module ncrequest;
+import :session;
 
 using namespace ncrequest;
 
@@ -35,6 +39,39 @@ T get_curl_private(CURL* c) {
 }
 
 } // namespace
+
+class Session::Private {
+    friend class Session;
+
+public:
+    using channel_poll_type =
+        asio::experimental::concurrent_channel<executor_type,
+                                               void(asio::error_code, SessionMessage)>;
+
+    Private(Session&, executor_type& ex) noexcept;
+
+    asio::awaitable<void> run();
+    void                  handle_message(const SessionMessage&);
+
+    void add_connect(const arc<Connection>&);
+    void remove_connect(const arc<Connection>&);
+
+private:
+    Session&                    m_p;
+    box<CurlMulti>               m_curl_multi;
+    executor_type               m_ex;
+    asio::strand<executor_type> m_strand;
+    std::set<arc<Connection>>    m_connect_set;
+
+    asio::thread_pool     m_poll_thread;
+    arc<channel_poll_type> m_channel;
+    arc<channel_type>      m_channel_with_notify;
+    bool                  m_stopped;
+
+    std::optional<req_opt::Proxy>        m_proxy;
+    bool                                 m_ignore_certificate;
+    std::pmr::synchronized_pool_resource m_memory;
+};
 
 Session::Session(executor_type ex): m_d(std::make_unique<Private>(*this, ex)) {
     C_D(Session);
@@ -91,7 +128,7 @@ auto Session::prepare_req(const Request& req) const -> Request {
     return o;
 }
 
-auto Session::perform(rc<Response>& rsp) -> asio::awaitable<bool> {
+auto Session::perform(arc<Response>& rsp) -> asio::awaitable<bool> {
     C_D(Session);
     auto& con = rsp->connection();
     rsp->prepare_perform();
@@ -107,7 +144,7 @@ auto Session::perform(rc<Response>& rsp) -> asio::awaitable<bool> {
     co_return true;
 }
 
-auto Session::get(const Request& req) -> asio::awaitable<std::optional<rc<Response>>> {
+auto Session::get(const Request& req) -> asio::awaitable<std::optional<arc<Response>>> {
     C_D(Session);
     auto res =
         Response::make_response(prepare_req(req), Operation::GetOperation, shared_from_this());
@@ -116,18 +153,18 @@ auto Session::get(const Request& req) -> asio::awaitable<std::optional<rc<Respon
     co_return std::nullopt;
 }
 
-auto Session::post(const Request& req) -> asio::awaitable<std::optional<rc<Response>>> {
+auto Session::post(const Request& req) -> asio::awaitable<std::optional<arc<Response>>> {
     C_D(Session);
-    rc<Response> res =
+    arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     if (co_await perform(res)) co_return res;
     co_return std::nullopt;
 }
 
 auto Session::post(const Request& req, asio::const_buffer buf)
-    -> asio::awaitable<std::optional<rc<Response>>> {
+    -> asio::awaitable<std::optional<arc<Response>>> {
     C_D(Session);
-    rc<Response> res =
+    arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     res->add_send_buffer(buf);
 
@@ -177,7 +214,7 @@ Session::channel_type& Session::channel() {
     return *(d->m_channel_with_notify);
 }
 
-auto Session::channel_rc() -> rc<Session::channel_type> {
+auto Session::channel_rc() -> arc<Session::channel_type> {
     C_D(Session);
     return d->m_channel_with_notify;
 }
@@ -187,7 +224,7 @@ void Session::about_to_stop() {
     channel().try_send(asio::error_code {}, sm::Stop {});
 }
 
-void Session::Private::add_connect(const rc<Connection>& con) {
+void Session::Private::add_connect(const arc<Connection>& con) {
     auto ec = m_curl_multi->add_handle(con->easy());
     if (ec) {
         ERROR_LOG("{}", ec.message());
@@ -197,7 +234,7 @@ void Session::Private::add_connect(const rc<Connection>& con) {
     con->transfreing();
     m_connect_set.insert(con);
 }
-void Session::Private::remove_connect(const rc<Connection>& con) {
+void Session::Private::remove_connect(const arc<Connection>& con) {
     DEBUG_LOG("end {}", con->url());
     auto ec = m_curl_multi->remove_handle(con->easy());
     m_connect_set.erase(con);
@@ -248,32 +285,36 @@ auto Session::Private::run() -> asio::awaitable<void> {
 void Session::Private::handle_message(const SessionMessage& msg) {
     namespace sm = session_message;
     std::visit(helper::overloaded { [this](sm::Stop) {
-                               m_stopped = true;
-                               while (m_connect_set.size()) {
-                                   auto& con = *m_connect_set.begin();
-                                   con->cancel();
-                                   remove_connect(con);
-                               }
-                               m_connect_set.clear();
-                           },
-                            [this](const sm::ConnectAction& con_act) {
-                                switch (con_act.action) {
-                                    using enum sm::ConnectAction::Action;
-                                case Add: add_connect(con_act.con); break;
-                                case Cancel:
-                                    con_act.con->cancel();
-                                    remove_connect(con_act.con);
-                                    break;
-                                case PauseRecv: con_act.con->easy().pause(CURLPAUSE_RECV); break;
-                                case UnPauseRecv:
-                                    con_act.con->easy().pause(CURLPAUSE_RECV_CONT);
-                                    break;
-                                case PauseSend: con_act.con->easy().pause(CURLPAUSE_SEND); break;
-                                case UnPauseSend:
-                                    con_act.con->easy().pause(CURLPAUSE_SEND_CONT);
-                                    break;
-                                default: break;
-                                }
-                            } },
+                                       m_stopped = true;
+                                       while (m_connect_set.size()) {
+                                           auto& con = *m_connect_set.begin();
+                                           con->cancel();
+                                           remove_connect(con);
+                                       }
+                                       m_connect_set.clear();
+                                   },
+                                    [this](const sm::ConnectAction& con_act) {
+                                        switch (con_act.action) {
+                                            using enum sm::ConnectAction::Action;
+                                        case Add: add_connect(con_act.con); break;
+                                        case Cancel:
+                                            con_act.con->cancel();
+                                            remove_connect(con_act.con);
+                                            break;
+                                        case PauseRecv:
+                                            con_act.con->easy().pause(CURLPAUSE_RECV);
+                                            break;
+                                        case UnPauseRecv:
+                                            con_act.con->easy().pause(CURLPAUSE_RECV_CONT);
+                                            break;
+                                        case PauseSend:
+                                            con_act.con->easy().pause(CURLPAUSE_SEND);
+                                            break;
+                                        case UnPauseSend:
+                                            con_act.con->easy().pause(CURLPAUSE_SEND_CONT);
+                                            break;
+                                        default: break;
+                                        }
+                                    } },
                msg);
 }

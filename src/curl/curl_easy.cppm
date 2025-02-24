@@ -1,14 +1,16 @@
-#pragma once
+module;
 
 #include <format>
 
 #include <curl/curl.h>
 
-#include "ncrequest/type.hpp"
+
+export module ncrequest.curl:easy;
+export import ncrequest.type;
 
 namespace ncrequest
 {
-constexpr CURLINFO to_curl_info(Attribute A) noexcept {
+export constexpr CURLINFO to_curl_info(Attribute A) noexcept {
     switch (A) {
         using enum Attribute;
     case HttpCode: return CURLINFO_RESPONSE_CODE;
@@ -26,7 +28,7 @@ struct curl_opt_traits<CURLoption::CURLOPT_SHARE> {
 };
 } // namespace detail
 
-class CurlEasy : NoCopy {
+export class CurlEasy : NoCopy {
 public:
     CurlEasy() noexcept: easy(curl_easy_init()), m_headers(NULL), m_share(NULL) {
         // enable cookie engine

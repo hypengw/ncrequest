@@ -1,10 +1,13 @@
-#include "ncrequest/session_share.hpp"
-
+module;
 #include <mutex>
+#include <filesystem>
 
-#include "curl_easy.hpp"
+#include <curl/curl.h>
 #include "macro.hpp"
-#include "ncrequest/helper.hpp"
+
+module ncrequest;
+import :session_share;
+import ncrequest.curl;
 
 namespace ncrequest
 {
@@ -35,7 +38,7 @@ static void static_share_unlock(CURL*, curl_lock_data data, void* clientp) {
 }
 } // namespace
 
-SessionShare::SessionShare(): d_ptr(helper::make_rc<Private>()) {
+SessionShare::SessionShare(): d_ptr(make_arc<Private>()) {
     C_D(SessionShare);
     curl_share_setopt(d->share, CURLSHOPT_SHARE, CURL_LOCK_DATA_COOKIE);
     curl_share_setopt(d->share, CURLSHOPT_LOCKFUNC, static_share_lock);
