@@ -4,8 +4,6 @@ module;
 #include <functional>
 #include <span>
 #include <curl/curl.h>
-#include <asio.hpp>
-#include <memory>
 
 export module ncrequest:websocket;
 export import ncrequest.type;
@@ -19,12 +17,14 @@ public:
     using MessageCallback = std::function<void(std::span<const std::byte>)>;
     using ErrorCallback   = std::function<void(std::string_view)>;
 
-    explicit WebSocketClient(asio::io_context& ioc);
+    explicit WebSocketClient(box<event::Context> ioc);
     ~WebSocketClient();
+    WebSocketClient(const WebSocketClient&)            = delete;
+    WebSocketClient& operator=(const WebSocketClient&) = delete;
 
     bool connect(const std::string& url);
     void disconnect();
-    bool isConnected() const;
+    bool is_connected() const;
 
     bool send(std::string_view message);
     bool send(std::span<const std::byte> message);
@@ -36,11 +36,10 @@ public:
 
 private:
     void start_socket_monitor();
-    void handle_socket_event(const asio::error_code& ec);
     void do_read();
 
-    CURL*           m_curl { nullptr };
-    bool            m_connected { false };
+    CURL*           m_curl;
+    bool            m_connected;
     MessageCallback m_on_message;
     ErrorCallback   m_on_error;
 

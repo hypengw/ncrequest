@@ -1,6 +1,8 @@
 module;
 
+#include <asio/post.hpp>
 #include <asio/io_context.hpp>
+#include <asio/thread_pool.hpp>
 #include <asio/posix/stream_descriptor.hpp>
 
 module ncrequest.event;
@@ -9,9 +11,10 @@ import :asio;
 namespace
 {
 
+template<typename Executor>
 class AsioContext : public ncrequest::event::Context {
 public:
-    explicit AsioContext(asio::io_context& ioc): m_socket(ioc) {}
+    explicit AsioContext(Executor ioc): m_socket(std::move(ioc)) {}
 
     bool assign(int socket_fd) override {
         asio::error_code code;
@@ -47,13 +50,20 @@ public:
 
     void set_error_callback(ErrorCallback callback) override { m_on_error = std::move(callback); }
 
+    void post(std::function<void()> f) override { asio::post(m_socket.get_executor(), f); }
+
 private:
-    asio::posix::stream_descriptor m_socket;
-    ErrorCallback                  m_on_error;
+    asio::posix::basic_stream_descriptor<Executor> m_socket;
+    ErrorCallback                                  m_on_error;
 };
 } // namespace
 
 namespace ncrequest
 {
-auto event::create(asio::io_context& ioc) -> box<Context> { return make_box<AsioContext>(ioc); }
+auto event::create(asio::io_context& ioc) -> box<Context> {
+    return make_box<AsioContext<asio::io_context::executor_type>>(ioc.get_executor());
+}
+auto event::create(asio::thread_pool& ioc) -> box<Context> {
+    return make_box<AsioContext<asio::thread_pool::executor_type>>(ioc.get_executor());
+}
 } // namespace ncrequest

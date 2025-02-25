@@ -25,6 +25,8 @@ public:
     virtual void cancel()                                    = 0;
 
     virtual void set_error_callback(ErrorCallback callback) = 0;
+
+    virtual void post(std::function<void()>) = 0;
 };
 
 } // namespace ncrequest::event
