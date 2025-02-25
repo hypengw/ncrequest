@@ -8,14 +8,11 @@ export module ncrequest.event:interface;
 namespace ncrequest::event
 {
 
-export enum class WaitType
-{
-    Read,
-    Write
-};
+export enum class WaitType { Read, Write };
 
 export class Context {
 public:
+    using WaitType      = event::WaitType;
     using ErrorCallback = std::function<void(std::string_view)>;
     using EventCallback = std::function<void()>;
 
