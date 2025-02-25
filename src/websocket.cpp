@@ -4,9 +4,11 @@ module;
 #include <span>
 #include <curl/curl.h>
 #include <curl/websockets.h>
+#include <asio.hpp>
 
 module ncrequest;
 import :websocket;
+import ncrequest.event;
 
 namespace
 {
@@ -24,11 +26,11 @@ size_t recv_callback(char* buffer, size_t size, size_t nitems, void* userdata) {
 namespace ncrequest
 {
 
-WebSocketClient::WebSocketClient(): m_curl(curl_easy_init()), m_connected(false) {
-    if (m_curl) {
-        curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, recv_callback);
-        curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, this);
-    }
+WebSocketClient::WebSocketClient(asio::io_context& ioc)
+    : m_curl(curl_easy_init()), m_context(event::create(ioc)) {
+    m_context->set_error_callback([this](std::string_view error) {
+        if (m_on_error) m_on_error(error);
+    });
 }
 
 WebSocketClient::~WebSocketClient() {
@@ -53,11 +55,39 @@ bool WebSocketClient::connect(const std::string& url) {
     }
 
     m_connected = true;
+    start_socket_monitor();
     return true;
+}
+
+void WebSocketClient::start_socket_monitor() {
+    curl_socket_t sockfd;
+    curl_easy_getinfo(m_curl, CURLINFO_ACTIVESOCKET, &sockfd);
+
+    if (m_context->assign(sockfd)) {
+        do_read();
+    }
+}
+
+void WebSocketClient::do_read() {
+    m_context->wait(event::WaitType::Read, [this]() {
+        size_t         rlen;
+        const CURLcode result =
+            curl_ws_recv(m_curl, m_read_buffer.data(), m_read_buffer.size(), &rlen, nullptr);
+
+        if (result == CURLE_OK && rlen > 0 && m_on_message) {
+            m_on_message(std::span<const std::byte> { m_read_buffer.data(), rlen });
+        }
+
+        if (m_connected) {
+            do_read();
+        }
+    });
 }
 
 void WebSocketClient::disconnect() {
     if (m_curl && m_connected) {
+        m_context->cancel();
+        m_context->close();
         curl_ws_send(m_curl, nullptr, 0, nullptr, CURLWS_CLOSE, 0);
         m_connected = false;
     }
@@ -74,7 +104,7 @@ bool WebSocketClient::send(std::span<const std::byte> message) {
 
     size_t   sent { 0 };
     CURLcode result =
-        curl_ws_send(m_curl, (const void*)message.data(), message.size(), &sent, CURLWS_BINARY, 0);
+        curl_ws_send(m_curl, message.data(), message.size(), &sent, CURLWS_BINARY, 0);
 
     if (result != CURLE_OK) {
         if (m_on_error) {

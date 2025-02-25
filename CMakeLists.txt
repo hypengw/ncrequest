@@ -70,9 +70,13 @@ target_sources(
          src/session_share.cppm
          src/http.cppm
          src/websocket.cppm
+         src/event/asio.cppm
+         src/event/interface.cppm
+         src/event/mod.cppm
          src/curl/curl_error.cppm
          src/curl/curl_easy.cppm
          src/curl/curl_multi.cppm
+         src/curl/init.cppm
          src/curl/mod.cppm
          src/mod.cppm)
 
@@ -80,6 +84,7 @@ target_sources(
   ncrequest
   PUBLIC src/peg/uri.hpp
          src/peg/http.hpp
+         src/curl/init.cpp
          src/http.cpp
          src/request.cpp
          src/response.cpp
