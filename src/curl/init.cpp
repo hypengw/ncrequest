@@ -49,15 +49,15 @@ void* curl_calloc_fn(size_t nmemb, size_t size) {
 } // namespace
 
 auto ncrequest::curl_init(std::pmr::memory_resource* resource) -> std::error_code {
-    g_resource = resource;
-
-    return ::make_error_code(curl_global_init_mem(CURL_GLOBAL_ALL,
-                                                  curl_malloc_fn,
-                                                  curl_free_fn,
-                                                  curl_realloc_fn,
-                                                  curl_strdup_fn,
-                                                  curl_calloc_fn));
-}
-auto ncrequest::curl_init() -> std::error_code {
-    return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
+    if (resource == nullptr) {
+        return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
+    } else {
+        g_resource = resource;
+        return ::make_error_code(curl_global_init_mem(CURL_GLOBAL_ALL,
+                                                      curl_malloc_fn,
+                                                      curl_free_fn,
+                                                      curl_realloc_fn,
+                                                      curl_strdup_fn,
+                                                      curl_calloc_fn));
+    }
 }

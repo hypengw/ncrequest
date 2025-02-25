@@ -11,8 +11,8 @@ import ncrequest.curl;
 
 using namespace ncrequest;
 
-auto ncrequest::global_init() -> std::error_code {
-    return ncrequest::curl_init();
+auto ncrequest::global_init(std::pmr::memory_resource* resource) -> std::error_code {
+    return ncrequest::curl_init(resource);
 }
 
 Request::Request() noexcept

@@ -16,6 +16,7 @@ module;
 #include <optional>
 #include <variant>
 #include <system_error>
+#include <memory_resource>
 
 export module ncrequest:request;
 export import :http;
@@ -79,7 +80,7 @@ export using RequestOpt  = RequestOpts::to<std::variant>;
 export class Session;
 export class Response;
 
-export auto global_init() -> std::error_code;
+export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
 
 export class Request {
     friend class Session;
