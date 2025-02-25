@@ -9,9 +9,9 @@ if(NOT GTest_FOUND)
   FetchContent_MakeAvailable(googletest)
 endif()
 
-add_executable(mpsc_test websocket.cpp)
+add_executable(websocket_test websocket.cpp)
 
-target_link_libraries(mpsc_test PRIVATE ncrequest::ncrequest GTest::gtest_main)
+target_link_libraries(websocket_test PRIVATE ncrequest::ncrequest GTest::gtest_main)
 
 include(GoogleTest)
-gtest_discover_tests(mpsc_test)
+gtest_discover_tests(websocket_test)

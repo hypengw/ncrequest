@@ -41,6 +41,7 @@ public:
                                 if (! ec) {
                                     callback();
                                 } else if (m_on_error) {
+                                    printf("error %d\n", ec.value());
                                     m_on_error(ec.message().c_str());
                                 }
                             });
