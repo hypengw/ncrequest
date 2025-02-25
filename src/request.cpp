@@ -11,8 +11,8 @@ import ncrequest.curl;
 
 using namespace ncrequest;
 
-std::error_code ncrequest::global_init() {
-    return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
+auto ncrequest::global_init() -> std::error_code {
+    return ncrequest::curl_init();
 }
 
 Request::Request() noexcept
