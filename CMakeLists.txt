@@ -97,7 +97,7 @@ target_sources(
 
 target_sources(
   ncrequest
-  PUBLIC src/peg/uri.hpp
+  PRIVATE src/peg/uri.hpp
          src/peg/http.hpp
          src/event/asio.cpp
          src/curl/init.cpp
