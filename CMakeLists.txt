@@ -9,10 +9,11 @@ project(
 
 option(NCREQUEST_BUILD_TESTS "Build tests" ${PROJECT_IS_TOP_LEVEL})
 
+if(PROJECT_IS_TOP_LEVEL)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(GNUInstallDirs)
@@ -59,7 +60,7 @@ if(NOT TARGET rc)
     FetchContent_Declare(
       rc
       GIT_REPOSITORY https://github.com/hypengw/rc.git
-      GIT_TAG d1ada216adbd89e628833240260608045050a1f8
+      GIT_TAG 18c9294b110def0a06d60397ecae2b7f2047101b
       GIT_SHALLOW TRUE
       EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(rc)
@@ -68,6 +69,8 @@ endif()
 
 add_library(ncrequest STATIC)
 add_library(ncrequest::ncrequest ALIAS ncrequest)
+
+target_compile_features(ncrequest PUBLIC cxx_std_20)
 
 target_sources(
   ncrequest
