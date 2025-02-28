@@ -37,7 +37,7 @@ private:
     std::string m_holder;
 };
 
-struct HttpHeader {
+export struct HttpHeader {
     struct Request {
         std::string method;
         std::string version;
