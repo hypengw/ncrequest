@@ -15,15 +15,15 @@ TEST(websocket, BasicTest) {
         printf("error: %s\n", std::string(m).c_str());
     });
     ws.set_on_message_callback([](std::span<const std::byte> data, bool last) {
-        printf("%.*s\n", (int)data.size(), (char*)data.data());
+        printf("recv: %.*s\n", (int)data.size(), (char*)data.data());
     });
-    printf("connect\n");
-    ws.connect("ws://localhost:44293");
+    printf("connecting\n");
+    EXPECT_TRUE(ws.connect("ws://127.0.0.3:46543"));
     int i = 0;
     while (i++ < 10) {
         ws.send(std::format("ok {}", i));
-        sleep(1);
     };
+    sleep(2);
     ws.disconnect();
     pool.stop();
     pool.join();

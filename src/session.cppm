@@ -18,17 +18,16 @@ export import ncrequest.type;
 namespace ncrequest
 {
 
-
 export class Session : public std::enable_shared_from_this<Session>, NoCopy {
     friend class Request;
     friend class Response;
 
 public:
     using executor_type = asio::thread_pool::executor_type;
-    using channel_type = SessionChannel;
+    using channel_type  = SessionChannel;
 
     class Private;
-    Session(executor_type ex);
+    Session(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource());
     ~Session();
 
     auto get_executor() -> executor_type&;
@@ -55,7 +54,7 @@ private:
     auto perform(arc<Response>&) -> asio::awaitable<bool>;
     auto prepare_req(const Request&) const -> Request;
 
-    box<Private>           m_d;
+    box<Private>          m_d;
     inline Private*       d_func() { return m_d.get(); }
     inline const Private* d_func() const { return m_d.get(); }
 };

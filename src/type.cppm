@@ -47,6 +47,16 @@ protected:
     NoCopy& operator=(const NoCopy&) = delete;
 };
 
+export template<typename T>
+class rc {
+public:
+    rc() {}
+
+private:
+    struct Inner {};
+    Inner* data;
+};
+
 export template<class T, template<class...> class Primary>
 struct is_specialization_of : std::false_type {};
 export template<template<class...> class Primary, class... Args>

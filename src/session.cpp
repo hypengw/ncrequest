@@ -48,7 +48,7 @@ public:
         asio::experimental::concurrent_channel<executor_type,
                                                void(asio::error_code, SessionMessage)>;
 
-    Private(Session&, executor_type& ex) noexcept;
+    Private(Session&, executor_type& ex, std::pmr::memory_resource* mem_pool) noexcept;
 
     asio::awaitable<void> run();
     void                  handle_message(const SessionMessage&);
@@ -58,22 +58,23 @@ public:
 
 private:
     Session&                    m_p;
-    box<CurlMulti>               m_curl_multi;
+    box<CurlMulti>              m_curl_multi;
     executor_type               m_ex;
     asio::strand<executor_type> m_strand;
-    std::set<arc<Connection>>    m_connect_set;
+    std::set<arc<Connection>>   m_connect_set;
 
-    asio::thread_pool     m_poll_thread;
+    asio::thread_pool      m_poll_thread;
     arc<channel_poll_type> m_channel;
     arc<channel_type>      m_channel_with_notify;
-    bool                  m_stopped;
+    bool                   m_stopped;
 
     std::optional<req_opt::Proxy>        m_proxy;
     bool                                 m_ignore_certificate;
     std::pmr::synchronized_pool_resource m_memory;
 };
 
-Session::Session(executor_type ex): m_d(std::make_unique<Private>(*this, ex)) {
+Session::Session(executor_type ex, std::pmr::memory_resource* mem_pool)
+    : m_d(std::make_unique<Private>(*this, ex, mem_pool)) {
     C_D(Session);
     asio::dispatch(d->m_poll_thread.get_executor(), [this, d]() {
         auto self = get_rc();
@@ -172,7 +173,8 @@ auto Session::post(const Request& req, asio::const_buffer buf)
     co_return std::nullopt;
 }
 
-Session::Private::Private(Session& p, executor_type& ex) noexcept
+Session::Private::Private(Session& p, executor_type& ex,
+                          std::pmr::memory_resource* mem_pool) noexcept
     : m_p(p),
       m_curl_multi(std::make_unique<CurlMulti>()),
       m_ex(ex),
@@ -185,7 +187,8 @@ Session::Private::Private(Session& p, executor_type& ex) noexcept
       m_ignore_certificate(false),
       // 1 MB
       m_memory(std::pmr::pool_options { .max_blocks_per_chunk        = 2,
-                                        .largest_required_pool_block = 1024 * 1024 }) {};
+                                        .largest_required_pool_block = 1024 * 1024 },
+               mem_pool) {};
 
 void Session::load_cookie(std::filesystem::path p) {
     C_D(Session);

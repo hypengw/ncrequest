@@ -16,6 +16,7 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(GNUInstallDirs)
+include(FetchContent)
 
 # curl
 find_package(CURL REQUIRED)
@@ -48,6 +49,20 @@ if(NOT TARGET asio)
     target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
   else()
     target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIRS})
+  endif()
+endif()
+# rc
+if(NOT TARGET rc)
+  find_package(rc QUIET)
+  if(NOT RC_FOUND)
+    message(STATUS "rc not found, fetching it...")
+    FetchContent_Declare(
+      rc
+      GIT_REPOSITORY https://github.com/hypengw/rc.git
+      GIT_TAG 4a8fec49a7956354a052da75bd10159555f972e2
+      GIT_SHALLOW TRUE
+      EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(rc)
   endif()
 endif()
 
@@ -103,7 +118,7 @@ if(PROJECT_IS_TOP_LEVEL)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio)
+target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio rstd::rc)
 
 if(NCREQUEST_BUILD_TESTS)
   include(CTest)
