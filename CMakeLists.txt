@@ -59,7 +59,7 @@ if(NOT TARGET rc)
     FetchContent_Declare(
       rc
       GIT_REPOSITORY https://github.com/hypengw/rc.git
-      GIT_TAG 4a8fec49a7956354a052da75bd10159555f972e2
+      GIT_TAG d1ada216adbd89e628833240260608045050a1f8
       GIT_SHALLOW TRUE
       EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(rc)
