@@ -102,7 +102,6 @@ target_sources(
   ncrequest
   PRIVATE src/peg/uri.hpp
          src/peg/http.hpp
-         src/event/asio.cpp
          src/curl/init.cpp
          src/http.cpp
          src/request.cpp
