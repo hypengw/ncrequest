@@ -60,7 +60,7 @@ private:
 
 export template<template<typename> class Socket, typename Ex>
 auto create(Ex&& ex) -> box<Context> {
-    return make_box<AsioContext<Socket<std::decay_t<Ex>>>>(std::forward<Ex>(ex));
+    return ncrequest::make_box<AsioContext<Socket<std::decay_t<Ex>>>>(std::forward<Ex>(ex));
 }
 
 } // namespace ncrequest::event
