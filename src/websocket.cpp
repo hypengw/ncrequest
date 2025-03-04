@@ -39,7 +39,7 @@ WebSocketClient::~WebSocketClient() {
     m_curl = nullptr;
 }
 
-bool WebSocketClient::connect(const std::string& url) {
+auto WebSocketClient::connect(const std::string& url) -> std::future<bool> {
     auto promise = make_arc<std::promise<bool>>();
     auto future  = promise->get_future();
 
@@ -79,16 +79,12 @@ bool WebSocketClient::connect(const std::string& url) {
             });
         }
         promise->set_value(success);
+        if (m_on_connected) {
+            m_on_connected();
+        }
     });
     promise.reset();
-
-    bool re { false };
-    try {
-        re = future.get();
-    } catch (const std::exception& e) {
-        re = false;
-    }
-    return re;
+    return future;
 }
 
 void WebSocketClient::do_read() {
@@ -213,6 +209,7 @@ void WebSocketClient::send(std::span<const std::byte> in) {
 }
 
 auto WebSocketClient::on_message_callback() -> const MessageCallback& { return m_on_message; }
+void WebSocketClient::set_on_connected_callback(ConnectedCallback cb) { m_on_connected = cb; }
 void WebSocketClient::set_on_message_callback(MessageCallback cb) { m_on_message = cb; }
 void WebSocketClient::set_on_error_callback(ErrorCallback cb) { m_on_error = cb; }
 

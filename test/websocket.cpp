@@ -20,7 +20,7 @@ TEST(websocket, BasicTest) {
         printf("recv: %.*s\n", (int)data.size(), (char*)data.data());
     });
     printf("connecting\n");
-    EXPECT_TRUE(ws.connect("ws://127.0.0.3:46543"));
+    EXPECT_TRUE(ws.connect("ws://127.0.0.3:46543").get());
     int i = 0;
     while (i++ < 10) {
         ws.send(std::format("ok {}", i));
