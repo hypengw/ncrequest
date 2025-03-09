@@ -36,7 +36,7 @@ struct ConnectAction {
         PauseSend,
         UnPauseSend,
     };
-    arc<Connection> con;
+    Arc<Connection> con;
     Action          action;
 };
 
@@ -119,7 +119,7 @@ public:
         Allocator                        m_alloc;
     };
 
-    Connection(executor_type::inner_executor_type ex, arc<SessionChannel> session_channel,
+    Connection(executor_type::inner_executor_type ex, Arc<SessionChannel> session_channel,
                allocator_type allocator)
         : m_finish_ec(CURLE_OK),
           m_state(State::NotStarted),
@@ -141,7 +141,7 @@ public:
         easy.setopt(CURLOPT_PRIVATE, this);
     }
     ~Connection() {}
-    auto  get_rc() { return shared_from_this(); }
+    auto  get_arc() { return shared_from_this(); }
     auto& get_executor() { return m_ex; }
 
     auto& easy() { return *m_easy; }
@@ -155,7 +155,7 @@ public:
 
     using Action = session_message::ConnectAction::Action;
     void send_action(Action v) {
-        auto msg = session_message::ConnectAction { .con = get_rc(), .action = v };
+        auto msg = session_message::ConnectAction { .con = get_arc(), .action = v };
         m_session_channel->try_send(asio::error_code {}, msg);
     }
 
@@ -164,7 +164,7 @@ public:
         if (state == State::Canceled || state == State::Finished) return;
 
         auto msg = session_message::ConnectAction {
-            .con    = get_rc(),
+            .con    = get_arc(),
             .action = session_message::ConnectAction::Action::Cancel,
         };
         m_session_channel->try_send(asio::error_code {}, msg);
@@ -277,7 +277,7 @@ private:
 
     // need to remove easy handler after
     void finish(CURLcode ec) {
-        auto self = get_rc();
+        auto self = get_arc();
 
         // after write_callback and make callback alive
         asio::post(m_ex, [this, self, ec]() {
@@ -290,7 +290,7 @@ private:
 
     // need to remove easy handler after
     void cancel() {
-        auto self = get_rc();
+        auto self = get_arc();
 
         auto state = m_state.load();
         if (state != State::Finished && state != State::Canceled) {
@@ -304,7 +304,7 @@ private:
     }
 
     void transfreing() {
-        auto self = get_rc();
+        auto self = get_arc();
         asio::post(m_ex, [this, self]() {
             auto state = m_state.load();
             if (state == State::NotStarted) m_state = State::Transfering;
@@ -370,8 +370,8 @@ private:
     std::atomic<bool>  m_send_paused;
 
     executor_type              m_ex;
-    box<CurlEasy>              m_easy;
-    arc<SessionChannel> m_session_channel;
+    Box<CurlEasy>              m_easy;
+    Arc<SessionChannel> m_session_channel;
 
     std::string                                          m_header_raw;
     HttpHeader                                           m_header_;

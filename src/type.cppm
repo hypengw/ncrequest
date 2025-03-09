@@ -30,13 +30,13 @@ export using voidp       = void*;
 export using const_voidp = const void*;
 
 export template<typename T>
-using arc = std::shared_ptr<T>;
+using Arc = std::shared_ptr<T>;
 
 export template<typename T>
-using weak = std::weak_ptr<T>;
+using Weak = std::weak_ptr<T>;
 
 export template<typename T, typename D = std::default_delete<T>>
-using box = std::unique_ptr<T, D>;
+using Box = std::unique_ptr<T, D>;
 
 export struct NoCopy {
 protected:

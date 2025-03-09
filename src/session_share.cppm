@@ -17,7 +17,7 @@ public:
     void save(const std::filesystem::path& p) const;
 
 private:
-    arc<Private>           d_ptr;
+    Arc<Private>           d_ptr;
     inline Private*       d_func() { return d_ptr.get(); }
     inline const Private* d_func() const { return d_ptr.get(); }
 };

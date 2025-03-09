@@ -65,14 +65,14 @@ attr_value attr_from_easy(CurlEasy& easy) {
 
 } // namespace
 
-Response::Private::Private(Response* res, const Request& req, Operation oper, arc<Session> ses)
+Response::Private::Private(Response* res, const Request& req, Operation oper, Arc<Session> ses)
     : m_q(res),
       m_req(req),
       m_operation(oper),
       m_connect(make_arc<Connection>(ses->get_executor(), ses->channel_rc(), ses->allocator())),
       m_allocator(ses->allocator()) {}
 
-Response::Response(const Request& req, Operation oper, arc<Session> ses) noexcept
+Response::Response(const Request& req, Operation oper, Arc<Session> ses) noexcept
     : m_d(make_box<Private>(this, req, oper, ses)) {
     C_D(Response);
     auto& easy = connection().easy();
@@ -101,7 +101,7 @@ auto Response::allocator() const -> const std::pmr::polymorphic_allocator<char>&
     return d->m_allocator;
 }
 
-arc<Response> Response::make_response(const Request& req, Operation oper, arc<Session> ses) {
+Arc<Response> Response::make_response(const Request& req, Operation oper, Arc<Session> ses) {
     return std::make_shared<Response>(req, oper, ses);
 }
 
@@ -191,7 +191,7 @@ attr_value Response::attribute(Attribute A) const {
     return {};
 }
 
-arc<Response> Response::get_rc() { return shared_from_this(); }
+Arc<Response> Response::get_arc() { return shared_from_this(); }
 
 auto Response::header() const -> const HttpHeader& { return connection().header(); }
 auto Response::code() const -> std::optional<i32> {

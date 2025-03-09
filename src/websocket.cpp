@@ -15,7 +15,7 @@ import rstd.rc;
 namespace ncrequest
 {
 
-WebSocketClient::WebSocketClient(box<event::Context> ioc, std::optional<u64> max_buffer_size,
+WebSocketClient::WebSocketClient(Box<event::Context> ioc, std::optional<u64> max_buffer_size,
                                  std::pmr::memory_resource* mem_pool)
     : m_curl(curl_easy_init()),
       m_connected(false),

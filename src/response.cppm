@@ -94,8 +94,8 @@ public:
         co_return size;
     }
 
-    static auto make_response(const Request&, Operation, arc<Session>) -> arc<Response>;
-    Response(const Request&, Operation, arc<Session>) noexcept;
+    static auto make_response(const Request&, Operation, Arc<Session>) -> Arc<Response>;
+    Response(const Request&, Operation, Arc<Session>) noexcept;
     ~Response() noexcept;
 
     auto is_finished() const -> bool;
@@ -107,7 +107,7 @@ public:
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
 
-    auto get_rc() -> arc<Response>;
+    auto get_arc() -> Arc<Response>;
 
     void cancel();
     auto allocator() const -> const allocator_type&;
@@ -126,14 +126,14 @@ private:
     auto connection() const -> const Connection&;
 
 private:
-    box<Private>          m_d;
+    Box<Private>          m_d;
     inline Private*       d_func() { return m_d.get(); }
     inline const Private* d_func() const { return m_d.get(); }
 };
 
 class Response::Private {
 public:
-    Private(Response*, const Request&, Operation, arc<Session>);
+    Private(Response*, const Request&, Operation, Arc<Session>);
     friend class Response;
 
     void set_share(const std::optional<SessionShare>& share) { m_share = share; }
@@ -146,7 +146,7 @@ private:
     bool      m_finished;
 
     asio::streambuf             m_send_buffer;
-    arc<Connection>             m_connect;
+    Arc<Connection>             m_connect;
     std::optional<SessionShare> m_share;
 
     std::pmr::polymorphic_allocator<char> m_allocator;

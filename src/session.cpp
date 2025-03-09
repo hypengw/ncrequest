@@ -53,19 +53,19 @@ public:
     asio::awaitable<void> run();
     void                  handle_message(const SessionMessage&);
 
-    void add_connect(const arc<Connection>&);
-    void remove_connect(const arc<Connection>&);
+    void add_connect(const Arc<Connection>&);
+    void remove_connect(const Arc<Connection>&);
 
 private:
     Session&                    m_p;
-    box<CurlMulti>              m_curl_multi;
+    Box<CurlMulti>              m_curl_multi;
     executor_type               m_ex;
     asio::strand<executor_type> m_strand;
-    std::set<arc<Connection>>   m_connect_set;
+    std::set<Arc<Connection>>   m_connect_set;
 
     asio::thread_pool      m_poll_thread;
-    arc<channel_poll_type> m_channel;
-    arc<channel_type>      m_channel_with_notify;
+    Arc<channel_poll_type> m_channel;
+    Arc<channel_type>      m_channel_with_notify;
     bool                   m_stopped;
 
     std::optional<req_opt::Proxy>        m_proxy;
@@ -76,14 +76,14 @@ private:
 Session::Session(executor_type ex, std::pmr::memory_resource* mem_pool)
     : m_d(std::make_unique<Private>(*this, ex, mem_pool)) {}
 
-auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> arc<Session> {
+auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> Arc<Session> {
     struct Session_ : Session {
         Session_(executor_type ex, std::pmr::memory_resource* memory): Session(ex, memory) {}
     };
-    arc<Session> session = make_arc<Session_>(ex, memory);
+    Arc<Session> session = make_arc<Session_>(ex, memory);
     auto         d       = session->m_d.get();
 
-    asio::dispatch(d->m_poll_thread.get_executor(), [self = session->get_rc(), d]() {
+    asio::dispatch(d->m_poll_thread.get_executor(), [self = session->get_arc(), d]() {
         asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached);
         asio::co_spawn(
             d->m_channel_with_notify->get_executor(),
@@ -136,13 +136,13 @@ auto Session::prepare_req(const Request& req) const -> Request {
     return o;
 }
 
-auto Session::perform(arc<Response>& rsp) -> asio::awaitable<bool> {
+auto Session::perform(Arc<Response>& rsp) -> asio::awaitable<bool> {
     C_D(Session);
     auto& con = rsp->connection();
     rsp->prepare_perform();
 
     sm::ConnectAction msg {
-        .con    = con.get_rc(),
+        .con    = con.get_arc(),
         .action = sm::ConnectAction::Action::Add,
     };
 
@@ -152,7 +152,7 @@ auto Session::perform(arc<Response>& rsp) -> asio::awaitable<bool> {
     co_return true;
 }
 
-auto Session::get(const Request& req) -> asio::awaitable<std::optional<arc<Response>>> {
+auto Session::get(const Request& req) -> asio::awaitable<std::optional<Arc<Response>>> {
     C_D(Session);
     auto res =
         Response::make_response(prepare_req(req), Operation::GetOperation, shared_from_this());
@@ -161,18 +161,18 @@ auto Session::get(const Request& req) -> asio::awaitable<std::optional<arc<Respo
     co_return std::nullopt;
 }
 
-auto Session::post(const Request& req) -> asio::awaitable<std::optional<arc<Response>>> {
+auto Session::post(const Request& req) -> asio::awaitable<std::optional<Arc<Response>>> {
     C_D(Session);
-    arc<Response> res =
+    Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     if (co_await perform(res)) co_return res;
     co_return std::nullopt;
 }
 
 auto Session::post(const Request& req, asio::const_buffer buf)
-    -> asio::awaitable<std::optional<arc<Response>>> {
+    -> asio::awaitable<std::optional<Arc<Response>>> {
     C_D(Session);
-    arc<Response> res =
+    Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     res->add_send_buffer(buf);
 
@@ -224,7 +224,7 @@ Session::channel_type& Session::channel() {
     return *(d->m_channel_with_notify);
 }
 
-auto Session::channel_rc() -> arc<Session::channel_type> {
+auto Session::channel_rc() -> Arc<Session::channel_type> {
     C_D(Session);
     return d->m_channel_with_notify;
 }
@@ -234,7 +234,7 @@ void Session::about_to_stop() {
     channel().try_send(asio::error_code {}, sm::Stop {});
 }
 
-void Session::Private::add_connect(const arc<Connection>& con) {
+void Session::Private::add_connect(const Arc<Connection>& con) {
     auto ec = m_curl_multi->add_handle(con->easy());
     if (ec) {
         ERROR_LOG("{}", ec.message());
@@ -244,7 +244,7 @@ void Session::Private::add_connect(const arc<Connection>& con) {
     con->transfreing();
     m_connect_set.insert(con);
 }
-void Session::Private::remove_connect(const arc<Connection>& con) {
+void Session::Private::remove_connect(const Arc<Connection>& con) {
     DEBUG_LOG("end {}", con->url());
     auto ec = m_curl_multi->remove_handle(con->easy());
     m_connect_set.erase(con);
@@ -273,7 +273,7 @@ auto Session::Private::run() -> asio::awaitable<void> {
         auto infos = m_curl_multi->query_info_msg();
         for (auto& m : infos) {
             if (m.msg != CURLMSG_DONE) continue;
-            auto con = get_curl_private<Connection*>(m.easy_handle)->get_rc();
+            auto con = get_curl_private<Connection*>(m.easy_handle)->get_arc();
             con->finish(m.result);
             remove_connect(con);
             running_connect--;

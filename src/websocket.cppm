@@ -25,7 +25,7 @@ public:
     using ErrorCallback     = std::function<void(std::string_view)>;
 
     explicit WebSocketClient(
-        box<event::Context> ioc, std::optional<u64> max_buffer_size = std::nullopt,
+        Box<event::Context> ioc, std::optional<u64> max_buffer_size = std::nullopt,
         std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource());
     ~WebSocketClient();
     WebSocketClient(const WebSocketClient&)            = delete;
@@ -64,7 +64,7 @@ private:
     std::pmr::deque<rstd::rc::Rc<const std::byte[]>> m_msgs;
     u64                                              m_sent_len;
 
-    box<event::Context> m_context;
+    Box<event::Context> m_context;
 };
 
 } // namespace ncrequest

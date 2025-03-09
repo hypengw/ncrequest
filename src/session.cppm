@@ -29,15 +29,15 @@ public:
     class Private;
     ~Session();
 
-    static auto make(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource()) -> arc<Session>;
+    static auto make(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource()) -> Arc<Session>;
 
     auto get_executor() -> executor_type&;
     auto get_strand() -> asio::strand<executor_type>&;
-    auto get_rc() { return shared_from_this(); }
+    auto get_arc() { return shared_from_this(); }
 
-    auto get(const Request&) -> asio::awaitable<std::optional<arc<Response>>>;
-    auto post(const Request&) -> asio::awaitable<std::optional<arc<Response>>>;
-    auto post(const Request&, asio::const_buffer) -> asio::awaitable<std::optional<arc<Response>>>;
+    auto get(const Request&) -> asio::awaitable<std::optional<Arc<Response>>>;
+    auto post(const Request&) -> asio::awaitable<std::optional<Arc<Response>>>;
+    auto post(const Request&, asio::const_buffer) -> asio::awaitable<std::optional<Arc<Response>>>;
 
     auto cookies() -> std::vector<std::string>;
     void load_cookie(std::filesystem::path);
@@ -48,15 +48,15 @@ public:
     void about_to_stop();
 
     auto channel() -> channel_type&;
-    auto channel_rc() -> arc<channel_type>;
+    auto channel_rc() -> Arc<channel_type>;
     auto allocator() -> std::pmr::polymorphic_allocator<byte>;
 
 private:
     Session(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource());
-    auto perform(arc<Response>&) -> asio::awaitable<bool>;
+    auto perform(Arc<Response>&) -> asio::awaitable<bool>;
     auto prepare_req(const Request&) const -> Request;
 
-    box<Private>          m_d;
+    Box<Private>          m_d;
     inline Private*       d_func() { return m_d.get(); }
     inline const Private* d_func() const { return m_d.get(); }
 };
