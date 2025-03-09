@@ -74,10 +74,16 @@ private:
 };
 
 Session::Session(executor_type ex, std::pmr::memory_resource* mem_pool)
-    : m_d(std::make_unique<Private>(*this, ex, mem_pool)) {
-    C_D(Session);
-    asio::dispatch(d->m_poll_thread.get_executor(), [this, d]() {
-        auto self = get_rc();
+    : m_d(std::make_unique<Private>(*this, ex, mem_pool)) {}
+
+auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> arc<Session> {
+    struct Session_ : Session {
+        Session_(executor_type ex, std::pmr::memory_resource* memory): Session(ex, memory) {}
+    };
+    arc<Session> session = make_arc<Session_>(ex, memory);
+    auto         d       = session->m_d.get();
+
+    asio::dispatch(d->m_poll_thread.get_executor(), [self = session->get_rc(), d]() {
         asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached);
         asio::co_spawn(
             d->m_channel_with_notify->get_executor(),
@@ -99,6 +105,7 @@ Session::Session(executor_type ex, std::pmr::memory_resource* mem_pool)
             },
             asio::detached);
     });
+    return session;
 }
 
 Session::~Session() {

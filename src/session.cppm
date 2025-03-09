@@ -27,8 +27,9 @@ public:
     using channel_type  = SessionChannel;
 
     class Private;
-    Session(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource());
     ~Session();
+
+    static auto make(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource()) -> arc<Session>;
 
     auto get_executor() -> executor_type&;
     auto get_strand() -> asio::strand<executor_type>&;
@@ -51,6 +52,7 @@ public:
     auto allocator() -> std::pmr::polymorphic_allocator<byte>;
 
 private:
+    Session(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource());
     auto perform(arc<Response>&) -> asio::awaitable<bool>;
     auto prepare_req(const Request&) const -> Request;
 
