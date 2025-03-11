@@ -10,9 +10,9 @@ project(
 option(NCREQUEST_BUILD_TESTS "Build tests" ${PROJECT_IS_TOP_LEVEL})
 
 if(PROJECT_IS_TOP_LEVEL)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -21,18 +21,17 @@ include(FetchContent)
 
 # curl
 find_package(CURL REQUIRED)
+
 # pegtl
-find_package(pegtl QUIET)
-if(NOT pegtl_FOUND)
-  message(STATUS "ncrequest: pegtl not found, fetching it...")
-  FetchContent_Declare(
-    pegtl
-    GIT_REPOSITORY https://github.com/taocpp/PEGTL.git
-    GIT_TAG 3.2.8
-    GIT_SHALLOW 1
-    EXCLUDE_FROM_ALL)
-  FetchContent_MakeAvailable(pegtl)
-endif()
+FetchContent_Declare(
+  pegtl
+  GIT_REPOSITORY https://github.com/taocpp/PEGTL.git
+  GIT_TAG 3.2.8
+  GIT_SHALLOW 1
+  GIT_PROGRESS 1
+  SYSTEM EXCLUDE_FROM_ALL FIND_PACKAGE_ARGS 3.2.7 QUIET GLOBAL)
+FetchContent_MakeAvailable(pegtl)
+
 # asio
 if(NOT TARGET asio)
   add_library(asio INTERFACE)
@@ -52,20 +51,14 @@ if(NOT TARGET asio)
     target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIRS})
   endif()
 endif()
-# rc
-if(NOT TARGET rc)
-  find_package(rc QUIET)
-  if(NOT RC_FOUND)
-    message(STATUS "rc not found, fetching it...")
-    FetchContent_Declare(
-      rc
-      GIT_REPOSITORY https://github.com/hypengw/rc.git
-      GIT_TAG 6f20a1f00c29187c3907a596edd74990482aac7e
-      GIT_SHALLOW TRUE
-      EXCLUDE_FROM_ALL)
-    FetchContent_MakeAvailable(rc)
-  endif()
-endif()
+
+FetchContent_Declare(
+  rstd
+  GIT_REPOSITORY https://github.com/hypengw/rstd.git
+  GIT_TAG d67f3dfa182ad75dbb5c92712c5cf51964128df6
+  GIT_SHALLOW TRUE
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(rstd)
 
 add_library(ncrequest STATIC)
 add_library(ncrequest::ncrequest ALIAS ncrequest)
@@ -101,15 +94,15 @@ target_sources(
 target_sources(
   ncrequest
   PRIVATE src/peg/uri.hpp
-         src/peg/http.hpp
-         src/curl/init.cpp
-         src/http.cpp
-         src/request.cpp
-         src/response.cpp
-         src/session.cpp
-         src/session_share.cpp
-         src/websocket.cpp
-         src/type.cpp)
+          src/peg/http.hpp
+          src/curl/init.cpp
+          src/http.cpp
+          src/request.cpp
+          src/response.cpp
+          src/session.cpp
+          src/session_share.cpp
+          src/websocket.cpp
+          src/type.cpp)
 
 target_include_directories(ncrequest PRIVATE src)
 
@@ -120,7 +113,8 @@ if(PROJECT_IS_TOP_LEVEL)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio rstd::rc)
+target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio
+                                        rstd::rc)
 
 if(NCREQUEST_BUILD_TESTS)
   include(CTest)
