@@ -109,10 +109,11 @@ void WebSocketClient::do_read() {
         }
         {
             bool last = ! (meta->flags & CURLWS_CONT) && meta->bytesleft == 0;
-            if (rlen >= 0 && m_on_message) {
-                m_on_message(std::span<const std::byte> { m_read_buffer.data(), m_read_len }, last);
-            }
-            if (last || m_read_buffer.size() == m_read_len) {
+            if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
+                if (m_on_message) {
+                    m_on_message(std::span<const std::byte> { m_read_buffer.data(), m_read_len },
+                                 last);
+                }
                 m_read_len = 0;
             }
         }
