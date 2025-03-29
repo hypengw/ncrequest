@@ -112,7 +112,7 @@ export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::e
 namespace ncrequest
 {
 
-class Request : rstd::WithTrait<Request, rstd::clone::Clone> {
+class Request : public rstd::WithTrait<Request, rstd::clone::Clone> {
     friend class Session;
     friend class Response;
     template<typename, typename>
