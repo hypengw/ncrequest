@@ -14,5 +14,6 @@ export constexpr asio::use_awaitable_t<> use_coro;
 
 export using const_buffer   = asio::const_buffer;
 export using mutable_buffer = asio::mutable_buffer;
+export using CoroError      = asio::error_code;
 
 } // namespace ncrequest

@@ -11,6 +11,10 @@ module;
 #include <asio/any_completion_handler.hpp>
 #include <asio/associated_executor.hpp>
 #include <asio/dispatch.hpp>
+#include <asio/streambuf.hpp>
+#include <asio/bind_executor.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/read.hpp>
 
 #include "macro.hpp"
 
@@ -193,5 +197,37 @@ auto Response::connection() const -> const Connection& { return *(m_inner->m_con
 
 void Response::cancel() { connection().about_to_cancel(); }
 
-auto Response::text() -> coro<Result<std::string>> { co_return Err(Error {}); }
-auto Response::bytes() -> coro<Result<std::vector<byte>>> { co_return Err(Error {}); }
+auto Response::text() -> coro<Result<std::string>> {
+    asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
+    buf.prepare(ReadSize);
+
+    auto [ec, size] =
+        co_await asio::async_read(*this,
+                                  buf,
+                                  asio::transfer_all(),
+                                  asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
+    if (ec != asio::stream_errc::eof) {
+        asio::detail::throw_error(ec);
+    }
+    std::string out;
+    out.resize(buf.in_avail());
+    buf.sgetn((char*)(out.data()), out.size());
+    co_return Ok(std::move(out));
+}
+auto Response::bytes() -> coro<Result<std::vector<byte>>> {
+    std::vector<byte>                     out;
+    asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
+    buf.prepare(ReadSize);
+
+    auto [ec, size] =
+        co_await asio::async_read(*this,
+                                  buf,
+                                  asio::transfer_all(),
+                                  asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
+    if (ec != asio::stream_errc::eof) {
+        asio::detail::throw_error(ec);
+    }
+    out.resize(buf.in_avail());
+    buf.sgetn((char*)(out.data()), out.size());
+    co_return Ok(std::move(out));
+}
