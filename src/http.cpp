@@ -12,7 +12,6 @@ module ncrequest;
 import :http;
 import ncrequest.type;
 
-
 namespace pegtl = tao::pegtl;
 
 namespace ncrequest
@@ -21,7 +20,7 @@ namespace ncrequest
 namespace uri_rule
 {
 
-template<std::string_view URI::*Field>
+template<std::string_view URI::* Field>
 struct bind {
     template<typename Rule>
     static void reset(URI& uri) {
@@ -127,8 +126,8 @@ struct StartLineHelperAction {
              template<typename...> class Action, template<typename...> class Control,
              typename ParseInput>
     static bool match(ParseInput& in, HttpHeader& f) {
-        f.start = HttpHeader::Start {};
-        return match<Rule, A, M, Action, Control>(in, f.start.value());
+        f.start = Some(HttpHeader::Start {});
+        return match<Rule, A, M, Action, Control>(in, *f.start);
     }
 };
 
@@ -214,23 +213,23 @@ URI URI::from(std::string_view in) { return URI(in); }
 
 bool URI::valid() const { return m_valid; }
 
-auto HttpHeader::parse_header(std::string_view in) -> std::optional<HttpHeader> {
+auto HttpHeader::parse_header(std::string_view in) -> rstd::Option<HttpHeader> {
     HttpHeader          out;
     pegtl::memory_input input(in.data(), in.size(), "http");
     if (pegtl::parse<grammer_http::HTTP_message, http_rule::action>(input, out))
-        return out;
+        return Some(std::move(out));
     else
-        return std::nullopt;
+        return None();
 }
 
-auto HttpHeader::parse_start_line(std::string_view in) -> std::optional<Start> {
+auto HttpHeader::parse_start_line(std::string_view in) -> rstd::Option<Start> {
     HttpHeader::Start out;
 
     pegtl::memory_input input(in.data(), in.size(), "http start line");
     if (pegtl::parse<grammer_http::start_line, http_rule::action>(input, out))
-        return out;
+        return Some(std::move(out));
     else
-        return std::nullopt;
+        return None();
 }
 auto HttpHeader::parse_field_line(std::string_view in) -> Field {
     HttpHeader::Field out;

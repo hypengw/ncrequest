@@ -50,8 +50,8 @@ public:
 
     Private(Session&, executor_type& ex, std::pmr::memory_resource* mem_pool) noexcept;
 
-    asio::awaitable<void> run();
-    void                  handle_message(const SessionMessage&);
+    coro<void> run();
+    void       handle_message(const SessionMessage&);
 
     void add_connect(const Arc<Connection>&);
     void remove_connect(const Arc<Connection>&);
@@ -68,7 +68,7 @@ private:
     Arc<channel_type>      m_channel_with_notify;
     bool                   m_stopped;
 
-    std::optional<req_opt::Proxy>        m_proxy;
+    rstd::Option<req_opt::Proxy>         m_proxy;
     bool                                 m_ignore_certificate;
     std::pmr::synchronized_pool_resource m_memory;
 };
@@ -83,34 +83,37 @@ auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> Arc<S
     Arc<Session> session = make_arc<Session_>(ex, memory);
     auto         d       = session->m_d.get();
 
-    asio::dispatch(d->m_poll_thread.get_executor(), [self = session->get_arc(), d]() {
-        asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached);
-        asio::co_spawn(
-            d->m_channel_with_notify->get_executor(),
-            [d, self]() -> asio::awaitable<void> {
-                for (;;) {
-                    auto [ec, msg] = co_await d->m_channel_with_notify->async_receive(
-                        asio::as_tuple(asio::use_awaitable));
-                    bool stopped = std::get_if<sm::Stop>(&msg);
+    asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached);
+    asio::co_spawn(
+        d->m_channel_with_notify->get_executor(),
+        [self_weak = session->weak_from_this(),
+         channel   = d->m_channel_with_notify]() -> coro<void> {
+            for (;;) {
+                auto [ec, msg] = co_await channel->async_receive(asio::as_tuple(use_coro));
+                bool stopped   = std::get_if<sm::Stop>(&msg);
+                if (auto self = self_weak.lock(); self && ! stopped) {
+                    auto d       = self->m_d.get();
                     bool send_ok = d->m_channel->try_send(ec, msg);
                     // notify
                     d->m_curl_multi->wakeup();
-                    if (stopped) break;
                     // if channel full, wait
                     if (! send_ok) {
-                        co_await d->m_channel->async_send(ec, msg, asio::use_awaitable);
+                        co_await d->m_channel->async_send(ec, msg, use_coro);
                     }
+                } else {
+                    break;
                 }
-                co_return;
-            },
-            asio::detached);
-    });
+            }
+            co_return;
+        },
+        asio::detached);
     return session;
 }
 
 Session::~Session() {
     C_D(Session);
     about_to_stop();
+
     d->m_poll_thread.join();
 }
 
@@ -130,13 +133,13 @@ auto Session::allocator() -> std::pmr::polymorphic_allocator<byte> {
 
 auto Session::prepare_req(const Request& req) const -> Request {
     C_D(const Session);
-    Request o { req };
-    if (d->m_proxy) o.set_opt(d->m_proxy.value());
+    Request o{ req.clone() };
+    if (d->m_proxy) o.set_opt(d->m_proxy.clone().unwrap());
     if (d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
-    return o;
+    return std::move(o);
 }
 
-auto Session::perform(Arc<Response>& rsp) -> asio::awaitable<bool> {
+auto Session::perform(Arc<Response>& rsp) -> coro<bool> {
     C_D(Session);
     auto& con = rsp->connection();
     rsp->prepare_perform();
@@ -146,38 +149,38 @@ auto Session::perform(Arc<Response>& rsp) -> asio::awaitable<bool> {
         .action = sm::ConnectAction::Action::Add,
     };
 
-    co_await channel().async_send(asio::error_code {}, msg, asio::use_awaitable);
+    co_await channel().async_send(asio::error_code {}, msg, use_coro);
 
-    co_await con.async_wait_header(asio::use_awaitable);
+    co_await con.async_wait_header(use_coro);
     co_return true;
 }
 
-auto Session::get(const Request& req) -> asio::awaitable<std::optional<Arc<Response>>> {
+auto Session::get(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
     C_D(Session);
     auto res =
         Response::make_response(prepare_req(req), Operation::GetOperation, shared_from_this());
 
-    if (co_await perform(res)) co_return res;
-    co_return std::nullopt;
+    if (co_await perform(res)) co_return Some(std::move(res));
+    co_return None();
 }
 
-auto Session::post(const Request& req) -> asio::awaitable<std::optional<Arc<Response>>> {
+auto Session::post(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
     C_D(Session);
     Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
-    if (co_await perform(res)) co_return res;
-    co_return std::nullopt;
+    if (co_await perform(res)) co_return Some(std::move(res));
+    co_return None();
 }
 
 auto Session::post(const Request& req, asio::const_buffer buf)
-    -> asio::awaitable<std::optional<Arc<Response>>> {
+    -> coro<rstd::Option<Arc<Response>>> {
     C_D(Session);
     Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     res->add_send_buffer(buf);
 
-    if (co_await perform(res)) co_return res;
-    co_return std::nullopt;
+    if (co_await perform(res)) co_return Some(std::move(res));
+    co_return None();
 }
 
 Session::Private::Private(Session& p, executor_type& ex,
@@ -212,7 +215,7 @@ auto Session::cookies() -> std::vector<std::string> {
 }
 void Session::set_proxy(const req_opt::Proxy& p) {
     C_D(Session);
-    d->m_proxy = p;
+    d->m_proxy = Some(p.clone());
 }
 void Session::set_verify_certificate(bool v) {
     C_D(Session);
@@ -232,6 +235,9 @@ auto Session::channel_rc() -> Arc<Session::channel_type> {
 void Session::about_to_stop() {
     C_D(Session);
     channel().try_send(asio::error_code {}, sm::Stop {});
+    d->m_channel->try_send(asio::error_code {}, sm::Stop {});
+    // notify
+    d->m_curl_multi->wakeup();
 }
 
 void Session::Private::add_connect(const Arc<Connection>& con) {
@@ -253,10 +259,10 @@ void Session::Private::remove_connect(const Arc<Connection>& con) {
     }
 }
 
-auto Session::Private::run() -> asio::awaitable<void> {
+auto Session::Private::run() -> coro<void> {
     do {
         while (m_connect_set.empty() && ! m_stopped) {
-            auto msg = co_await m_channel->async_receive(asio::use_awaitable);
+            auto msg = co_await m_channel->async_receive(use_coro);
             handle_message(msg);
         }
         while (m_channel->try_receive([this](auto, const auto& m) {

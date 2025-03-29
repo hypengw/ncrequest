@@ -35,9 +35,9 @@ public:
     auto get_strand() -> asio::strand<executor_type>&;
     auto get_arc() { return shared_from_this(); }
 
-    auto get(const Request&) -> asio::awaitable<std::optional<Arc<Response>>>;
-    auto post(const Request&) -> asio::awaitable<std::optional<Arc<Response>>>;
-    auto post(const Request&, asio::const_buffer) -> asio::awaitable<std::optional<Arc<Response>>>;
+    auto get(const Request&) -> coro<rstd::Option<Arc<Response>>>;
+    auto post(const Request&) -> coro<rstd::Option<Arc<Response>>>;
+    auto post(const Request&, asio::const_buffer) -> coro<rstd::Option<Arc<Response>>>;
 
     auto cookies() -> std::vector<std::string>;
     void load_cookie(std::filesystem::path);
@@ -53,7 +53,7 @@ public:
 
 private:
     Session(executor_type ex, std::pmr::memory_resource* = std::pmr::get_default_resource());
-    auto perform(Arc<Response>&) -> asio::awaitable<bool>;
+    auto perform(Arc<Response>&) -> coro<bool>;
     auto prepare_req(const Request&) const -> Request;
 
     Box<Private>          m_d;

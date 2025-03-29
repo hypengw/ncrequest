@@ -53,13 +53,13 @@ export struct HttpHeader {
     };
     using Start = std::variant<Request, Status>;
 
-    std::optional<Start> start;
-    std::vector<Field>   fields;
+    rstd::Option<Start> start;
+    std::vector<Field>  fields;
 
     auto has_field(std::string_view) const -> bool;
 
-    static auto parse_header(std::string_view) -> std::optional<HttpHeader>;
-    static auto parse_start_line(std::string_view) -> std::optional<Start>;
+    static auto parse_header(std::string_view) -> rstd::Option<HttpHeader>;
+    static auto parse_start_line(std::string_view) -> rstd::Option<Start>;
     static auto parse_field_line(std::string_view) -> Field;
 };
 

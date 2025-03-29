@@ -49,7 +49,7 @@ void apply_easy_request(Response::Private* rsp, CurlEasy& easy, const Request& r
         if (p.share) {
             easy.setopt<CURLOPT_SHARE>(p.share->handle());
         }
-        rsp->set_share(p.share);
+        rsp->set_share(p.share.clone());
     }
     easy.set_header(req.header());
 }
@@ -67,7 +67,7 @@ attr_value attr_from_easy(CurlEasy& easy) {
 
 Response::Private::Private(Response* res, const Request& req, Operation oper, Arc<Session> ses)
     : m_q(res),
-      m_req(req),
+      m_req(req.clone()),
       m_operation(oper),
       m_connect(make_arc<Connection>(ses->get_executor(), ses->channel_rc(), ses->allocator())),
       m_allocator(ses->allocator()) {}
@@ -194,14 +194,14 @@ attr_value Response::attribute(Attribute A) const {
 Arc<Response> Response::get_arc() { return shared_from_this(); }
 
 auto Response::header() const -> const HttpHeader& { return connection().header(); }
-auto Response::code() const -> std::optional<i32> {
+auto Response::code() const -> rstd::Option<i32> {
     auto& start = this->header().start;
     if (start) {
-        if (auto status = std::get_if<HttpHeader::Status>(&start.value())) {
-            return status->code;
+        if (auto status = std::get_if<HttpHeader::Status>(&*start)) {
+            return Some((i32)(status->code));
         }
     }
-    return std::nullopt;
+    return None();
 }
 auto Response::connection() -> Connection& {
     C_D(Response);

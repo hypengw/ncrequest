@@ -3,31 +3,16 @@ module;
 #include <map>
 #include <variant>
 #include <vector>
-#include <cstdint>
 #include <memory>
-#include <asio/buffer.hpp>
 
 export module ncrequest.type;
+export import ncrequest.coro;
+export import rstd;
 
 namespace ncrequest
 {
 
-export using i8  = std::int8_t;
-export using i16 = std::int16_t;
-export using i32 = std::int32_t;
-export using i64 = std::int64_t;
-
-export using u8  = std::uint8_t;
-export using u16 = std::uint16_t;
-export using u32 = std::uint32_t;
-export using u64 = std::uint64_t;
-
-export using idx         = std::ptrdiff_t;
-export using usize       = std::size_t;
-export using isize       = std::ptrdiff_t;
-export using byte        = std::byte;
-export using voidp       = void*;
-export using const_voidp = const void*;
+export using namespace rstd;
 
 export template<typename T>
 using Arc = std::shared_ptr<T>;
@@ -45,16 +30,6 @@ protected:
 
     NoCopy(const NoCopy&)            = delete;
     NoCopy& operator=(const NoCopy&) = delete;
-};
-
-export template<typename T>
-class rc {
-public:
-    rc() {}
-
-private:
-    struct Inner {};
-    Inner* data;
 };
 
 export template<class T, template<class...> class Primary>
@@ -163,7 +138,7 @@ export template<class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
 export template<typename T>
-concept is_sync_stream = requires(T s, asio::const_buffer buf) {
+concept is_sync_stream = requires(T s, const_buffer buf) {
     { s.write_some(buf) } -> std::convertible_to<std::size_t>;
 };
 

@@ -25,7 +25,7 @@ public:
     using ErrorCallback     = std::function<void(std::string_view)>;
 
     explicit WebSocketClient(
-        Box<event::Context> ioc, std::optional<u64> max_buffer_size = std::nullopt,
+        Box<event::Context> ioc, rstd::Option<u64> max_buffer_size = None(),
         std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource());
     ~WebSocketClient();
     WebSocketClient(const WebSocketClient&)            = delete;

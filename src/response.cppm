@@ -37,7 +37,7 @@ public:
     executor_type& get_executor();
 
     template<Attribute A, typename T = attr_type<A>>
-    auto attribute(void) const -> std::optional<T> {
+    auto attribute(void) const -> rstd::Option<T> {
         auto a = attribute(A);
         if (a.index() == 0) {
             return std::nullopt;
@@ -48,7 +48,7 @@ public:
     auto attribute(Attribute) const -> attr_value;
 
     auto header() const -> const HttpHeader&;
-    auto code() const -> std::optional<i32>;
+    auto code() const -> rstd::Option<i32>;
 
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
@@ -76,7 +76,7 @@ public:
 
     template<typename SyncWriteStream>
         requires helper::is_sync_stream<SyncWriteStream>
-    auto read_to_stream(SyncWriteStream& writer) -> asio::awaitable<usize> {
+    auto read_to_stream(SyncWriteStream& writer) -> coro<usize> {
         asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
         buf.prepare(ReadSize);
 
@@ -87,7 +87,7 @@ public:
                 buf.consume(writer.write_some(buf.data()));
                 return ! ! err ? 0 : asio::detail::default_max_transfer_size;
             },
-            asio::as_tuple(asio::bind_executor(get_executor(), asio::use_awaitable)));
+            asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
         if (ec != asio::stream_errc::eof) {
             asio::detail::throw_error(ec);
         }
@@ -136,7 +136,7 @@ public:
     Private(Response*, const Request&, Operation, Arc<Session>);
     friend class Response;
 
-    void set_share(const std::optional<SessionShare>& share) { m_share = share; }
+    void set_share(rstd::Option<SessionShare> share) { m_share = std::move(share); }
 
 private:
     Response* m_q;
@@ -145,9 +145,9 @@ private:
     Operation m_operation;
     bool      m_finished;
 
-    asio::streambuf             m_send_buffer;
-    Arc<Connection>             m_connect;
-    std::optional<SessionShare> m_share;
+    asio::streambuf            m_send_buffer;
+    Arc<Connection>            m_connect;
+    rstd::Option<SessionShare> m_share;
 
     std::pmr::polymorphic_allocator<char> m_allocator;
 };

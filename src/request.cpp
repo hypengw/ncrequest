@@ -20,10 +20,12 @@ Request::Request() noexcept
                req_opt::Proxy {},
                req_opt::Tcp { .keepalive = false, .keepidle = 120, .keepintvl = 60 },
                req_opt::SSL { .verify_certificate = true },
-               {},
-               {} } {}
+               req_opt::Read {},
+               req_opt::Share {} } {}
 Request::Request(std::string_view url) noexcept: Request() { set_url(url); }
 Request::~Request() noexcept {}
+Request::Request(Request&&) noexcept            = default;
+Request& Request::operator=(Request&&) noexcept = default;
 
 std::string_view Request::url() const { return m_uri.uri; }
 
@@ -73,10 +75,35 @@ voidp Request::get_opt(usize idx) {
     });
 }
 
-void Request::set_opt(const RequestOpt& opt) {
+void Request::set_opt(RequestOpt&& opt) {
     std::get<req_opt::Proxy>(m_opts);
-    std::visit(helper::overloaded { [this](const auto& t) {
-                   std::get<std::decay_t<decltype(t)>>(m_opts) = t;
+    std::visit(helper::overloaded { [this](auto&& t) {
+                   std::get<std::decay_t<decltype(t)>>(m_opts) = std::move(t);
                } },
-               opt);
+               std::move(opt));
+}
+
+auto rstd::Impl<rstd::clone::Clone, ncrequest::Request>::clone(TraitPtr ptr) -> ncrequest::Request {
+    auto  req    = ncrequest::Request {};
+    auto& self   = ptr.as_ref<ncrequest::Request>();
+    req.m_uri    = self.m_uri;
+    req.m_header = self.m_header;
+    req.m_opts   = std::apply(
+        [](const auto&... elements) -> decltype(req.m_opts) {
+            return { rstd::Impl<rstd::clone::Clone, std::decay_t<decltype(elements)>>::clone(
+                &elements)... };
+        },
+        self.m_opts);
+    constexpr auto ss = [](decltype(req.m_opts)& opts) {
+        for (usize i = 0; i < std::tuple_size_v<std::decay_t<decltype(opts)>>; i++) {
+            auto x = std::get<0>(opts);
+        }
+    };
+    return req;
+}
+
+auto rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>::clone(TraitPtr ptr)
+    -> ncrequest::req_opt::Share {
+    auto& self = ptr.as_ref<ncrequest::req_opt::Share>();
+    return { .share = self.share.clone() };
 }

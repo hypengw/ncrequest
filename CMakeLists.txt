@@ -55,7 +55,7 @@ endif()
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG eca56cb3740e81290a31f8fee574ccd4b1380c1c
+  GIT_TAG 4c13f1bed78d2c74adde6570b2d80041cbabd5e4
   GIT_SHALLOW TRUE
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(rstd)
@@ -72,6 +72,7 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
+         src/asio.cppm
          src/type.cppm
          src/type_list.cppm
          src/connection.cppm
@@ -114,7 +115,7 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 
 target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio
-                                        rstd::rc)
+                                        rstd::rstd)
 
 if(NCREQUEST_BUILD_TESTS)
   include(CTest)

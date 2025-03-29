@@ -26,6 +26,29 @@ export import ncrequest.type_list;
 
 namespace ncrequest
 {
+
+export struct Request;
+namespace req_opt
+{
+export struct Proxy;
+export struct Share;
+} // namespace req_opt
+} // namespace ncrequest
+
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
+    : rstd::DefImpl<rstd::clone::Clone, ncrequest::Request> {
+    static auto clone(TraitPtr) -> ncrequest::Request;
+};
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
+    : rstd::DefImpl<rstd::clone::Clone, ncrequest::req_opt::Share> {
+    static auto clone(TraitPtr) -> ncrequest::req_opt::Share;
+};
+
+namespace ncrequest
+{
+
 namespace req_opt
 {
 export struct Timeout {
@@ -34,7 +57,7 @@ export struct Timeout {
     REQ_OPT_PROP(i64, transfer_timeout, {})
 };
 
-export struct Proxy {
+export struct Proxy : rstd::WithTrait<Proxy, rstd::clone::Clone> {
     enum class Type
     {
         HTTP    = 0,
@@ -64,8 +87,12 @@ export struct Read {
     REQ_OPT_PROP(usize, size, { 0 })
 };
 
-export struct Share {
-    REQ_OPT_PROP(std::optional<SessionShare>, share, {})
+export struct Share : rstd::WithTrait<Share, rstd::clone::Clone> {
+    rstd::Option<SessionShare> share {};
+    auto&                      set_share(rstd::Option<SessionShare> v) {
+        share = std::move(v);
+        return *this;
+    }
 };
 
 #undef REQ_OPT_PROP
@@ -81,16 +108,23 @@ export class Session;
 export class Response;
 
 export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
+} // namespace ncrequest
+namespace ncrequest
+{
 
-export class Request {
+class Request : rstd::WithTrait<Request, rstd::clone::Clone> {
     friend class Session;
     friend class Response;
+    template<typename, typename>
+    friend struct rstd::Impl;
 
 public:
     class Private;
     Request() noexcept;
     Request(std::string_view url) noexcept;
+    Request(Request&&) noexcept;
     ~Request() noexcept;
+    Request& operator=(Request&&) noexcept;
 
     auto url() const -> std::string_view;
     auto url_info() const -> const URI&;
@@ -115,7 +149,7 @@ public:
         return *(static_cast<const T*>(get_opt(idx)));
     }
 
-    void set_opt(const RequestOpt&);
+    void set_opt(RequestOpt&&);
 
 private:
     const_voidp get_opt(usize) const;

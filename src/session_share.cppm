@@ -6,7 +6,7 @@ export import ncrequest.type;
 
 namespace ncrequest
 {
-export class SessionShare {
+export class SessionShare : public rstd::WithTrait<SessionShare, rstd::clone::Clone> {
 public:
     class Private;
     SessionShare();
@@ -17,7 +17,7 @@ public:
     void save(const std::filesystem::path& p) const;
 
 private:
-    Arc<Private>           d_ptr;
+    Arc<Private>          d_ptr;
     inline Private*       d_func() { return d_ptr.get(); }
     inline const Private* d_func() const { return d_ptr.get(); }
 };
