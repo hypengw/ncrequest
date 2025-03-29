@@ -245,12 +245,10 @@ auto HttpHeader::has_field(std::string_view name) const -> bool {
                return helper::starts_with_i(f.name, name);
            });
 }
-} // namespace ncrequest
-
-auto rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>::clone(TraitPtr ptr)
-    -> ncrequest::HttpHeader {
-    auto& self = ptr.as_ref<ncrequest::HttpHeader>();
-    return { .start = self.start.clone(), .fields = self.fields };
+auto HttpHeader::clone() const -> ncrequest::HttpHeader {
+    return { .start = start.clone(), .fields = fields };
 }
 
-// namespace test
+void HttpHeader::clone_from(ncrequest::HttpHeader& r) { *this = r.clone(); }
+
+} // namespace ncrequest

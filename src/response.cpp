@@ -4,22 +4,27 @@ module;
 #include <cstdio>
 #include <cassert>
 #include <variant>
+#include <coroutine>
 
 #include <curl/curl.h>
 #include <asio/buffer.hpp>
 #include <asio/any_completion_handler.hpp>
+#include <asio/associated_executor.hpp>
+#include <asio/dispatch.hpp>
+
 #include "macro.hpp"
 
 module ncrequest;
 import :response;
 import :session;
+import ncrequest.coro;
 
 using namespace ncrequest;
 
 namespace
 {
 
-void apply_easy_request(Response::Private* rsp, CurlEasy& easy, const Request& req) {
+void apply_easy_request(Response::Inner* rsp, CurlEasy& easy, const Request& req) {
     easy.setopt(CURLOPT_URL, req.url().data());
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
@@ -65,7 +70,7 @@ attr_value attr_from_easy(CurlEasy& easy) {
 
 } // namespace
 
-Response::Private::Private(Response* res, const Request& req, Operation oper, Arc<Session> ses)
+Response::Inner::Inner(Response* res, const Request& req, Operation oper, Arc<Session> ses)
     : m_q(res),
       m_req(req.clone()),
       m_operation(oper),
@@ -73,8 +78,8 @@ Response::Private::Private(Response* res, const Request& req, Operation oper, Ar
       m_allocator(ses->allocator()) {}
 
 Response::Response(const Request& req, Operation oper, Arc<Session> ses) noexcept
-    : m_d(make_box<Private>(this, req, oper, ses)) {
-    C_D(Response);
+    : m_inner(make_arc<Inner>(this, req, oper, ses)) {
+    auto  d    = m_inner.get();
     auto& easy = connection().easy();
     switch (oper) {
     case Operation::GetOperation: break;
@@ -93,67 +98,59 @@ Response::Response(const Request& req, Operation oper, Arc<Session> ses) noexcep
         }
     }
 }
-
+Response::Response(Response&&) noexcept            = default;
+Response& Response::operator=(Response&&) noexcept = default;
 Response::~Response() noexcept { cancel(); }
 
 auto Response::allocator() const -> const std::pmr::polymorphic_allocator<char>& {
-    C_D(const Response);
-    return d->m_allocator;
+    return m_inner->m_allocator;
 }
 
 Arc<Response> Response::make_response(const Request& req, Operation oper, Arc<Session> ses) {
     return std::make_shared<Response>(req, oper, ses);
 }
 
-const Request& Response::request() const {
-    C_D(const Response);
-    return d->m_req;
-}
+const Request& Response::request() const { return m_inner->m_req; }
 
 bool Response::pause_send(bool) {
     //    C_D(Response);
-    //    return d->m_easy->pause(val ? CURLPAUSE_SEND : CURLPAUSE_SEND_CONT) == CURLE_OK;
+    //    return m_inner->m_easy->pause(val ? CURLPAUSE_SEND : CURLPAUSE_SEND_CONT) == CURLE_OK;
     return true;
 }
 bool Response::pause_recv(bool) {
     //    C_D(Response);
-    //    return d->m_easy->pause(val ? CURLPAUSE_RECV : CURLPAUSE_RECV_CONT) == CURLE_OK;
+    //    return m_inner->m_easy->pause(val ? CURLPAUSE_RECV : CURLPAUSE_RECV_CONT) == CURLE_OK;
     return true;
 }
 
 void Response::add_send_buffer(asio::const_buffer buf) {
-    C_D(Response);
-    auto& send_buf = d->m_send_buffer;
+    auto& send_buf = m_inner->m_send_buffer;
     send_buf.commit(asio::buffer_copy(send_buf.prepare(buf.size()), buf));
 }
 
 void Response::async_read_some_impl(
     asio::mutable_buffer                                        buffer,
     asio::any_completion_handler<void(asio::error_code, usize)> handler) {
-    C_D(Response);
-
     connection().async_read_some(buffer, std::move(handler));
 }
 
 void Response::async_write_some_impl(
     asio::const_buffer                                          buffer,
     asio::any_completion_handler<void(asio::error_code, usize)> handler) {
-    C_D(Response);
     connection().async_write_some(buffer, std::move(handler));
 }
 
 void Response::prepare_perform() {
-    C_D(Response);
     auto& easy = connection().easy();
 
-    switch (d->m_operation) {
+    switch (m_inner->m_operation) {
     case Operation::GetOperation: break;
     case Operation::PostOperation: {
-        auto& p = d->m_req.get_opt<req_opt::Read>();
+        auto& p = m_inner->m_req.get_opt<req_opt::Read>();
         if (p.callback) {
             easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, p.size ? p.size : -1);
         } else {
-            auto& send_buffer = d->m_send_buffer;
+            auto& send_buffer = m_inner->m_send_buffer;
             easy.setopt(CURLOPT_POSTFIELDS, send_buffer.data());
             easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, send_buffer.size());
         }
@@ -162,26 +159,16 @@ void Response::prepare_perform() {
     default: break;
     }
 
-    connection().set_url(d->m_req.url());
+    connection().set_url(m_inner->m_req.url());
 }
 
-Operation Response::operation() const {
-    C_D(const Response);
-    return d->m_operation;
-}
+Operation Response::operation() const { return m_inner->m_operation; }
 
-Response::executor_type& Response::get_executor() {
-    C_D(Response);
-    return connection().get_executor();
-}
+Response::executor_type& Response::get_executor() { return connection().get_executor(); }
 
-bool Response::is_finished() const {
-    C_D(const Response);
-    return false;
-}
+bool Response::is_finished() const { return false; }
 
 attr_value Response::attribute(Attribute A) const {
-    C_D(const Response);
     auto& easy = connection().easy();
     switch (A) {
         using enum Attribute;
@@ -190,8 +177,6 @@ attr_value Response::attribute(Attribute A) const {
     }
     return {};
 }
-
-Arc<Response> Response::get_arc() { return shared_from_this(); }
 
 auto Response::header() const -> const HttpHeader& { return connection().header(); }
 auto Response::code() const -> rstd::Option<i32> {
@@ -203,13 +188,10 @@ auto Response::code() const -> rstd::Option<i32> {
     }
     return None();
 }
-auto Response::connection() -> Connection& {
-    C_D(Response);
-    return *(d->m_connect);
-}
-auto Response::connection() const -> const Connection& {
-    C_D(const Response);
-    return *(d->m_connect);
-}
+auto Response::connection() -> Connection& { return *(m_inner->m_connect); }
+auto Response::connection() const -> const Connection& { return *(m_inner->m_connect); }
 
 void Response::cancel() { connection().about_to_cancel(); }
+
+auto Response::text() -> coro<Result<std::string>> { co_return Err(Error {}); }
+auto Response::bytes() -> coro<Result<std::vector<byte>>> { co_return Err(Error {}); }

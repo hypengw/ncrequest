@@ -55,7 +55,7 @@ endif()
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG 4c13f1bed78d2c74adde6570b2d80041cbabd5e4
+  GIT_TAG 391aeb58a4890f64ac059d013c0eb8d60949c121
   GIT_SHALLOW TRUE
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(rstd)
@@ -76,6 +76,7 @@ target_sources(
          src/type.cppm
          src/type_list.cppm
          src/connection.cppm
+         src/error.cppm
          src/request.cppm
          src/response.cppm
          src/session.cppm

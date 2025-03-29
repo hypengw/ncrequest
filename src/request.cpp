@@ -83,27 +83,15 @@ void Request::set_opt(RequestOpt&& opt) {
                std::move(opt));
 }
 
-auto rstd::Impl<rstd::clone::Clone, ncrequest::Request>::clone(TraitPtr ptr) -> ncrequest::Request {
+auto Request::clone() const -> ncrequest::Request {
     auto  req    = ncrequest::Request {};
-    auto& self   = ptr.as_ref<ncrequest::Request>();
+    auto& self   = *this;
     req.m_uri    = self.m_uri;
     req.m_header = self.m_header;
-    req.m_opts   = std::apply(
-        [](const auto&... elements) -> decltype(req.m_opts) {
-            return { rstd::Impl<rstd::clone::Clone, std::decay_t<decltype(elements)>>::clone(
-                &elements)... };
-        },
-        self.m_opts);
-    constexpr auto ss = [](decltype(req.m_opts)& opts) {
-        for (usize i = 0; i < std::tuple_size_v<std::decay_t<decltype(opts)>>; i++) {
-            auto x = std::get<0>(opts);
-        }
-    };
+    req.m_opts   = as<rstd::clone::Clone>(self.m_opts).clone();
     return req;
 }
 
-auto rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>::clone(TraitPtr ptr)
-    -> ncrequest::req_opt::Share {
-    auto& self = ptr.as_ref<ncrequest::req_opt::Share>();
-    return { .share = self.share.clone() };
+auto req_opt::Share::clone() const -> ncrequest::req_opt::Share {
+    return { .share = share.clone() };
 }

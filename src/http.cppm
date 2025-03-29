@@ -36,18 +36,8 @@ private:
     bool        m_valid;
     std::string m_holder;
 };
-export struct HttpHeader;
-}
 
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>
-    : rstd::DefImpl<rstd::clone::Clone, ncrequest::HttpHeader> {
-    static auto clone(TraitPtr) -> ncrequest::HttpHeader;
-};
-
-namespace ncrequest {
-
-struct HttpHeader : public rstd::WithTrait<HttpHeader, rstd::clone::Clone> {
+export struct HttpHeader {
     struct Request {
         std::string method;
         std::string version;
@@ -71,6 +61,14 @@ struct HttpHeader : public rstd::WithTrait<HttpHeader, rstd::clone::Clone> {
     static auto parse_header(std::string_view) -> rstd::Option<HttpHeader>;
     static auto parse_start_line(std::string_view) -> rstd::Option<Start>;
     static auto parse_field_line(std::string_view) -> Field;
+
+    // trait
+    auto clone() const -> ncrequest::HttpHeader;
+    void clone_from(ncrequest::HttpHeader&);
 };
 
 } // namespace ncrequest
+
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>
+    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::HttpHeader> {};

@@ -4,33 +4,31 @@ module;
 #include <optional>
 
 #include <asio/any_completion_handler.hpp>
-#include <asio/dispatch.hpp>
 #include <asio/read.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/as_tuple.hpp>
 #include <asio/strand.hpp>
 #include <asio/thread_pool.hpp>
-#include <asio/associated_executor.hpp>
-#include <asio/bind_executor.hpp>
 #include <asio/streambuf.hpp>
+#include <asio/bind_executor.hpp>
+#include <asio/as_tuple.hpp>
 
 export module ncrequest:response;
 export import :request;
 export import :http;
 export import :connection;
+export import :error;
 
 namespace ncrequest
 {
 
 class Session;
 
-class Response : public std::enable_shared_from_this<Response>, NoCopy {
+class Response : public NoCopy {
     friend class Session;
 
 public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
     using allocator_type = std::pmr::polymorphic_allocator<char>;
-    class Private;
+    class Inner;
     static constexpr usize ReadSize { 1024 * 16 };
 
 public:
@@ -49,6 +47,9 @@ public:
 
     auto header() const -> const HttpHeader&;
     auto code() const -> rstd::Option<i32>;
+
+    auto text() -> coro<Result<std::string>>;
+    auto bytes() -> coro<Result<std::vector<byte>>>;
 
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
@@ -96,7 +97,9 @@ public:
 
     static auto make_response(const Request&, Operation, Arc<Session>) -> Arc<Response>;
     Response(const Request&, Operation, Arc<Session>) noexcept;
+    Response(Response&&) noexcept;
     ~Response() noexcept;
+    Response& operator=(Response&&) noexcept;
 
     auto is_finished() const -> bool;
     auto request() const -> const Request&;
@@ -106,8 +109,6 @@ public:
 
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
-
-    auto get_arc() -> Arc<Response>;
 
     void cancel();
     auto allocator() const -> const allocator_type&;
@@ -126,14 +127,12 @@ private:
     auto connection() const -> const Connection&;
 
 private:
-    Box<Private>          m_d;
-    inline Private*       d_func() { return m_d.get(); }
-    inline const Private* d_func() const { return m_d.get(); }
+    Arc<Inner> m_inner;
 };
 
-class Response::Private {
+class Response::Inner {
 public:
-    Private(Response*, const Request&, Operation, Arc<Session>);
+    Inner(Response*, const Request&, Operation, Arc<Session>);
     friend class Response;
 
     void set_share(rstd::Option<SessionShare> share) { m_share = std::move(share); }

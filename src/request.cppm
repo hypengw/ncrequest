@@ -27,28 +27,6 @@ export import ncrequest.type_list;
 namespace ncrequest
 {
 
-export struct Request;
-namespace req_opt
-{
-export struct Proxy;
-export struct Share;
-} // namespace req_opt
-} // namespace ncrequest
-
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
-    : rstd::DefImpl<rstd::clone::Clone, ncrequest::Request> {
-    static auto clone(TraitPtr) -> ncrequest::Request;
-};
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
-    : rstd::DefImpl<rstd::clone::Clone, ncrequest::req_opt::Share> {
-    static auto clone(TraitPtr) -> ncrequest::req_opt::Share;
-};
-
-namespace ncrequest
-{
-
 namespace req_opt
 {
 export struct Timeout {
@@ -87,12 +65,14 @@ export struct Read {
     REQ_OPT_PROP(usize, size, { 0 })
 };
 
-export struct Share : rstd::WithTrait<Share, rstd::clone::Clone> {
+export struct Share : rstd::WithTraitDefault<Share, rstd::clone::Clone> {
     rstd::Option<SessionShare> share {};
     auto&                      set_share(rstd::Option<SessionShare> v) {
         share = std::move(v);
         return *this;
     }
+    // trait
+    auto clone() const -> Share;
 };
 
 #undef REQ_OPT_PROP
@@ -112,7 +92,7 @@ export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::e
 namespace ncrequest
 {
 
-class Request : public rstd::WithTrait<Request, rstd::clone::Clone> {
+export class Request : public rstd::WithTraitDefault<Request, rstd::clone::Clone> {
     friend class Session;
     friend class Response;
     template<typename, typename>
@@ -151,6 +131,9 @@ public:
 
     void set_opt(RequestOpt&&);
 
+    // trait
+    auto clone() const -> ncrequest::Request;
+
 private:
     const_voidp get_opt(usize) const;
     voidp       get_opt(usize);
@@ -161,3 +144,10 @@ private:
 };
 
 } // namespace ncrequest
+
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
+    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::Request> {};
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
+    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::req_opt::Share> {};
