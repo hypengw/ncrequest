@@ -36,8 +36,18 @@ private:
     bool        m_valid;
     std::string m_holder;
 };
+export struct HttpHeader;
+}
 
-export struct HttpHeader {
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>
+    : rstd::DefImpl<rstd::clone::Clone, ncrequest::HttpHeader> {
+    static auto clone(TraitPtr) -> ncrequest::HttpHeader;
+};
+
+namespace ncrequest {
+
+struct HttpHeader : public rstd::WithTrait<HttpHeader, rstd::clone::Clone> {
     struct Request {
         std::string method;
         std::string version;

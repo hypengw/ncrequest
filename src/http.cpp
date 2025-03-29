@@ -11,6 +11,7 @@ module ncrequest;
 
 import :http;
 import ncrequest.type;
+import rstd;
 
 namespace pegtl = tao::pegtl;
 
@@ -245,5 +246,11 @@ auto HttpHeader::has_field(std::string_view name) const -> bool {
            });
 }
 } // namespace ncrequest
+
+auto rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>::clone(TraitPtr ptr)
+    -> ncrequest::HttpHeader {
+    auto& self = ptr.as_ref<ncrequest::HttpHeader>();
+    return { .start = self.start.clone(), .fields = self.fields };
+}
 
 // namespace test
