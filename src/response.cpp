@@ -15,6 +15,7 @@ module;
 #include <asio/bind_executor.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/read.hpp>
+#include <asio/buffers_iterator.hpp>
 
 #include "macro.hpp"
 
@@ -211,7 +212,8 @@ auto Response::text() -> coro<Result<std::string>> {
     }
     std::string out;
     out.resize(buf.in_avail());
-    buf.sgetn((char*)(out.data()), out.size());
+    auto bufs = buf.data();
+    std::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
     co_return Ok(std::move(out));
 }
 auto Response::bytes() -> coro<Result<std::vector<byte>>> {
@@ -228,6 +230,7 @@ auto Response::bytes() -> coro<Result<std::vector<byte>>> {
         co_return Err(into(ec));
     }
     out.resize(buf.in_avail());
-    buf.sgetn((char*)(out.data()), out.size());
+    auto bufs = buf.data();
+    std::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
     co_return Ok(std::move(out));
 }
