@@ -95,8 +95,6 @@ namespace ncrequest
 export class Request : public rstd::WithTraitDefault<Request, rstd::clone::Clone> {
     friend class Session;
     friend class Response;
-    template<typename, typename>
-    friend struct rstd::Impl;
 
 public:
     class Private;

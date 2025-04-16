@@ -55,8 +55,8 @@ endif()
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG b8a303f4d8de5e103553b6a6f6a392d20ceaf92b
-  GIT_SHALLOW TRUE
+  GIT_TAG df2e471560f30c8e51b9dba24f7323fca72935ab
+  GIT_SHALLOW 0
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(rstd)
 
