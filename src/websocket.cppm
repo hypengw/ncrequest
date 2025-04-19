@@ -47,7 +47,8 @@ public:
 private:
     void do_read();
     void do_write();
-    void do_error(std::string_view);
+    void do_error(CURLcode);
+    void do_disconnect(bool send);
     void reset_states();
     auto alloc(std::span<const std::byte>) -> std::span<const std::byte>;
     auto dealloc(std::span<const std::byte>);

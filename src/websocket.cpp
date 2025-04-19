@@ -104,7 +104,7 @@ void WebSocketClient::do_read() {
             break;
         }
         if (result != CURLE_OK) {
-            do_error(std::format("{}({})", curl_easy_strerror(result), (int)result));
+            do_error(result);
             return;
         }
         {
@@ -151,7 +151,7 @@ void WebSocketClient::do_write() {
             break;
         }
         if (result != CURLE_OK) {
-            do_error(std::format("{}({})", curl_easy_strerror(result), (int)result));
+            do_error(result);
             return;
         }
 
@@ -168,10 +168,10 @@ void WebSocketClient::do_write() {
     });
 }
 
-void WebSocketClient::do_error(std::string_view err) {
-    reset_states();
+void WebSocketClient::do_error(CURLcode code) {
+    do_disconnect(false);
     if (m_on_error) {
-        m_on_error(err);
+        m_on_error(std::format("{}({})", curl_easy_strerror(code), (int)code));
     }
 }
 
@@ -183,14 +183,21 @@ void WebSocketClient::reset_states() {
 
 void WebSocketClient::disconnect() {
     m_context->post([this] {
-        if (m_curl && m_connected) {
-            m_context->cancel();
-            m_context->close();
-            (void)curl_ws_send(m_curl, "", 0, nullptr, 0, CURLWS_CLOSE);
-            curl_easy_reset(m_curl);
-            reset_states();
-        }
+        this->do_disconnect(true);
     });
+}
+
+void WebSocketClient::do_disconnect(bool send) {
+    if (m_curl && m_connected) {
+        m_context->cancel();
+        if (send) {
+            (void)curl_ws_send(m_curl, "", 0, nullptr, 0, CURLWS_CLOSE);
+        }
+        m_context->reset();
+        curl_easy_cleanup(m_curl);
+        m_curl = curl_easy_init();
+        reset_states();
+    }
 }
 
 bool WebSocketClient::is_connected() const { return m_connected; }

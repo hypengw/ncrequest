@@ -20,6 +20,7 @@ public:
 
     virtual bool assign(int socket_fd) = 0;
     virtual void close()               = 0;
+    virtual void reset()               = 0;
 
     virtual void wait(WaitType type, EventCallback callback) = 0;
     virtual void cancel()                                    = 0;

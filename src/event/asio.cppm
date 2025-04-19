@@ -29,6 +29,7 @@ public:
     }
 
     void close() override { m_socket.close(); }
+    void reset() override { m_socket.release(); }
 
     void wait(WaitType type, EventCallback callback) override {
         auto wait_type = wait_type::wait_read;
