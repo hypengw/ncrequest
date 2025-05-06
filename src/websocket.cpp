@@ -20,11 +20,11 @@ WebSocketClient::WebSocketClient(Box<event::Context> ioc, rstd::Option<u64> max_
     : m_curl(curl_easy_init()),
       m_connected(false),
       m_alloc(mem_pool),
-      m_context(std::move(ioc)),
       m_read_buffer(max_buffer_size.unwrap_or(MaxBufferSize), m_alloc),
       m_read_len(0),
       m_msgs(m_alloc),
-      m_sent_len(0) {
+      m_sent_len(0),
+      m_context(std::move(ioc)) {
     m_context->set_error_callback([this](std::string_view error) {
         if (m_on_error) m_on_error(error);
     });

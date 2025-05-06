@@ -19,6 +19,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(GNUInstallDirs)
 include(FetchContent)
 
+set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
+add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
+
 # curl
 find_package(CURL REQUIRED)
 
@@ -45,17 +48,18 @@ if(NOT TARGET asio)
       GIT_SHALLOW TRUE
       EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(asio)
-    target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
+    target_include_directories(asio SYSTEM
+                               INTERFACE ${asio_SOURCE_DIR}/asio/include)
     message(STATUS "asio dir: ${asio_SOURCE_DIR}")
   else()
-    target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIRS})
+    target_include_directories(asio SYSTEM INTERFACE ${ASIO_INCLUDE_DIRS})
   endif()
 endif()
 
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG df2e471560f30c8e51b9dba24f7323fca72935ab
+  GIT_TAG b39042810fe1b9aa615dfe3089f3b79b81bc62f3
   GIT_SHALLOW 0
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(rstd)
