@@ -2,6 +2,7 @@ module;
 
 #include <iostream>
 #include <format>
+#include <variant>
 #include <curl/curl.h>
 
 module ncrequest;

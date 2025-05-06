@@ -1,6 +1,7 @@
 module;
 
 #include <format>
+#include <variant>
 
 #include <curl/curl.h>
 
