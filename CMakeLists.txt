@@ -20,7 +20,10 @@ include(GNUInstallDirs)
 include(FetchContent)
 
 set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
+set(WIN_DEFS WIN32_LEAN_AND_MEAN NOMINMAX NOGDI)
 add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
+
+find_package(PkgConfig REQUIRED)
 
 # curl
 find_package(CURL REQUIRED)
@@ -38,7 +41,12 @@ FetchContent_MakeAvailable(pegtl)
 # asio
 if(NOT TARGET asio)
   add_library(asio INTERFACE)
-  target_compile_definitions(asio INTERFACE ASIO_NO_DEPRECATED)
+  target_compile_definitions(asio INTERFACE ASIO_NO_DEPRECATED ASIO_HAS_THREADS
+    ${WIN_DEFS}
+  )
+  if (MINGW)
+    target_link_libraries(asio INTERFACE ws2_32)
+  endif()
   pkg_check_modules(ASIO QUIET asio>=1.30.2)
   if(NOT ASIO_FOUND)
     FetchContent_Declare(
@@ -59,7 +67,7 @@ endif()
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG b39042810fe1b9aa615dfe3089f3b79b81bc62f3
+  GIT_TAG 5e56fd0d3a3f1e3d95ae75ae5b862e8574e30e13
   GIT_SHALLOW 0
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(rstd)
@@ -111,6 +119,7 @@ target_sources(
           src/type.cpp)
 
 target_include_directories(ncrequest PRIVATE src)
+target_compile_definitions(ncrequest PUBLIC ${WIN_DEFS})
 
 if(PROJECT_IS_TOP_LEVEL)
   install(
@@ -119,8 +128,9 @@ if(PROJECT_IS_TOP_LEVEL)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-target_link_libraries(ncrequest PRIVATE taocpp::pegtl CURL::libcurl asio
-                                        rstd::rstd)
+target_link_libraries(ncrequest 
+PUBLIC rstd::rstd
+PRIVATE taocpp::pegtl CURL::libcurl asio)
 
 if(NCREQUEST_BUILD_TESTS)
   include(CTest)
