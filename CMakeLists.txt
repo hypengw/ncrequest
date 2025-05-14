@@ -20,7 +20,7 @@ include(GNUInstallDirs)
 include(FetchContent)
 
 set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
-set(WIN_DEFS WIN32_LEAN_AND_MEAN NOMINMAX NOGDI)
+set(WIN_DEFS "$<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX;NOGDI>")
 add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
 
 find_package(PkgConfig REQUIRED)
@@ -42,9 +42,8 @@ FetchContent_MakeAvailable(pegtl)
 if(NOT TARGET asio)
   add_library(asio INTERFACE)
   target_compile_definitions(asio INTERFACE ASIO_NO_DEPRECATED ASIO_HAS_THREADS
-    ${WIN_DEFS}
-  )
-  if (MINGW)
+                                            ${WIN_DEFS})
+  if(MINGW)
     target_link_libraries(asio INTERFACE ws2_32)
   endif()
   pkg_check_modules(ASIO QUIET asio>=1.30.2)
@@ -128,9 +127,10 @@ if(PROJECT_IS_TOP_LEVEL)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
 
-target_link_libraries(ncrequest 
-PUBLIC rstd::rstd
-PRIVATE taocpp::pegtl CURL::libcurl asio)
+target_link_libraries(
+  ncrequest
+  PUBLIC rstd::rstd
+  PRIVATE taocpp::pegtl CURL::libcurl asio)
 
 if(NCREQUEST_BUILD_TESTS)
   include(CTest)
