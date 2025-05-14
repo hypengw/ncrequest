@@ -10,6 +10,15 @@ namespace ncrequest::event
 
 export enum class WaitType { Read, Write };
 
+/* socket typedef */
+#if defined(_WIN32) && ! defined(__LWIP_OPT_H__) && ! defined(LWIP_HDR_OPT_H)
+using socket_t            = SOCKET;
+constexpr auto SOCKET_BAD = INVALID_SOCKET;
+#else
+using socket_t            = int;
+constexpr auto SOCKET_BAD = -1;
+#endif
+
 export class Context {
 public:
     using WaitType      = event::WaitType;
@@ -18,9 +27,9 @@ public:
 
     virtual ~Context() = default;
 
-    virtual bool assign(int socket_fd) = 0;
-    virtual void close()               = 0;
-    virtual void reset()               = 0;
+    virtual bool assign(socket_t socket_fd) = 0;
+    virtual void close()                    = 0;
+    virtual void reset()                    = 0;
 
     virtual void wait(WaitType type, EventCallback callback) = 0;
     virtual void cancel()                                    = 0;

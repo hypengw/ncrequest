@@ -1,6 +1,7 @@
 module;
 
 #include <asio/post.hpp>
+#include <format>
 
 export module ncrequest.event:asio;
 export import ncrequest.type;
@@ -17,12 +18,28 @@ public:
 
     explicit AsioContext(executor_type ioc): m_socket(std::move(ioc)) {}
 
-    bool assign(int socket_fd) override {
+    bool assign(socket_t socket_fd) override {
         asio::error_code code;
-#ifdef _WIN32
-#else
-        m_socket.assign(socket_fd, code);
-#endif
+
+        if constexpr (requires() { typename Socket::protocol_type; }) {
+            int       type   = 0;
+            socklen_t optlen = sizeof(type);
+            if (auto rc = getsockopt(socket_fd, SOL_SOCKET, SO_TYPE, (char*)&type, &optlen);
+                rc != 0) {
+                m_on_error(std::format("getsocketopt failed: {}", rc));
+                return false;
+            }
+
+            sockaddr_storage addr;
+            socklen_t        addrlen = sizeof(addr);
+            if (auto rc = getsockname(socket_fd, (sockaddr*)&addr, &addrlen); rc != 0) {
+                m_on_error(std::format("getsocketopt failed: {}", rc));
+                return false;
+            }
+            m_socket.assign(typename Socket::protocol_type(addr.ss_family, type), socket_fd, code);
+        } else {
+            m_socket.assign(socket_fd, code);
+        }
 
         if (code) {
             m_on_error(code.message());

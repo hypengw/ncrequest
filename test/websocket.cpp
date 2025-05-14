@@ -1,10 +1,26 @@
 #include <format>
 #include <gtest/gtest.h>
 #include <asio/thread_pool.hpp>
-#include <asio/posix/stream_descriptor.hpp>
+
+#include <asio/generic/stream_protocol.hpp>
+template<typename T>
+using stream_type = asio::basic_stream_socket<asio::generic::stream_protocol, T>;
+
+#if __linux__
+#    include <asio/posix/stream_descriptor.hpp>
+#endif
 
 import ncrequest;
 import ncrequest.event;
+
+void test_compile() {
+    asio::thread_pool pool(1);
+    ncrequest::event::create<stream_type>(pool.get_executor());
+
+#if __linux__
+    ncrequest::event::create<asio::posix::basic_stream_descriptor>(pool.get_executor());
+#endif
+}
 
 TEST(websocket, BasicTest) {
 #if 0

@@ -2,7 +2,7 @@
 
 import ncrequest;
 
-int main(int argc, char** argv) {
+int main(int, char**) {
     testing::InitGoogleTest();
     ncrequest::global_init();
 

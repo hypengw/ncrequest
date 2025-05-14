@@ -57,7 +57,7 @@ public:
     void remove_connect(const Arc<Connection>&);
 
 private:
-    Session&                    m_p;
+    // Session&                    m_p;
     Box<CurlMulti>              m_curl_multi;
     executor_type               m_ex;
     asio::strand<executor_type> m_strand;
@@ -133,14 +133,13 @@ auto Session::allocator() -> std::pmr::polymorphic_allocator<byte> {
 
 auto Session::prepare_req(const Request& req) const -> Request {
     C_D(const Session);
-    Request o{ req.clone() };
+    Request o { req.clone() };
     if (d->m_proxy) o.set_opt(d->m_proxy.clone().unwrap());
     if (d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
-    return std::move(o);
+    return o;
 }
 
 auto Session::perform(Arc<Response>& rsp) -> coro<bool> {
-    C_D(Session);
     auto& con = rsp->connection();
     rsp->prepare_perform();
 
@@ -156,7 +155,6 @@ auto Session::perform(Arc<Response>& rsp) -> coro<bool> {
 }
 
 auto Session::get(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
-    C_D(Session);
     auto res =
         Response::make_response(prepare_req(req), Operation::GetOperation, shared_from_this());
 
@@ -165,7 +163,6 @@ auto Session::get(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
 }
 
 auto Session::post(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
-    C_D(Session);
     Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     if (co_await perform(res)) co_return Some(std::move(res));
@@ -174,7 +171,6 @@ auto Session::post(const Request& req) -> coro<rstd::Option<Arc<Response>>> {
 
 auto Session::post(const Request& req, asio::const_buffer buf)
     -> coro<rstd::Option<Arc<Response>>> {
-    C_D(Session);
     Arc<Response> res =
         Response::make_response(prepare_req(req), Operation::PostOperation, shared_from_this());
     res->add_send_buffer(buf);
@@ -183,9 +179,9 @@ auto Session::post(const Request& req, asio::const_buffer buf)
     co_return None();
 }
 
-Session::Private::Private(Session& p, executor_type& ex,
+Session::Private::Private(Session&, executor_type& ex,
                           std::pmr::memory_resource* mem_pool) noexcept
-    : m_p(p),
+    : // m_p(p),
       m_curl_multi(std::make_unique<CurlMulti>()),
       m_ex(ex),
       m_strand(ex),

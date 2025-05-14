@@ -25,14 +25,14 @@ template<std::string_view URI::* Field>
 struct bind {
     template<typename Rule>
     static void reset(URI& uri) {
-        auto f     = Field;
+        // auto f     = Field;
         uri.*Field = {};
     }
 
     template<typename ActionInput>
     static void apply(const ActionInput& in, URI& uri) {
         if (Field == &URI::authority) {
-            int i = 0;
+            // int i = 0;
         }
         uri.*Field = in.string_view();
     }
