@@ -208,7 +208,8 @@ auto Response::text() -> coro<Result<std::string>> {
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
     if (ec != asio::stream_errc::eof) {
-        co_return Err(into(ec));
+        Error err = into(ec);
+        co_return Err(std::move(err));
     }
     std::string out;
     out.resize(buf.in_avail());
@@ -227,7 +228,8 @@ auto Response::bytes() -> coro<Result<std::vector<byte>>> {
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
     if (ec != asio::stream_errc::eof) {
-        co_return Err(into(ec));
+        Error err = into(ec);
+        co_return Err(std::move(err));
     }
     out.resize(buf.in_avail());
     auto bufs = buf.data();

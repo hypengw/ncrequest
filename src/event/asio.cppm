@@ -19,7 +19,10 @@ public:
 
     bool assign(int socket_fd) override {
         asio::error_code code;
+#ifdef _WIN32
+#else
         m_socket.assign(socket_fd, code);
+#endif
 
         if (code) {
             m_on_error(code.message());

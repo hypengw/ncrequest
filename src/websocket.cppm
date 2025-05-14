@@ -7,6 +7,7 @@ module;
 #include <deque>
 #include <memory_resource>
 #include <future>
+#include <vector>
 #include <curl/curl.h>
 
 export module ncrequest:websocket;
