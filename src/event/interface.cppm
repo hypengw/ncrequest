@@ -2,6 +2,9 @@ module;
 
 #include <functional>
 #include <string_view>
+#if defined(_WIN32) && ! defined(__LWIP_OPT_H__) && ! defined(LWIP_HDR_OPT_H)
+#include <winsock2.h>
+#endif
 
 export module ncrequest.event:interface;
 
