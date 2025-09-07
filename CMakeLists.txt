@@ -29,14 +29,16 @@ find_package(PkgConfig REQUIRED)
 find_package(CURL REQUIRED)
 
 # pegtl
-FetchContent_Declare(
-  pegtl
-  GIT_REPOSITORY https://github.com/taocpp/PEGTL.git
-  GIT_TAG 3.2.8
-  GIT_SHALLOW 1
-  GIT_PROGRESS 1
-  SYSTEM EXCLUDE_FROM_ALL FIND_PACKAGE_ARGS 3.2.7 QUIET GLOBAL)
-FetchContent_MakeAvailable(pegtl)
+if(NOT TARGET taocpp::pegtl)
+  FetchContent_Declare(
+    pegtl
+    GIT_REPOSITORY https://github.com/taocpp/PEGTL.git
+    GIT_TAG 3.2.8
+    GIT_SHALLOW 1
+    GIT_PROGRESS 1
+    SYSTEM EXCLUDE_FROM_ALL FIND_PACKAGE_ARGS 3.2.7 QUIET GLOBAL)
+  FetchContent_MakeAvailable(pegtl)
+endif()
 
 # asio
 if(NOT TARGET asio)
@@ -63,13 +65,15 @@ if(NOT TARGET asio)
   endif()
 endif()
 
-FetchContent_Declare(
-  rstd
-  GIT_REPOSITORY https://github.com/hypengw/rstd.git
-  GIT_TAG a37763b19444cc4e6e26eddda2512754594613c3
-  GIT_SHALLOW 0
-  EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(rstd)
+if(NOT TARGET rstd::rstd)
+  FetchContent_Declare(
+    rstd
+    GIT_REPOSITORY https://github.com/hypengw/rstd.git
+    GIT_TAG a37763b19444cc4e6e26eddda2512754594613c3
+    GIT_SHALLOW 0
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(rstd)
+endif()
 
 add_library(ncrequest STATIC)
 add_library(ncrequest::ncrequest ALIAS ncrequest)
