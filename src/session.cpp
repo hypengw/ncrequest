@@ -68,9 +68,10 @@ private:
     Arc<channel_type>      m_channel_with_notify;
     bool                   m_stopped;
 
-    rstd::Option<req_opt::Proxy>         m_proxy;
-    bool                                 m_ignore_certificate;
-    std::pmr::synchronized_pool_resource m_memory;
+    rstd::Option<req_opt::Proxy> m_proxy;
+    bool                         m_ignore_certificate;
+    std::pmr::memory_resource*   m_memory;
+    // std::pmr::synchronized_pool_resource m_memory;
 };
 
 Session::Session(executor_type ex, std::pmr::memory_resource* mem_pool)
@@ -128,7 +129,7 @@ auto Session::get_strand() -> asio::strand<Session::executor_type>& {
 
 auto Session::allocator() -> std::pmr::polymorphic_allocator<byte> {
     C_D(Session);
-    return { &(d->m_memory) };
+    return { (d->m_memory) };
 }
 
 auto Session::prepare_req(const Request& req) const -> Request {
@@ -191,10 +192,7 @@ Session::Private::Private(Session&, executor_type& ex,
       m_stopped(false),
       m_proxy(),
       m_ignore_certificate(false),
-      // 1 MB
-      m_memory(std::pmr::pool_options { .max_blocks_per_chunk        = 2,
-                                        .largest_required_pool_block = 1024 * 1024 },
-               mem_pool) {};
+      m_memory(mem_pool) {};
 
 void Session::load_cookie(std::filesystem::path p) {
     C_D(Session);

@@ -56,8 +56,8 @@ public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
     using allocator_type = std::pmr::polymorphic_allocator<char>;
 
-    static constexpr usize RECV_LIMIT { 512 * 1024 }; // 0.5M
-    static constexpr usize SEND_LIMIT { 512 * 1024 }; // 0.5M
+    static constexpr usize RECV_LIMIT { 64 * 1024 }; // 64K
+    static constexpr usize SEND_LIMIT { 64 * 1024 }; // 64K
 
     enum class State
     {
@@ -369,8 +369,8 @@ private:
     std::atomic<bool>  m_recv_paused;
     std::atomic<bool>  m_send_paused;
 
-    executor_type              m_ex;
-    Box<CurlEasy>              m_easy;
+    executor_type       m_ex;
+    Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
     std::string                                          m_header_raw;
