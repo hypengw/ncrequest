@@ -100,11 +100,12 @@ target_sources(
          src/event/asio.cppm
          src/event/interface.cppm
          src/event/mod.cppm
-         src/curl/curl_error.cppm
-         src/curl/curl_easy.cppm
-         src/curl/curl_multi.cppm
-         src/curl/init.cppm
-         src/curl/mod.cppm
+         src/client/curl/curl_error.cppm
+         src/client/curl/curl_easy.cppm
+         src/client/curl/curl_multi.cppm
+         src/client/curl/curl.cppm
+         src/client/curl/init.cppm
+         src/client/curl/mod.cppm
          src/mod.cppm
 
          src/coro/asio.cppm
@@ -116,7 +117,7 @@ target_sources(
   ncrequest
   PRIVATE src/peg/uri.hpp
           src/peg/http.hpp
-          src/curl/init.cpp
+          src/client/curl/init.cpp
           src/http.cpp
           src/request.cpp
           src/response.cpp

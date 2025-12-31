@@ -1,6 +1,3 @@
-module;
-#include <filesystem>
-
 export module ncrequest:session_share;
 export import ncrequest.type;
 
@@ -13,8 +10,8 @@ public:
     ~SessionShare();
 
     auto handle() const -> voidp;
-    void load(const std::filesystem::path& p);
-    void save(const std::filesystem::path& p) const;
+    void load(const rstd::cppstd::filesystem::path& p);
+    void save(const rstd::cppstd::filesystem::path& p) const;
 
 private:
     Arc<Private>          d_ptr;

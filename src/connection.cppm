@@ -1,17 +1,12 @@
 module;
-
-#include <atomic>
-#include <mutex>
-
-#include <curl/curl.h>
-
 #include "log.hpp"
-
 export module ncrequest:connection;
 export import ncrequest.type;
 export import ncrequest.curl;
 export import :http;
 export import :request;
+
+using namespace curl;
 
 namespace ncrequest
 {
@@ -67,7 +62,7 @@ public:
     class Buffer {
     public:
         Buffer(usize limit, const Allocator& aloc)
-            : m_buf(std::numeric_limits<usize>::max(), aloc),
+            : m_buf(rstd::cppstd::numeric_limits<usize>::max(), aloc),
               m_state(State::Empty),
               m_limit(limit),
               m_transferred(0),
@@ -109,7 +104,7 @@ public:
         }
 
         asio::basic_streambuf<Allocator> m_buf;
-        std::atomic<State>               m_state;
+        rstd::atomic<State>              m_state;
         usize                            m_limit;
         usize                            m_transferred;
         Allocator                        m_alloc;
@@ -168,9 +163,9 @@ public:
 
     template<typename Handler>
     void async_read_some(asio::mutable_buffer buf, Handler&& handler) {
-        asio::dispatch(m_ex, [this, buf, handler = std::move(handler)]() mutable {
+        asio::dispatch(m_ex, [this, buf, handler = rstd::move(handler)]() mutable {
             m_read_some_handler =
-                [this, buf, handler = std::move(handler)](asio::error_code ec) mutable {
+                [this, buf, handler = rstd::move(handler)](asio::error_code ec) mutable {
                     auto copied = m_recv_buf.consume(buf);
                     handler(ec, copied);
                 };
@@ -180,12 +175,12 @@ public:
 
     template<typename Handler>
     void async_write_some(asio::const_buffer buf, Handler&& handler) {
-        asio::dispatch(m_ex, [this, buf, handler = std::move(handler)]() mutable {
+        asio::dispatch(m_ex, [this, buf, handler = rstd::move(handler)]() mutable {
             m_write_some_handler =
-                [this, buf, handler = std::move(handler)](asio::error_code ec) mutable {
+                [this, buf, handler = rstd::move(handler)](asio::error_code ec) mutable {
                     usize copied { 0 };
                     if (! ec) {
-                        std::unique_lock lock { m_send_mutex };
+                        rstd::cppstd::unique_lock lock { m_send_mutex };
                         copied = m_send_buf.commit(buf);
                     }
                     handler(ec, copied);
@@ -200,16 +195,15 @@ public:
     auto async_wait_header(CompletionToken&& token) {
         return asio::async_initiate<CompletionToken, void(asio::error_code)>(
             [this](auto&& handler) {
-                asio::dispatch(m_ex, [this, handler = std::move(handler)]() mutable {
-                    m_wait_header_handler = std::move(handler);
+                asio::dispatch(m_ex, [this, handler = rstd::move(handler)]() mutable {
+                    m_wait_header_handler = rstd::move(handler);
                 });
             },
             token);
     }
 
 private:
-    static usize header_callback(char* ptr, usize size, usize nmemb,
-                                       Connection* self) {
+    static usize header_callback(char* ptr, usize size, usize nmemb, Connection* self) {
         cppstd::string_view header { ptr, size * nmemb };
         self->m_header_raw.append(header);
         if (! self->m_header_.start) {
@@ -228,18 +222,18 @@ private:
         }
         return header.size();
     }
-    static usize write_callback(char* ptr, usize size, usize nmemb,
-                                      Connection* self) {
+    static usize write_callback(char* ptr, usize size, usize nmemb, Connection* self) {
         auto total_size = size * nmemb;
 
-        auto vec_buf = cppstd::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
+        auto vec_buf =
+            cppstd::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
         rstd::copy(ptr, ptr + total_size, vec_buf.begin());
 
         if (self->m_recv_buf.is_full()) {
             self->m_recv_paused = true;
             return CURL_WRITEFUNC_PAUSE;
         } else {
-            asio::dispatch(self->m_ex, [self, in = std::move(vec_buf)]() {
+            asio::dispatch(self->m_ex, [self, in = rstd::move(vec_buf)]() {
                 self->try_wait_header_handler();
                 self->m_recv_buf.commit(asio::buffer(in));
                 self->try_read_some_handler();
@@ -249,8 +243,7 @@ private:
         }
     }
 
-    static usize read_callback(char* ptr, usize size, usize nmemb,
-                                     Connection* self) {
+    static usize read_callback(char* ptr, usize size, usize nmemb, Connection* self) {
         auto total_size = size * nmemb;
         if (self->m_send_callback) {
             return self->m_send_callback((byte*)ptr, total_size);
@@ -260,7 +253,7 @@ private:
                 return CURL_READFUNC_PAUSE;
             } else {
                 {
-                    std::unique_lock lock { self->m_send_mutex };
+                    rstd::cppstd::unique_lock lock { self->m_send_mutex };
                     copied = self->m_send_buf.consume(asio::mutable_buffer { ptr, total_size });
                 }
                 asio::dispatch(self->m_ex, [self]() {
@@ -360,7 +353,7 @@ private:
 
     cppstd::string m_url;
 
-    CURLcode           m_finish_ec;
+    CURLcode            m_finish_ec;
     rstd::atomic<State> m_state;
     rstd::atomic<bool>  m_recv_paused;
     rstd::atomic<bool>  m_send_paused;
@@ -369,7 +362,7 @@ private:
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
-    cppstd::string                                          m_header_raw;
+    cppstd::string                                       m_header_raw;
     HttpHeader                                           m_header_;
     CookieJar                                            m_cookie_jar;
     asio::any_completion_handler<void(asio::error_code)> m_wait_header_handler;
@@ -378,7 +371,7 @@ private:
     asio::any_completion_handler<void(asio::error_code)> m_read_some_handler;
 
     req_opt::Read::Callback                              m_send_callback;
-    std::mutex                                           m_send_mutex;
+    rstd::cppstd::mutex                                  m_send_mutex;
     Buffer<allocator_type>                               m_send_buf;
     asio::any_completion_handler<void(asio::error_code)> m_write_some_handler;
 };

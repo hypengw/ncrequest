@@ -11,13 +11,6 @@ module;
     inline const Class* q_func() const { return static_cast<const Class*>(QName); } \
     friend class Class;
 
-#include <string_view>
-#include <functional>
-#include <optional>
-#include <variant>
-#include <system_error>
-#include <memory_resource>
-
 export module ncrequest:request;
 export import :http;
 export import :session_share;
@@ -46,7 +39,7 @@ export struct Proxy : rstd::WithTrait<Proxy, rstd::clone::Clone> {
         SOCKS5H = 7
     };
     REQ_OPT_PROP(Type, type, { Type::HTTP })
-    REQ_OPT_PROP(std::string, content, {})
+    REQ_OPT_PROP(rstd::cppstd::string, content, {})
 };
 
 export struct Tcp {
@@ -60,7 +53,7 @@ export struct SSL {
 };
 
 export struct Read {
-    using Callback = std::function<usize(byte* ptr, usize size)>;
+    using Callback = rstd::cppstd::function<usize(byte* ptr, usize size)>;
     REQ_OPT_PROP(Callback, callback, {})
     REQ_OPT_PROP(usize, size, { 0 })
 };
@@ -68,7 +61,7 @@ export struct Read {
 export struct Share : rstd::WithTraitDefault<Share, rstd::clone::Clone> {
     rstd::Option<SessionShare> share {};
     auto&                      set_share(rstd::Option<SessionShare> v) {
-        share = std::move(v);
+        share = rstd::move(v);
         return *this;
     }
     // trait
@@ -82,12 +75,12 @@ using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 } // namespace req_opt
 
 export using RequestOpts = req_opt::opts;
-export using RequestOpt  = RequestOpts::to<std::variant>;
+export using RequestOpt  = RequestOpts::to<rstd::cppstd::variant>;
 
 export class Session;
 export class Response;
 
-export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
+export auto global_init(rstd::cppstd::pmr::memory_resource* resource = nullptr) -> rstd::error_code;
 } // namespace ncrequest
 namespace ncrequest
 {
@@ -99,20 +92,20 @@ export class Request : public rstd::WithTraitDefault<Request, rstd::clone::Clone
 public:
     class Private;
     Request() noexcept;
-    Request(std::string_view url) noexcept;
+    Request(rstd::cppstd::string_view url) noexcept;
     Request(Request&&) noexcept;
     ~Request() noexcept;
     Request& operator=(Request&&) noexcept;
 
-    auto url() const -> std::string_view;
+    auto url() const -> rstd::cppstd::string_view;
     auto url_info() const -> const URI&;
-    auto set_url(std::string_view) -> Request&;
+    auto set_url(rstd::cppstd::string_view) -> Request&;
 
     auto header() const -> const Header&;
-    auto header(std::string_view name) const -> std::string;
+    auto header(rstd::cppstd::string_view name) const -> rstd::cppstd::string;
     auto update_header(const Header&) -> Request&;
-    auto set_header(std::string_view name, std::string_view value) -> Request&;
-    auto remove_header(std::string_view name) -> Request&;
+    auto set_header(rstd::cppstd::string_view name, rstd::cppstd::string_view value) -> Request&;
+    auto remove_header(rstd::cppstd::string_view name) -> Request&;
     void set_opt(const Header&);
 
     template<typename T>
@@ -136,9 +129,9 @@ private:
     const_voidp get_opt(usize) const;
     voidp       get_opt(usize);
 
-    URI                         m_uri;
-    Header                      m_header;
-    RequestOpts::to<std::tuple> m_opts;
+    URI                                  m_uri;
+    Header                               m_header;
+    RequestOpts::to<rstd::cppstd::tuple> m_opts;
 };
 
 } // namespace ncrequest

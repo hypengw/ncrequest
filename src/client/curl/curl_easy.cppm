@@ -1,13 +1,9 @@
 module;
-
-#include <format>
-#include <variant>
-
-#include <curl/curl.h>
-
-
 export module ncrequest.curl:easy;
 export import ncrequest.type;
+export import :curl;
+
+using namespace curl;
 
 namespace ncrequest
 {
@@ -31,7 +27,7 @@ struct curl_opt_traits<CURLoption::CURLOPT_SHARE> {
 
 export class CurlEasy : NoCopy {
 public:
-    CurlEasy() noexcept: easy(curl_easy_init()), m_headers(NULL), m_share(NULL) {
+    CurlEasy() noexcept: easy(curl_easy_init()), m_headers(nullptr), m_share(nullptr) {
         // enable cookie engine
         setopt<CURLOPT_COOKIEFILE>("");
 
@@ -56,7 +52,7 @@ public:
     }
 
     template<typename T>
-    inline auto get_info(CURLINFO info) noexcept -> std::variant<T, CURLcode> {
+    inline auto get_info(CURLINFO info) noexcept -> cppstd::variant<T, CURLcode> {
         T inst;
         if (auto res = curl_easy_getinfo(handle(), info, &inst)) {
             return res;
@@ -84,16 +80,16 @@ public:
     void set_header(const Header& headers) {
         reset_header();
         for (auto& [k, v] : headers) {
-            std::string header = std::format("{}: {}", k, v);
-            m_headers          = curl_slist_append(m_headers, header.c_str());
+            cppstd::string header = rstd::format("{}: {}", k, v);
+            m_headers             = curl_slist_append(m_headers, header.c_str());
         }
-        if (m_headers != NULL) setopt<CURLOPT_HTTPHEADER>(m_headers);
+        if (m_headers != nullptr) setopt<CURLOPT_HTTPHEADER>(m_headers);
     }
 
     void reset_header() {
         setopt<CURLOPT_HTTPHEADER>(nullptr);
         curl_slist_free_all(m_headers);
-        m_headers = NULL;
+        m_headers = nullptr;
     }
 
     CURLcode pause(int bitmask) noexcept { return curl_easy_pause(handle(), bitmask); }

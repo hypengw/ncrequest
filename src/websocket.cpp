@@ -1,22 +1,15 @@
-module;
-
-#include <string>
-#include <span>
-#include <format>
-#include <future>
-#include <curl/curl.h>
-#include <curl/websockets.h>
-
 module ncrequest;
 import :websocket;
 import ncrequest.event;
 import rstd.rc;
 
+using namespace curl;
+
 namespace ncrequest
 {
 
 WebSocketClient::WebSocketClient(Box<event::Context> ioc, rstd::Option<u64> max_buffer_size,
-                                 std::pmr::memory_resource* mem_pool)
+                                 rstd::cppstd::pmr::memory_resource* mem_pool)
     : m_curl(curl_easy_init()),
       m_connected(false),
       m_alloc(mem_pool),
@@ -24,8 +17,8 @@ WebSocketClient::WebSocketClient(Box<event::Context> ioc, rstd::Option<u64> max_
       m_read_len(0),
       m_msgs(m_alloc),
       m_sent_len(0),
-      m_context(std::move(ioc)) {
-    m_context->set_error_callback([this](std::string_view error) {
+      m_context(rstd::move(ioc)) {
+    m_context->set_error_callback([this](rstd::cppstd::string_view error) {
         if (m_on_error) m_on_error(error);
     });
 }
@@ -39,8 +32,8 @@ WebSocketClient::~WebSocketClient() {
     m_curl = nullptr;
 }
 
-auto WebSocketClient::connect(const std::string& url) -> std::future<bool> {
-    auto promise = make_arc<std::promise<bool>>();
+auto WebSocketClient::connect(const rstd::cppstd::string& url) -> rstd::cppstd::future<bool> {
+    auto promise = make_arc<rstd::cppstd::promise<bool>>();
     auto future  = promise->get_future();
 
     m_context->post([this, url, promise] {
@@ -111,8 +104,9 @@ void WebSocketClient::do_read() {
             bool last = ! (meta->flags & CURLWS_CONT) && meta->bytesleft == 0;
             if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
                 if (m_on_message) {
-                    m_on_message(std::span<const std::byte> { m_read_buffer.data(), m_read_len },
-                                 last);
+                    m_on_message(
+                        rstd::cppstd::span<const rstd::byte> { m_read_buffer.data(), m_read_len },
+                        last);
                 }
                 m_read_len = 0;
             }
@@ -171,7 +165,7 @@ void WebSocketClient::do_write() {
 void WebSocketClient::do_error(CURLcode code) {
     do_disconnect(false);
     if (m_on_error) {
-        m_on_error(std::format("{}({})", curl_easy_strerror(code), (int)code));
+        m_on_error(rstd::format("{}({})", curl_easy_strerror(code), (int)code));
     }
 }
 
@@ -202,15 +196,15 @@ void WebSocketClient::do_disconnect(bool send) {
 
 bool WebSocketClient::is_connected() const { return m_connected; }
 
-void WebSocketClient::send(std::string_view message) {
-    send(std::span<const std::byte> { (const std::byte*)(message.data()), message.size() });
+void WebSocketClient::send(rstd::cppstd::string_view message) {
+    send(std::span<const rstd::byte> { (const rstd::byte*)(message.data()), message.size() });
 }
 
-void WebSocketClient::send(std::span<const std::byte> in) {
-    auto msg = rstd::rc::allocate_make_rc<std::byte[]>(m_alloc, in.size(), std::byte {});
-    std::copy_n(in.begin(), in.size(), msg.get());
+void WebSocketClient::send(rstd::cppstd::span<const rstd::byte> in) {
+    auto msg = rstd::rc::allocate_make_rc<rstd::byte[]>(m_alloc, in.size(), rstd::byte {});
+    rstd::copy_n(in.begin(), in.size(), msg.get());
 
-    m_context->post([this, msg = std::move(msg)] {
+    m_context->post([this, msg = rstd::move(msg)] {
         m_msgs.emplace_back(msg);
         do_write();
     });

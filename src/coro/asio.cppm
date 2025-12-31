@@ -46,13 +46,13 @@ using asio::const_buffer;
 using asio::dispatch;
 using asio::error_code;
 using asio::is_const_buffer_sequence;
+using asio::make_strand;
 using asio::mutable_buffer;
 using asio::post;
 using asio::strand;
+using asio::streambuf;
 using asio::thread_pool;
 using asio::transfer_all;
-using asio::streambuf;
-using asio::make_strand;
 
 constexpr detached_t detached_;
 
@@ -64,6 +64,12 @@ using asio::detail::throw_error;
 namespace stream_errc
 {
 using asio::stream_errc::eof;
+}
+
+namespace error
+{
+using asio::error::make_error_code;
+using asio::error::misc_errors;
 }
 
 namespace experimental

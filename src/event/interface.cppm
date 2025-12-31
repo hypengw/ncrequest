@@ -1,12 +1,9 @@
 module;
-
-#include <functional>
-#include <string_view>
 #if defined(_WIN32) && ! defined(__LWIP_OPT_H__) && ! defined(LWIP_HDR_OPT_H)
-#include <winsock2.h>
+#    include <winsock2.h>
 #endif
-
 export module ncrequest.event:interface;
+export import rstd.core;
 
 namespace ncrequest::event
 {
@@ -25,8 +22,8 @@ constexpr auto SOCKET_BAD = -1;
 export class Context {
 public:
     using WaitType      = event::WaitType;
-    using ErrorCallback = std::function<void(std::string_view)>;
-    using EventCallback = std::function<void()>;
+    using ErrorCallback = rstd::cppstd::function<void(rstd::cppstd::string_view)>;
+    using EventCallback = rstd::cppstd::function<void()>;
 
     virtual ~Context() = default;
 
@@ -39,7 +36,7 @@ public:
 
     virtual void set_error_callback(ErrorCallback callback) = 0;
 
-    virtual void post(std::function<void()>) = 0;
+    virtual void post(rstd::cppstd::function<void()>) = 0;
 };
 
 } // namespace ncrequest::event

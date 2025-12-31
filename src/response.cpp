@@ -1,16 +1,5 @@
 module;
-
-#include <format>
-#include <cstdio>
-#include <cassert>
-#include <variant>
-#include <coroutine>
-
-#include <curl/curl.h>
-
-
 #include "macro.hpp"
-
 module ncrequest;
 import :response;
 import :session;
@@ -39,7 +28,7 @@ void apply_easy_request(Response::Inner* rsp, CurlEasy& easy, const Request& req
     {
         auto& p = req.get_opt<req_opt::Proxy>();
         easy.setopt(CURLOPT_PROXYTYPE, p.type);
-        easy.setopt(CURLOPT_PROXY, p.content.empty() ? NULL : p.content.c_str());
+        easy.setopt(CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
     }
     {
         auto& p = req.get_opt<req_opt::SSL>();
@@ -59,10 +48,10 @@ void apply_easy_request(Response::Inner* rsp, CurlEasy& easy, const Request& req
 template<Attribute A, CURLINFO Info = to_curl_info(A)>
 attr_value attr_from_easy(CurlEasy& easy) {
     auto res = easy.template get_info<attr_type<A>>(Info);
-    return std::visit(helper::overloaded { [](auto a) {
-                          return attr_value(a);
-                      } },
-                      res);
+    return rstd::cppstd::visit(helper::overloaded { [](auto a) {
+                                   return attr_value(a);
+                               } },
+                               res);
 }
 
 } // namespace
@@ -82,7 +71,7 @@ Response::Response(const Request& req, Operation oper, Arc<Session> ses) noexcep
     case Operation::GetOperation: break;
     case Operation::PostOperation:
         easy.setopt(CURLOPT_POST, 1);
-        easy.setopt(CURLOPT_POSTFIELDS, NULL);
+        easy.setopt(CURLOPT_POSTFIELDS, nullptr);
         easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, 0);
         break;
     default: break;
@@ -99,7 +88,7 @@ Response::Response(Response&&) noexcept            = default;
 Response& Response::operator=(Response&&) noexcept = default;
 Response::~Response() noexcept { cancel(); }
 
-auto Response::allocator() const -> const std::pmr::polymorphic_allocator<char>& {
+auto Response::allocator() const -> const rstd::cppstd::pmr::polymorphic_allocator<char>& {
     return m_inner->m_allocator;
 }
 
@@ -128,13 +117,13 @@ void Response::add_send_buffer(asio::const_buffer buf) {
 void Response::async_read_some_impl(
     asio::mutable_buffer                                        buffer,
     asio::any_completion_handler<void(asio::error_code, usize)> handler) {
-    connection().async_read_some(buffer, std::move(handler));
+    connection().async_read_some(buffer, rstd::move(handler));
 }
 
 void Response::async_write_some_impl(
     asio::const_buffer                                          buffer,
     asio::any_completion_handler<void(asio::error_code, usize)> handler) {
-    connection().async_write_some(buffer, std::move(handler));
+    connection().async_write_some(buffer, rstd::move(handler));
 }
 
 void Response::prepare_perform() {
@@ -179,7 +168,7 @@ auto Response::header() const -> const HttpHeader& { return connection().header(
 auto Response::code() const -> rstd::Option<i32> {
     auto& start = this->header().start;
     if (start) {
-        if (auto status = std::get_if<HttpHeader::Status>(&*start)) {
+        if (auto status = rstd::get_if<HttpHeader::Status>(&*start)) {
             return Some((i32)(status->code));
         }
     }
@@ -190,41 +179,44 @@ auto Response::connection() const -> const Connection& { return *(m_inner->m_con
 
 void Response::cancel() { connection().about_to_cancel(); }
 
-auto Response::text() -> coro<Result<std::string>> {
-    asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
+auto Response::text() -> coro<Result<rstd::cppstd::string>> {
+    asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
     buf.prepare(ReadSize);
 
-    auto [ec, size] =
+    auto ret =
         co_await asio::async_read(*this,
                                   buf,
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
-    if (ec != asio::stream_errc::eof) {
+    auto ec = rstd::get<0>(ret);
+    if (ec.value() != asio::stream_errc::eof) {
         Error err = into(ec);
-        co_return Err(std::move(err));
+        co_return Err(rstd::move(err));
     }
-    std::string out;
+    rstd::cppstd::string out;
     out.resize(buf.in_avail());
     auto bufs = buf.data();
-    std::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
-    co_return Ok(std::move(out));
+    rstd::copy(
+        asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
+    co_return Ok(rstd::move(out));
 }
-auto Response::bytes() -> coro<Result<std::vector<byte>>> {
-    std::vector<byte>                     out;
-    asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
+auto Response::bytes() -> coro<Result<rstd::cppstd::vector<byte>>> {
+    rstd::cppstd::vector<byte>            out;
+    asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
     buf.prepare(ReadSize);
 
-    auto [ec, size] =
+    auto ret =
         co_await asio::async_read(*this,
                                   buf,
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
-    if (ec != asio::stream_errc::eof) {
+    auto ec = rstd::get<0>(ret);
+    if (ec.value() != asio::stream_errc::eof) {
         Error err = into(ec);
-        co_return Err(std::move(err));
+        co_return Err(rstd::move(err));
     }
     out.resize(buf.in_avail());
     auto bufs = buf.data();
-    std::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
-    co_return Ok(std::move(out));
+    rstd::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
+    co_return Ok(rstd::move(out));
 }

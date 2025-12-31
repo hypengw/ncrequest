@@ -1,22 +1,21 @@
-module;
-
-#include <system_error>
-#include <curl/curl.h>
-
 export module ncrequest.curl:error;
+export import :curl;
+export import rstd.core;
+
+using namespace curl;
 
 namespace std
 {
-template<>
-struct is_error_code_enum<CURLMcode> : true_type {};
+export template<>
+struct is_error_code_enum<CURLMcode> : rstd::meta::true_type {};
 
-template<>
-struct is_error_code_enum<CURLcode> : true_type {};
+export template<>
+struct is_error_code_enum<CURLcode> : rstd::meta::true_type {};
 } // namespace std
 
 namespace ncrequest
 {
-class CURLMEcategory : public std::error_category {
+class CURLMEcategory : public rstd::cppstd::error_category {
 public:
     static CURLMEcategory const& instance() {
         static CURLMEcategory instance;
@@ -25,12 +24,14 @@ public:
 
     char const* name() const noexcept override { return "CURLMEcategory"; }
 
-    std::string message(int code) const override { return curl_multi_strerror((CURLMcode)code); }
+    rstd::cppstd::string message(int code) const override {
+        return curl_multi_strerror((CURLMcode)code);
+    }
 };
 
 const CURLMEcategory theCURLMEcategory {};
 
-class CURLEcategory : public std::error_category {
+class CURLEcategory : public rstd::cppstd::error_category {
 public:
     static CURLEcategory const& instance() {
         static CURLEcategory instance;
@@ -39,19 +40,21 @@ public:
 
     char const* name() const noexcept override { return "CURLEcategory"; }
 
-    std::string message(int code) const override { return curl_easy_strerror((CURLcode)code); }
+    rstd::cppstd::string message(int code) const override {
+        return curl_easy_strerror((CURLcode)code);
+    }
 };
 
 const CURLEcategory theCURLEcategory {};
 } // namespace ncrequest
 
-export inline std::error_code make_error_code(CURLMcode code) {
+export inline rstd::cppstd::error_code make_error_code(CURLMcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLMEcategory,
     };
 }
-export inline std::error_code make_error_code(CURLcode code) {
+export inline rstd::cppstd::error_code make_error_code(CURLcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLEcategory,

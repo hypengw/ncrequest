@@ -1,22 +1,9 @@
-module;
-
-#include <unordered_map>
-#include <filesystem>
-#include <mutex>
-#include <set>
-#include <thread>
-#include <chrono>
-
-#include <curl/curl.h>
-#include <asio/steady_timer.hpp>
-#include <asio/thread_pool.hpp>
-#include <asio/experimental/channel.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
-
 export module ncrequest.curl:multi;
 export import :easy;
 export import :error;
 export import ncrequest.type;
+
+using namespace curl;
 
 namespace ncrequest
 {
@@ -46,8 +33,8 @@ public:
         curl_share_cleanup(m_share);
     }
 
-    std::error_code add_handle(CurlEasy& easy) {
-        std::error_code cm {};
+    rstd::error_code add_handle(CurlEasy& easy) {
+        rstd::error_code cm {};
         if (easy.getopt<CURLOPT_SHARE>() == nullptr) {
             cm = easy.setopt<CURLOPT_SHARE>(m_share);
         }
@@ -56,23 +43,23 @@ public:
         return cm;
     }
 
-    std::error_code remove_handle(CurlEasy& easy) {
+    rstd::error_code remove_handle(CurlEasy& easy) {
         return curl_multi_remove_handle(m_multi, easy.handle());
     }
-    std::error_code remove_handle(CURL* easy) { return curl_multi_remove_handle(m_multi, easy); }
+    rstd::error_code remove_handle(CURL* easy) { return curl_multi_remove_handle(m_multi, easy); }
 
-    std::error_code wakeup() { return curl_multi_wakeup(m_multi); }
+    rstd::error_code wakeup() { return curl_multi_wakeup(m_multi); }
 
-    std::error_code perform(int& still_running) {
+    rstd::error_code perform(int& still_running) {
         return curl_multi_perform(m_multi, &still_running);
     }
 
-    std::error_code poll(std::chrono::milliseconds timeout) {
-        return curl_multi_poll(m_multi, NULL, 0, (int)timeout.count(), NULL);
+    rstd::error_code poll(cppstd::chrono::milliseconds timeout) {
+        return curl_multi_poll(m_multi, nullptr, 0, (int)timeout.count(), nullptr);
     }
 
-    std::vector<InfoMsg> query_info_msg() {
-        std::vector<InfoMsg> out;
+    cppstd::vector<InfoMsg> query_info_msg() {
+        cppstd::vector<InfoMsg> out;
         int                  message_left { 0 };
         while (CURLMsg* msg = curl_multi_info_read(m_multi, &message_left)) {
             out.push_back(InfoMsg {
@@ -84,13 +71,13 @@ public:
         return out;
     }
 
-    auto cookies() const -> std::vector<std::string> {
-        std::vector<std::string> out;
+    auto cookies() const -> cppstd::vector<cppstd::string> {
+        cppstd::vector<cppstd::string> out;
         CurlEasy                 x;
 
         x.setopt(CURLOPT_SHARE, m_share);
         auto list_ = x.get_info<curl_slist*>(CURLINFO_COOKIELIST);
-        if (auto plist = std::get_if<curl_slist*>(&list_)) {
+        if (auto plist = rstd::get_if<curl_slist*>(&list_)) {
             auto list = *plist;
             while (list) {
                 out.emplace_back(list->data);
@@ -101,7 +88,7 @@ public:
         return out;
     }
 
-    void load_cookie(std::filesystem::path p) {
+    void load_cookie(cppstd::filesystem::path p) {
         CurlEasy x;
         x.setopt(CURLOPT_SHARE, m_share);
         // append filename
@@ -110,7 +97,7 @@ public:
         x.setopt(CURLOPT_COOKIELIST, "RELOAD");
     }
 
-    void save_cookie(std::filesystem::path p) const {
+    void save_cookie(cppstd::filesystem::path p) const {
         CurlEasy x;
         x.setopt(CURLOPT_SHARE, m_share);
         x.setopt(CURLOPT_COOKIEJAR, p.c_str());
@@ -136,6 +123,6 @@ private:
     CURLM*  m_multi;
     CURLSH* m_share;
 
-    std::mutex m_share_mutex;
+    cppstd::mutex m_share_mutex;
 };
 } // namespace ncrequest

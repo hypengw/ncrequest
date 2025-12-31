@@ -1,8 +1,3 @@
-module;
-
-#include <limits>
-#include <optional>
-
 export module ncrequest:response;
 export import :request;
 export import :http;
@@ -30,7 +25,7 @@ public:
     auto attribute(void) const -> rstd::Option<T> {
         auto a = attribute(A);
         if (a.index() == 0) {
-            return std::nullopt;
+            return rstd::cppstd::nullopt;
         }
         return rstd::get<T>(a);
     }
@@ -46,11 +41,11 @@ public:
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
     auto async_read_some(const MB& buffer, CompletionToken&& token) {
-        using ret = void(asio::error_code, std::size_t);
+        using ret = void(asio::error_code, rstd::usize);
         return asio::async_initiate<CompletionToken, ret>(
             [&](auto&& handler) {
                 asio::mutable_buffer mu_buf { asio::buffer(buffer) };
-                async_read_some_impl(mu_buf, std::move(handler));
+                async_read_some_impl(mu_buf, rstd::move(handler));
             },
             token);
     }
@@ -58,11 +53,11 @@ public:
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
     auto async_write_some(const MB& buffer, CompletionToken&& token) {
-        using ret = void(asio::error_code, std::size_t);
+        using ret = void(asio::error_code, rstd::usize);
         return asio::async_initiate<CompletionToken, ret>(
             [&](auto&& handler) {
                 auto const_buf = asio::const_buffer(buffer);
-                async_read_some_impl(const_buf, std::move(handler));
+                async_read_some_impl(const_buf, rstd::move(handler));
             },
             token);
     }
@@ -70,13 +65,13 @@ public:
     template<typename SyncWriteStream>
         requires helper::is_sync_stream<SyncWriteStream>
     auto read_to_stream(SyncWriteStream& writer) -> coro<usize> {
-        asio::basic_streambuf<allocator_type> buf(std::numeric_limits<usize>::max(), allocator());
+        asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
         buf.prepare(ReadSize);
 
         auto [ec, size] = co_await asio::async_read(
             *this,
             buf,
-            [&buf, &writer](const auto& err, std::size_t) -> std::size_t {
+            [&buf, &writer](const auto& err, rstd::usize) -> rstd::usize {
                 buf.consume(writer.write_some(buf.data()));
                 return ! ! err ? 0 : asio::detail::default_max_transfer_size;
             },
@@ -127,7 +122,7 @@ public:
     Inner(Response*, const Request&, Operation, Arc<Session>);
     friend class Response;
 
-    void set_share(rstd::Option<SessionShare> share) { m_share = std::move(share); }
+    void set_share(rstd::Option<SessionShare> share) { m_share = rstd::move(share); }
 
 private:
     Response* m_q;

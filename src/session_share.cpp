@@ -1,10 +1,5 @@
 module;
-#include <mutex>
-#include <filesystem>
-
-#include <curl/curl.h>
 #include "macro.hpp"
-
 module ncrequest;
 import :session_share;
 import ncrequest.curl;
@@ -17,8 +12,8 @@ public:
     Private(): share(curl_share_init()) {}
     ~Private() { curl_share_cleanup(share); }
 
-    CURLSH*    share;
-    std::mutex share_mutex;
+    CURLSH*             share;
+    rstd::cppstd::mutex share_mutex;
 };
 
 namespace
@@ -51,7 +46,7 @@ auto SessionShare::handle() const -> voidp {
     C_D(const SessionShare);
     return d->share;
 }
-void SessionShare::load(const std::filesystem::path& p) {
+void SessionShare::load(const rstd::cppstd::filesystem::path& p) {
     C_D(SessionShare);
     CurlEasy x;
     x.setopt(CURLOPT_SHARE, d->share);
@@ -61,7 +56,7 @@ void SessionShare::load(const std::filesystem::path& p) {
     x.setopt(CURLOPT_COOKIELIST, "RELOAD");
 }
 
-void SessionShare::save(const std::filesystem::path& p) const {
+void SessionShare::save(const rstd::cppstd::filesystem::path& p) const {
     C_D(const SessionShare);
     CurlEasy x;
     x.setopt(CURLOPT_SHARE, d->share);

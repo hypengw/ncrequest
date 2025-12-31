@@ -1,10 +1,3 @@
-module;
-
-#include <iostream>
-#include <format>
-#include <variant>
-#include <curl/curl.h>
-
 module ncrequest;
 import :request;
 
@@ -12,7 +5,7 @@ import ncrequest.curl;
 
 using namespace ncrequest;
 
-auto ncrequest::global_init(std::pmr::memory_resource* resource) -> std::error_code {
+auto ncrequest::global_init(rstd::cppstd::pmr::memory_resource* resource) -> rstd::error_code {
     return ncrequest::curl_init(resource);
 }
 
@@ -23,25 +16,25 @@ Request::Request() noexcept
                req_opt::SSL { .verify_certificate = true },
                req_opt::Read {},
                req_opt::Share {} } {}
-Request::Request(std::string_view url) noexcept: Request() { set_url(url); }
+Request::Request(rstd::cppstd::string_view url) noexcept: Request() { set_url(url); }
 Request::~Request() noexcept {}
 Request::Request(Request&&) noexcept            = default;
 Request& Request::operator=(Request&&) noexcept = default;
 
-std::string_view Request::url() const { return m_uri.uri; }
+rstd::cppstd::string_view Request::url() const { return m_uri.uri; }
 
 const URI& Request::url_info() const { return m_uri; }
 
-Request& Request::set_url(std::string_view uri) {
+Request& Request::set_url(rstd::cppstd::string_view uri) {
     m_uri = URI::from(uri);
     return *this;
 }
 
-std::string Request::header(std::string_view name) const {
+rstd::cppstd::string Request::header(rstd::cppstd::string_view name) const {
     if (m_header.contains(name)) {
-        return m_header.at(std::string(name));
+        return m_header.at(rstd::cppstd::string(name));
     }
-    return std::string();
+    return rstd::cppstd::string();
 }
 
 const Header& Request::header() const { return m_header; }
@@ -53,13 +46,13 @@ auto Request::update_header(const Header& h) -> Request& {
     return *this;
 }
 
-Request& Request::set_header(std::string_view name, std::string_view value) {
-    m_header.insert_or_assign(std::string(name), value);
+Request& Request::set_header(rstd::cppstd::string_view name, rstd::cppstd::string_view value) {
+    m_header.insert_or_assign(rstd::cppstd::string(name), value);
     return *this;
 }
 
-Request& Request::remove_header(std::string_view name) {
-    m_header.erase(std::string(name));
+Request& Request::remove_header(rstd::cppstd::string_view name) {
+    m_header.erase(rstd::cppstd::string(name));
     return *this;
 }
 
@@ -67,21 +60,21 @@ void Request::set_opt(const Header& header) { m_header = header; }
 
 const_voidp Request::get_opt(usize idx) const {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> const_voidp {
-        return &std::get<I>(m_opts);
+        return &rstd::get<I>(m_opts);
     });
 }
 voidp Request::get_opt(usize idx) {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> voidp {
-        return &std::get<I>(m_opts);
+        return &rstd::get<I>(m_opts);
     });
 }
 
 void Request::set_opt(RequestOpt&& opt) {
-    std::get<req_opt::Proxy>(m_opts);
-    std::visit(helper::overloaded { [this](auto&& t) {
-                   std::get<std::decay_t<decltype(t)>>(m_opts) = std::move(t);
+    rstd::get<req_opt::Proxy>(m_opts);
+    rstd::cppstd::visit(helper::overloaded { [this](auto&& t) {
+                   rstd::get<rstd::meta::decay_t<decltype(t)>>(m_opts) = rstd::move(t);
                } },
-               std::move(opt));
+               rstd::move(opt));
 }
 
 auto Request::clone() const -> ncrequest::Request {
