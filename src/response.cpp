@@ -7,15 +7,7 @@ module;
 #include <coroutine>
 
 #include <curl/curl.h>
-#include <asio/buffer.hpp>
-#include <asio/any_completion_handler.hpp>
-#include <asio/associated_executor.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/streambuf.hpp>
-#include <asio/bind_executor.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/read.hpp>
-#include <asio/buffers_iterator.hpp>
+
 
 #include "macro.hpp"
 

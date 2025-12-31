@@ -1,13 +1,5 @@
 module;
-#include <asio/deferred.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/strand.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/buffer.hpp>
-#include <asio/thread_pool.hpp>
-#include <asio/bind_cancellation_slot.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
+
 
 #include <iostream>
 #include <chrono>
@@ -34,7 +26,7 @@ template<typename T>
 T get_curl_private(CURL* c) {
     T        easy { nullptr };
     CURLcode rc = curl_easy_getinfo(c, CURLINFO_PRIVATE, &easy);
-    assert(! rc);
+    rstd::rstd_assert(! rc);
     return easy;
 }
 
@@ -84,14 +76,14 @@ auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> Arc<S
     Arc<Session> session = make_arc<Session_>(ex, memory);
     auto         d       = session->m_d.get();
 
-    asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached);
+    asio::co_spawn(d->m_poll_thread.get_executor(), d->run(), asio::detached_);
     asio::co_spawn(
         d->m_channel_with_notify->get_executor(),
         [self_weak = session->weak_from_this(),
          channel   = d->m_channel_with_notify]() -> coro<void> {
             for (;;) {
                 auto [ec, msg] = co_await channel->async_receive(asio::as_tuple(use_coro));
-                bool stopped   = std::get_if<sm::Stop>(&msg);
+                bool stopped   = rstd::get_if<sm::Stop>(&msg);
                 if (auto self = self_weak.lock(); self && ! stopped) {
                     auto d       = self->m_d.get();
                     bool send_ok = d->m_channel->try_send(ec, msg);
@@ -107,7 +99,7 @@ auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> Arc<S
             }
             co_return;
         },
-        asio::detached);
+        asio::detached_);
     return session;
 }
 
@@ -294,7 +286,7 @@ auto Session::Private::run() -> coro<void> {
 
 void Session::Private::handle_message(const SessionMessage& msg) {
     namespace sm = session_message;
-    std::visit(helper::overloaded { [this](sm::Stop) {
+    cppstd::visit(helper::overloaded { [this](sm::Stop) {
                                        m_stopped = true;
                                        while (m_connect_set.size()) {
                                            auto& con = *m_connect_set.begin();

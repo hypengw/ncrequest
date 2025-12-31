@@ -4,11 +4,6 @@ module;
 #include <filesystem>
 #include <memory_resource>
 
-#include <asio/thread_pool.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/buffer.hpp>
-#include <asio/strand.hpp>
-
 export module ncrequest:session;
 export import :request;
 export import :response;

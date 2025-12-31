@@ -69,7 +69,7 @@ if(NOT TARGET rstd::rstd)
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
-    GIT_TAG a37763b19444cc4e6e26eddda2512754594613c3
+    GIT_TAG 9aeb9e12984a4460efee7a8e152dfc750c796448
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)
@@ -87,7 +87,6 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
-         src/asio.cppm
          src/type.cppm
          src/type_list.cppm
          src/connection.cppm
@@ -106,7 +105,12 @@ target_sources(
          src/curl/curl_multi.cppm
          src/curl/init.cppm
          src/curl/mod.cppm
-         src/mod.cppm)
+         src/mod.cppm
+
+         src/coro/asio.cppm
+         src/coro/mod.cppm
+         
+         )
 
 target_sources(
   ncrequest

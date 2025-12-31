@@ -141,7 +141,7 @@ export template<class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
 export template<typename T>
-concept is_sync_stream = requires(T s, const_buffer buf) {
+concept is_sync_stream = requires(T s, asio::const_buffer buf) {
     { s.write_some(buf) } -> std::convertible_to<std::size_t>;
 };
 

@@ -1,6 +1,3 @@
-module;
-#include <variant>
-#include <format>
 export module ncrequest:error;
 export import rstd;
 export import ncrequest.coro;
@@ -14,7 +11,7 @@ struct Error {
         Coro = 0
     };
 
-    using data_t = std::variant<CoroError>;
+    using data_t = rstd::cppstd::variant<CoroError>;
     data_t data;
 
     template<ErrorKind E>
@@ -31,18 +28,19 @@ using Result = rstd::Result<T, Error>;
 } // namespace ncrequest
 
 template<>
-struct std::formatter<ncrequest::Error> : std::formatter<std::string_view> {
+struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<rstd::cppstd::string_view> {
     using Error = ncrequest::Error;
     template<typename C>
     auto format(const Error& e, C& ctx) const -> C::iterator {
-        std::string out;
+        using namespace rstd;
+        cppstd::string out;
         switch (e.kind()) {
         case Error::Coro: {
-            out = std::format("{}", std::get<0>(e.data).message());
+            out = fmt::format("{}", rstd::get<0>(e.data).message());
             break;
         }
         }
-        return std::formatter<std::string_view>::format(out, ctx);
+        return fmt::formatter<cppstd::string_view>::format(out, ctx);
     }
 };
 

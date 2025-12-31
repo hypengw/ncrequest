@@ -3,14 +3,6 @@ module;
 #include <limits>
 #include <optional>
 
-#include <asio/any_completion_handler.hpp>
-#include <asio/read.hpp>
-#include <asio/strand.hpp>
-#include <asio/thread_pool.hpp>
-#include <asio/streambuf.hpp>
-#include <asio/bind_executor.hpp>
-#include <asio/as_tuple.hpp>
-
 export module ncrequest:response;
 export import :request;
 export import :http;
@@ -27,7 +19,7 @@ class Response : public NoCopy {
 
 public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
-    using allocator_type = std::pmr::polymorphic_allocator<char>;
+    using allocator_type = cppstd::pmr::polymorphic_allocator<char>;
     class Inner;
     static constexpr usize ReadSize { 1024 * 16 };
 
@@ -40,7 +32,7 @@ public:
         if (a.index() == 0) {
             return std::nullopt;
         }
-        return std::get<T>(a);
+        return rstd::get<T>(a);
     }
 
     auto attribute(Attribute) const -> attr_value;
@@ -48,8 +40,8 @@ public:
     auto header() const -> const HttpHeader&;
     auto code() const -> rstd::Option<i32>;
 
-    auto text() -> coro<Result<std::string>>;
-    auto bytes() -> coro<Result<std::vector<byte>>>;
+    auto text() -> coro<Result<cppstd::string>>;
+    auto bytes() -> coro<Result<cppstd::vector<byte>>>;
 
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
@@ -148,7 +140,7 @@ private:
     Arc<Connection>            m_connect;
     rstd::Option<SessionShare> m_share;
 
-    std::pmr::polymorphic_allocator<char> m_allocator;
+    cppstd::pmr::polymorphic_allocator<char> m_allocator;
 };
 
 } // namespace ncrequest

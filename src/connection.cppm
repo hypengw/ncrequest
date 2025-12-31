@@ -2,11 +2,7 @@ module;
 
 #include <atomic>
 #include <mutex>
-#include <asio/streambuf.hpp>
-#include <asio/strand.hpp>
-#include <asio/thread_pool.hpp>
-#include <asio/any_completion_handler.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
+
 #include <curl/curl.h>
 
 #include "log.hpp"
@@ -40,7 +36,7 @@ struct ConnectAction {
     Action          action;
 };
 
-using msg = std::variant<Stop, ConnectAction>;
+using msg = cppstd::variant<Stop, ConnectAction>;
 } // namespace session_message
 
 export using SessionMessage = session_message::msg;
@@ -49,12 +45,12 @@ export using SessionChannel =
     asio::experimental::concurrent_channel<asio::strand<asio::thread_pool::executor_type>,
                                            void(asio::error_code, SessionMessage)>;
 
-export class Connection : public std::enable_shared_from_this<Connection> {
+export class Connection : public cppstd::enable_shared_from_this<Connection> {
     friend Session;
 
 public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
-    using allocator_type = std::pmr::polymorphic_allocator<char>;
+    using allocator_type = cppstd::pmr::polymorphic_allocator<char>;
 
     static constexpr usize RECV_LIMIT { 64 * 1024 }; // 64K
     static constexpr usize SEND_LIMIT { 64 * 1024 }; // 64K
@@ -71,7 +67,7 @@ public:
     class Buffer {
     public:
         Buffer(usize limit, const Allocator& aloc)
-            : m_buf(std::numeric_limits<std::size_t>::max(), aloc),
+            : m_buf(std::numeric_limits<usize>::max(), aloc),
               m_state(State::Empty),
               m_limit(limit),
               m_transferred(0),
@@ -125,7 +121,7 @@ public:
           m_state(State::NotStarted),
           m_recv_paused(false),
           m_ex(ex),
-          m_easy(std::make_unique<CurlEasy>()),
+          m_easy(cppstd::make_unique<CurlEasy>()),
           m_session_channel(session_channel),
           m_recv_buf(RECV_LIMIT, allocator),
           m_send_buf(SEND_LIMIT, allocator) {
@@ -150,7 +146,7 @@ public:
 
     auto& header() const { return m_header_; }
     auto& url() const { return m_url; }
-    void  set_url(std::string_view v) { m_url = v; }
+    void  set_url(cppstd::string_view v) { m_url = v; }
     void  set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
 
     using Action = session_message::ConnectAction::Action;
@@ -212,9 +208,9 @@ public:
     }
 
 private:
-    static std::size_t header_callback(char* ptr, std::size_t size, std::size_t nmemb,
+    static usize header_callback(char* ptr, usize size, usize nmemb,
                                        Connection* self) {
-        std::string_view header { ptr, size * nmemb };
+        cppstd::string_view header { ptr, size * nmemb };
         self->m_header_raw.append(header);
         if (! self->m_header_.start) {
             self->m_header_.start = HttpHeader::parse_start_line(header);
@@ -232,12 +228,12 @@ private:
         }
         return header.size();
     }
-    static std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb,
+    static usize write_callback(char* ptr, usize size, usize nmemb,
                                       Connection* self) {
         auto total_size = size * nmemb;
 
-        auto vec_buf = std::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
-        std::copy(ptr, ptr + total_size, vec_buf.begin());
+        auto vec_buf = cppstd::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
+        rstd::copy(ptr, ptr + total_size, vec_buf.begin());
 
         if (self->m_recv_buf.is_full()) {
             self->m_recv_paused = true;
@@ -253,7 +249,7 @@ private:
         }
     }
 
-    static std::size_t read_callback(char* ptr, std::size_t size, std::size_t nmemb,
+    static usize read_callback(char* ptr, usize size, usize nmemb,
                                      Connection* self) {
         auto total_size = size * nmemb;
         if (self->m_send_callback) {
@@ -355,25 +351,25 @@ private:
 
     void try_wait_header_handler() {
         if (! m_wait_header_handler) return;
-        std::error_code ec {};
+        asio::error_code ec {};
         if (m_state == State::Canceled) {
             ec = asio::error::operation_aborted;
         }
         m_wait_header_handler(ec);
     }
 
-    std::string m_url;
+    cppstd::string m_url;
 
     CURLcode           m_finish_ec;
-    std::atomic<State> m_state;
-    std::atomic<bool>  m_recv_paused;
-    std::atomic<bool>  m_send_paused;
+    rstd::atomic<State> m_state;
+    rstd::atomic<bool>  m_recv_paused;
+    rstd::atomic<bool>  m_send_paused;
 
     executor_type       m_ex;
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
-    std::string                                          m_header_raw;
+    cppstd::string                                          m_header_raw;
     HttpHeader                                           m_header_;
     CookieJar                                            m_cookie_jar;
     asio::any_completion_handler<void(asio::error_code)> m_wait_header_handler;
