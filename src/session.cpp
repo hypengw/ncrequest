@@ -1,6 +1,5 @@
 module;
 
-
 #include <iostream>
 #include <chrono>
 #include <set>
@@ -10,6 +9,7 @@ module;
 
 #include "log.hpp"
 #include "macro.hpp"
+#include <rstd/assert.hpp>
 
 module ncrequest;
 import :session;
@@ -26,7 +26,7 @@ template<typename T>
 T get_curl_private(CURL* c) {
     T        easy { nullptr };
     CURLcode rc = curl_easy_getinfo(c, CURLINFO_PRIVATE, &easy);
-    rstd::rstd_assert(! rc);
+    assert(! rc);
     return easy;
 }
 
@@ -287,36 +287,36 @@ auto Session::Private::run() -> coro<void> {
 void Session::Private::handle_message(const SessionMessage& msg) {
     namespace sm = session_message;
     cppstd::visit(helper::overloaded { [this](sm::Stop) {
-                                       m_stopped = true;
-                                       while (m_connect_set.size()) {
-                                           auto& con = *m_connect_set.begin();
-                                           con->cancel();
-                                           remove_connect(con);
-                                       }
-                                       m_connect_set.clear();
-                                   },
-                                    [this](const sm::ConnectAction& con_act) {
-                                        switch (con_act.action) {
-                                            using enum sm::ConnectAction::Action;
-                                        case Add: add_connect(con_act.con); break;
-                                        case Cancel:
-                                            con_act.con->cancel();
-                                            remove_connect(con_act.con);
-                                            break;
-                                        case PauseRecv:
-                                            con_act.con->easy().pause(CURLPAUSE_RECV);
-                                            break;
-                                        case UnPauseRecv:
-                                            con_act.con->easy().pause(CURLPAUSE_RECV_CONT);
-                                            break;
-                                        case PauseSend:
-                                            con_act.con->easy().pause(CURLPAUSE_SEND);
-                                            break;
-                                        case UnPauseSend:
-                                            con_act.con->easy().pause(CURLPAUSE_SEND_CONT);
-                                            break;
-                                        default: break;
-                                        }
-                                    } },
-               msg);
+                                          m_stopped = true;
+                                          while (m_connect_set.size()) {
+                                              auto& con = *m_connect_set.begin();
+                                              con->cancel();
+                                              remove_connect(con);
+                                          }
+                                          m_connect_set.clear();
+                                      },
+                                       [this](const sm::ConnectAction& con_act) {
+                                           switch (con_act.action) {
+                                               using enum sm::ConnectAction::Action;
+                                           case Add: add_connect(con_act.con); break;
+                                           case Cancel:
+                                               con_act.con->cancel();
+                                               remove_connect(con_act.con);
+                                               break;
+                                           case PauseRecv:
+                                               con_act.con->easy().pause(CURLPAUSE_RECV);
+                                               break;
+                                           case UnPauseRecv:
+                                               con_act.con->easy().pause(CURLPAUSE_RECV_CONT);
+                                               break;
+                                           case PauseSend:
+                                               con_act.con->easy().pause(CURLPAUSE_SEND);
+                                               break;
+                                           case UnPauseSend:
+                                               con_act.con->easy().pause(CURLPAUSE_SEND_CONT);
+                                               break;
+                                           default: break;
+                                           }
+                                       } },
+                  msg);
 }
