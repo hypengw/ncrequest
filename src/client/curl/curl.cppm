@@ -14,6 +14,8 @@ export using ::CURLoption;
 export using ::CURLINFO;
 export using ::CURLMSG;
 export using ::CURLMsg;
+export using ::CURLSHoption;
+export using ::curl_lock_data;
 
 export using ::curl_global_init;
 export using ::curl_global_init_mem;

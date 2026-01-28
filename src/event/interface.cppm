@@ -22,7 +22,7 @@ constexpr auto SOCKET_BAD = -1;
 export class Context {
 public:
     using WaitType      = event::WaitType;
-    using ErrorCallback = rstd::cppstd::function<void(rstd::cppstd::string_view)>;
+    using ErrorCallback = rstd::cppstd::function<void(rstd::ref<rstd::str>)>;
     using EventCallback = rstd::cppstd::function<void()>;
 
     virtual ~Context() = default;

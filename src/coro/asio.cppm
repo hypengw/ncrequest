@@ -59,6 +59,7 @@ constexpr detached_t detached_;
 namespace detail
 {
 using asio::detail::throw_error;
+using asio::detail::default_max_transfer_size;
 }
 
 namespace stream_errc
@@ -70,6 +71,7 @@ namespace error
 {
 using asio::error::make_error_code;
 using asio::error::misc_errors;
+using asio::error::basic_errors;
 }
 
 namespace experimental

@@ -1,4 +1,5 @@
 export module ncrequest:error;
+export import rstd.alloc;
 export import rstd;
 export import ncrequest.coro;
 
@@ -28,19 +29,20 @@ using Result = rstd::Result<T, Error>;
 } // namespace ncrequest
 
 template<>
-struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<rstd::cppstd::string_view> {
+struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<rstd::alloc::string::String> {
     using Error = ncrequest::Error;
     template<typename C>
     auto format(const Error& e, C& ctx) const -> C::iterator {
         using namespace rstd;
-        cppstd::string out;
+        using rstd::alloc::string::String;
+        auto out = String::make();
         switch (e.kind()) {
         case Error::Coro: {
             out = fmt::format("{}", rstd::get<0>(e.data).message());
             break;
         }
         }
-        return fmt::formatter<cppstd::string_view>::format(out, ctx);
+        return fmt::formatter<String>::format(out, ctx);
     }
 };
 

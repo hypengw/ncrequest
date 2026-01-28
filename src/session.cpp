@@ -9,7 +9,7 @@ module;
 
 #include "log.hpp"
 #include "macro.hpp"
-#include <rstd/assert.hpp>
+#include <rstd/macro.hpp>
 
 module ncrequest;
 import :session;

@@ -13,7 +13,7 @@ public:
     using ConnectedCallback = rstd::cppstd::function<void()>;
     using MessageCallback =
         rstd::cppstd::function<void(rstd::cppstd::span<const rstd::byte>, bool last)>;
-    using ErrorCallback = rstd::cppstd::function<void(rstd::cppstd::string_view)>;
+    using ErrorCallback = rstd::cppstd::function<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketClient(
         Box<event::Context> ioc, rstd::Option<u64> max_buffer_size = None(),

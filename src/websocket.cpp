@@ -18,7 +18,7 @@ WebSocketClient::WebSocketClient(Box<event::Context> ioc, rstd::Option<u64> max_
       m_msgs(m_alloc),
       m_sent_len(0),
       m_context(rstd::move(ioc)) {
-    m_context->set_error_callback([this](rstd::cppstd::string_view error) {
+    m_context->set_error_callback([this](auto error) {
         if (m_on_error) m_on_error(error);
     });
 }
@@ -42,12 +42,12 @@ auto WebSocketClient::connect(const rstd::cppstd::string& url) -> rstd::cppstd::
             return;
         }
 
-        curl_easy_setopt(m_curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(m_curl, CURLOPT_CONNECT_ONLY, 2L); // WebSocket mode
+        curl_easy_setopt(m_curl, CURLoption::CURLOPT_URL, url.c_str());
+        curl_easy_setopt(m_curl, CURLoption::CURLOPT_CONNECT_ONLY, 2L); // WebSocket mode
         // curl_easy_setopt(m_curl, CURLOPT_VERBOSE, 1L);
 
         CURLcode result = curl_easy_perform(m_curl);
-        if (result != CURLE_OK) {
+        if (result != CURLcode::CURLE_OK) {
             if (m_on_error) {
                 m_on_error(curl_easy_strerror(result));
             }
@@ -60,7 +60,7 @@ auto WebSocketClient::connect(const rstd::cppstd::string& url) -> rstd::cppstd::
         m_sent_len  = 0;
 
         curl_socket_t sockfd;
-        curl_easy_getinfo(m_curl, CURLINFO_ACTIVESOCKET, &sockfd);
+        curl_easy_getinfo(m_curl, CURLINFO::CURLINFO_ACTIVESOCKET, &sockfd);
 
         bool success = m_context->assign(sockfd);
         if (success) {
@@ -83,7 +83,7 @@ auto WebSocketClient::connect(const rstd::cppstd::string& url) -> rstd::cppstd::
 void WebSocketClient::do_read() {
     usize                       rlen { 0 };
     const struct curl_ws_frame* meta { nullptr };
-    CURLcode                    result = CURLE_OK;
+    CURLcode                    result = CURLcode::CURLE_OK;
 
     for (;;) {
         {
@@ -93,10 +93,10 @@ void WebSocketClient::do_read() {
         }
 
         m_read_len += rlen;
-        if (result == CURLE_AGAIN) {
+        if (result == CURLcode::CURLE_AGAIN) {
             break;
         }
-        if (result != CURLE_OK) {
+        if (result != CURLcode::CURLE_OK) {
             do_error(result);
             return;
         }
@@ -130,7 +130,7 @@ void WebSocketClient::do_write() {
     auto msg = m_msgs.front();
 
     usize    sent { 0 };
-    CURLcode result = CURLE_OK;
+    CURLcode result = CURLcode::CURLE_OK;
 
     for (;;) {
         {
@@ -141,10 +141,10 @@ void WebSocketClient::do_write() {
 
         m_sent_len += sent;
 
-        if (result == CURLE_AGAIN) {
+        if (result == CURLcode::CURLE_AGAIN) {
             break;
         }
-        if (result != CURLE_OK) {
+        if (result != CURLcode::CURLE_OK) {
             do_error(result);
             return;
         }

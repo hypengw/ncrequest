@@ -11,34 +11,34 @@ namespace
 {
 
 void apply_easy_request(Response::Inner* rsp, CurlEasy& easy, const Request& req) {
-    easy.setopt(CURLOPT_URL, req.url().data());
+    easy.setopt(CURLoption::CURLOPT_URL, req.url().data());
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
 
-        easy.setopt(CURLOPT_LOW_SPEED_LIMIT, timeout.low_speed);
-        easy.setopt(CURLOPT_LOW_SPEED_TIME, timeout.transfer_timeout);
-        easy.setopt(CURLOPT_CONNECTTIMEOUT, timeout.connect_timeout);
+        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_LIMIT, timeout.low_speed);
+        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_TIME, timeout.transfer_timeout);
+        easy.setopt(CURLoption::CURLOPT_CONNECTTIMEOUT, timeout.connect_timeout);
     }
     {
         auto& tcp = req.get_opt<req_opt::Tcp>();
-        easy.setopt(CURLOPT_TCP_KEEPALIVE, tcp.keepalive);
-        easy.setopt(CURLOPT_TCP_KEEPIDLE, tcp.keepidle);
-        easy.setopt(CURLOPT_TCP_KEEPINTVL, tcp.keepintvl);
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive);
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPIDLE, tcp.keepidle);
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPINTVL, tcp.keepintvl);
     }
     {
         auto& p = req.get_opt<req_opt::Proxy>();
-        easy.setopt(CURLOPT_PROXYTYPE, p.type);
-        easy.setopt(CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
+        easy.setopt(CURLoption::CURLOPT_PROXYTYPE, p.type);
+        easy.setopt(CURLoption::CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
     }
     {
         auto& p = req.get_opt<req_opt::SSL>();
-        easy.setopt(CURLOPT_SSL_VERIFYPEER, (long)p.verify_certificate);
-        easy.setopt(CURLOPT_PROXY_SSL_VERIFYPEER, (long)p.verify_certificate);
+        easy.setopt(CURLoption::CURLOPT_SSL_VERIFYPEER, (long)p.verify_certificate);
+        easy.setopt(CURLoption::CURLOPT_PROXY_SSL_VERIFYPEER, (long)p.verify_certificate);
     }
     {
         auto& p = req.get_opt<req_opt::Share>();
         if (p.share) {
-            easy.setopt<CURLOPT_SHARE>(p.share->handle());
+            easy.setopt<CURLoption::CURLOPT_SHARE>(p.share->handle());
         }
         rsp->set_share(p.share.clone());
     }
@@ -70,9 +70,9 @@ Response::Response(const Request& req, Operation oper, Arc<Session> ses) noexcep
     switch (oper) {
     case Operation::GetOperation: break;
     case Operation::PostOperation:
-        easy.setopt(CURLOPT_POST, 1);
-        easy.setopt(CURLOPT_POSTFIELDS, nullptr);
-        easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, 0);
+        easy.setopt(CURLoption::CURLOPT_POST, 1);
+        easy.setopt(CURLoption::CURLOPT_POSTFIELDS, nullptr);
+        easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, 0);
         break;
     default: break;
     }
@@ -134,11 +134,11 @@ void Response::prepare_perform() {
     case Operation::PostOperation: {
         auto& p = m_inner->m_req.get_opt<req_opt::Read>();
         if (p.callback) {
-            easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, p.size ? p.size : -1);
+            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, p.size ? p.size : -1);
         } else {
             auto& send_buffer = m_inner->m_send_buffer;
-            easy.setopt(CURLOPT_POSTFIELDS, send_buffer.data());
-            easy.setopt(CURLOPT_POSTFIELDSIZE_LARGE, send_buffer.size());
+            easy.setopt(CURLoption::CURLOPT_POSTFIELDS, send_buffer.data());
+            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, send_buffer.size());
         }
         break;
     }

@@ -22,10 +22,11 @@ public:
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERFUNCTION, CurlMulti::curl_timer_func);
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERDATA, this);
 
-        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_COOKIE);
-        curl_share_setopt(m_share, CURLSHOPT_LOCKFUNC, CurlMulti::static_share_lock);
-        curl_share_setopt(m_share, CURLSHOPT_UNLOCKFUNC, CurlMulti::static_share_unlock);
-        curl_share_setopt(m_share, CURLSHOPT_USERDATA, this);
+        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_LOCKFUNC, CurlMulti::static_share_lock);
+        curl_share_setopt(
+            m_share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, CurlMulti::static_share_unlock);
+        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_USERDATA, this);
     }
 
     ~CurlMulti() {
@@ -35,8 +36,8 @@ public:
 
     rstd::error_code add_handle(CurlEasy& easy) {
         rstd::error_code cm {};
-        if (easy.getopt<CURLOPT_SHARE>() == nullptr) {
-            cm = easy.setopt<CURLOPT_SHARE>(m_share);
+        if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
+            cm = easy.setopt<CURLoption::CURLOPT_SHARE>(m_share);
         }
         if (cm) return cm;
         cm = curl_multi_add_handle(m_multi, easy.handle());
@@ -60,7 +61,7 @@ public:
 
     cppstd::vector<InfoMsg> query_info_msg() {
         cppstd::vector<InfoMsg> out;
-        int                  message_left { 0 };
+        int                     message_left { 0 };
         while (CURLMsg* msg = curl_multi_info_read(m_multi, &message_left)) {
             out.push_back(InfoMsg {
                 .msg         = msg->msg,
@@ -73,10 +74,10 @@ public:
 
     auto cookies() const -> cppstd::vector<cppstd::string> {
         cppstd::vector<cppstd::string> out;
-        CurlEasy                 x;
+        CurlEasy                       x;
 
-        x.setopt(CURLOPT_SHARE, m_share);
-        auto list_ = x.get_info<curl_slist*>(CURLINFO_COOKIELIST);
+        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
+        auto list_ = x.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
         if (auto plist = rstd::get_if<curl_slist*>(&list_)) {
             auto list = *plist;
             while (list) {
@@ -90,17 +91,17 @@ public:
 
     void load_cookie(cppstd::filesystem::path p) {
         CurlEasy x;
-        x.setopt(CURLOPT_SHARE, m_share);
+        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         // append filename
-        x.setopt(CURLOPT_COOKIEFILE, p.c_str());
+        x.setopt(CURLoption::CURLOPT_COOKIEFILE, p.c_str());
         // actually load
-        x.setopt(CURLOPT_COOKIELIST, "RELOAD");
+        x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
     }
 
     void save_cookie(cppstd::filesystem::path p) const {
         CurlEasy x;
-        x.setopt(CURLOPT_SHARE, m_share);
-        x.setopt(CURLOPT_COOKIEJAR, p.c_str());
+        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
+        x.setopt(CURLoption::CURLOPT_COOKIEJAR, p.c_str());
         // save when x destruct
     }
 

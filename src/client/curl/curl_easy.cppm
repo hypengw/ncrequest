@@ -10,8 +10,8 @@ namespace ncrequest
 export constexpr CURLINFO to_curl_info(Attribute A) noexcept {
     switch (A) {
         using enum Attribute;
-    case HttpCode: return CURLINFO_RESPONSE_CODE;
-    default: return CURLINFO_RESPONSE_CODE;
+    case HttpCode: return CURLINFO::CURLINFO_RESPONSE_CODE;
+    default: return CURLINFO::CURLINFO_RESPONSE_CODE;
     }
 }
 
@@ -29,14 +29,14 @@ export class CurlEasy : NoCopy {
 public:
     CurlEasy() noexcept: easy(curl_easy_init()), m_headers(nullptr), m_share(nullptr) {
         // enable cookie engine
-        setopt<CURLOPT_COOKIEFILE>("");
+        setopt<CURLoption::CURLOPT_COOKIEFILE>("");
 
         // thread safe
-        setopt<CURLOPT_NOSIGNAL>(1L);
+        setopt<CURLoption::CURLOPT_NOSIGNAL>(1L);
 
-        setopt<CURLOPT_FOLLOWLOCATION>(1L);
-        setopt<CURLOPT_AUTOREFERER>(1L);
-        setopt<CURLOPT_VERBOSE>(0L);
+        setopt<CURLoption::CURLOPT_FOLLOWLOCATION>(1L);
+        setopt<CURLoption::CURLOPT_AUTOREFERER>(1L);
+        setopt<CURLoption::CURLOPT_VERBOSE>(0L);
     }
 
     ~CurlEasy() {
@@ -48,7 +48,7 @@ public:
 
     template<typename T>
     auto curl_private() {
-        return get_info<T>(CURLINFO_PRIVATE);
+        return get_info<T>(CURLINFO::CURLINFO_PRIVATE);
     }
 
     template<typename T>
@@ -80,14 +80,14 @@ public:
     void set_header(const Header& headers) {
         reset_header();
         for (auto& [k, v] : headers) {
-            cppstd::string header = rstd::format("{}: {}", k, v);
+            cppstd::string header = cppstd::format("{}: {}", k, v);
             m_headers             = curl_slist_append(m_headers, header.c_str());
         }
-        if (m_headers != nullptr) setopt<CURLOPT_HTTPHEADER>(m_headers);
+        if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);
     }
 
     void reset_header() {
-        setopt<CURLOPT_HTTPHEADER>(nullptr);
+        setopt<CURLoption::CURLOPT_HTTPHEADER>(nullptr);
         curl_slist_free_all(m_headers);
         m_headers = nullptr;
     }

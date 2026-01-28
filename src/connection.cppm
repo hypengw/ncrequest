@@ -7,6 +7,7 @@ export import :http;
 export import :request;
 
 using namespace curl;
+using rstd::sync::atomic::Atomic;
 
 namespace ncrequest
 {
@@ -104,7 +105,7 @@ public:
         }
 
         asio::basic_streambuf<Allocator> m_buf;
-        rstd::atomic<State>              m_state;
+        Atomic<State>              m_state;
         usize                            m_limit;
         usize                            m_transferred;
         Allocator                        m_alloc;
@@ -112,7 +113,7 @@ public:
 
     Connection(executor_type::inner_executor_type ex, Arc<SessionChannel> session_channel,
                allocator_type allocator)
-        : m_finish_ec(CURLE_OK),
+        : m_finish_ec(CURLcode::CURLE_OK),
           m_state(State::NotStarted),
           m_recv_paused(false),
           m_ex(ex),
@@ -121,15 +122,15 @@ public:
           m_recv_buf(RECV_LIMIT, allocator),
           m_send_buf(SEND_LIMIT, allocator) {
         auto& easy = *m_easy;
-        easy.setopt(CURLOPT_WRITEFUNCTION, Connection::write_callback);
-        easy.setopt(CURLOPT_WRITEDATA, this);
+        easy.setopt(CURLoption::CURLOPT_WRITEFUNCTION, Connection::write_callback);
+        easy.setopt(CURLoption::CURLOPT_WRITEDATA, this);
 
-        easy.setopt(CURLOPT_HEADERFUNCTION, Connection::header_callback);
-        easy.setopt(CURLOPT_HEADERDATA, this);
+        easy.setopt(CURLoption::CURLOPT_HEADERFUNCTION, Connection::header_callback);
+        easy.setopt(CURLoption::CURLOPT_HEADERDATA, this);
 
-        easy.setopt(CURLOPT_READFUNCTION, Connection::read_callback);
-        easy.setopt(CURLOPT_READDATA, this);
-        easy.setopt(CURLOPT_PRIVATE, this);
+        easy.setopt(CURLoption::CURLOPT_READFUNCTION, Connection::read_callback);
+        easy.setopt(CURLoption::CURLOPT_READDATA, this);
+        easy.setopt(CURLoption::CURLOPT_PRIVATE, this);
     }
     ~Connection() {}
     auto  get_arc() { return shared_from_this(); }
@@ -314,7 +315,7 @@ private:
             }
         } else if (m_state == State::Finished) {
             asio::error_code ec { asio::error::eof };
-            if (m_finish_ec != CURLE_OK) {
+            if (m_finish_ec != CURLcode::CURLE_OK) {
                 ec = m_finish_ec;
             }
             m_read_some_handler(ec);
@@ -335,7 +336,7 @@ private:
             }
         } else if (m_state == State::Finished) {
             asio::error_code ec { asio::error::eof };
-            if (m_finish_ec != CURLE_OK) {
+            if (m_finish_ec != CURLcode::CURLE_OK) {
                 ec = m_finish_ec;
             }
             m_write_some_handler(ec);
@@ -354,9 +355,9 @@ private:
     cppstd::string m_url;
 
     CURLcode            m_finish_ec;
-    rstd::atomic<State> m_state;
-    rstd::atomic<bool>  m_recv_paused;
-    rstd::atomic<bool>  m_send_paused;
+    Atomic<State> m_state;
+    Atomic<bool>  m_recv_paused;
+    Atomic<bool>  m_send_paused;
 
     executor_type       m_ex;
     Box<CurlEasy>       m_easy;

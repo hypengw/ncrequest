@@ -24,7 +24,7 @@ TEST(http, BasicTest) {
                 auto rsp = (co_await session->get(req)).unwrap();
 
                 asio::streambuf buf;
-                auto [ec, size] = co_await asio::async_read(
+                [[maybe_unused]] auto [ec, size] = co_await asio::async_read(
                     *rsp, buf, asio::transfer_all(), asio::as_tuple(asio::use_awaitable));
             },
             asio::detached);
