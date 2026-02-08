@@ -2,7 +2,7 @@ export module ncrequest:websocket;
 export import ncrequest.type;
 export import ncrequest.curl;
 import ncrequest.event;
-import rstd.rc;
+import rstd;
 
 namespace ncrequest
 {

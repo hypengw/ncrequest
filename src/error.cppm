@@ -1,5 +1,4 @@
 export module ncrequest:error;
-export import rstd.alloc;
 export import rstd;
 export import ncrequest.coro;
 

@@ -1,7 +1,7 @@
 module ncrequest;
 import :websocket;
 import ncrequest.event;
-import rstd.rc;
+import rstd;
 
 using namespace curl;
 
