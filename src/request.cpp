@@ -72,7 +72,7 @@ voidp Request::get_opt(usize idx) {
 void Request::set_opt(RequestOpt&& opt) {
     rstd::get<req_opt::Proxy>(m_opts);
     rstd::cppstd::visit(helper::overloaded { [this](auto&& t) {
-                   rstd::get<rstd::meta::decay_t<decltype(t)>>(m_opts) = rstd::move(t);
+                   rstd::get<rstd::mtp::decay_t<decltype(t)>>(m_opts) = rstd::move(t);
                } },
                rstd::move(opt));
 }
