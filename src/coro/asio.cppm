@@ -41,6 +41,10 @@ using asio::bind_allocator;
 using asio::deferred_t;
 using asio::execution_context;
 using asio::get_associated_executor;
+using asio::get_associated_allocator;
+using asio::get_associated_cancellation_slot;
+using asio::cancellation_type;
+
 
 using asio::system_error;
 
