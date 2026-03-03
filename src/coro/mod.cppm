@@ -1,5 +1,5 @@
 export module ncrequest.coro;
-export import :asio;
+export import asio;
 
 namespace ncrequest
 {
