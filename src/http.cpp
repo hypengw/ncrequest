@@ -135,7 +135,7 @@ template<>
 struct action<grammer_http::HTTP_version> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s) {
-        rstd::cppstd::visit(helper::overloaded { [&in](auto& s) {
+        cppstd::visit(helper::overloaded { [&in](auto& s) {
                                 s.version = in.string_view();
                             } },
                             s);
@@ -165,7 +165,7 @@ struct action<grammer_http::status_code> {
     static void apply(const ActionInput& in, HttpHeader::Start& s_) {
         if (auto s = rstd::get_if<HttpHeader::Status>(&s_)) {
             auto str = in.string_view();
-            rstd::cppstd::from_chars(str.begin(), str.end(), s->code);
+            cppstd::from_chars(str.begin(), str.end(), s->code);
         }
     }
 };
@@ -235,7 +235,7 @@ auto HttpHeader::parse_field_line(std::string_view in) -> Field {
 }
 auto HttpHeader::has_field(std::string_view name) const -> bool {
     return this->fields.end() !=
-           rstd::cppstd::find_if(this->fields.begin(), this->fields.end(), [name](auto& f) {
+           cppstd::find_if(this->fields.begin(), this->fields.end(), [name](auto& f) {
                return helper::starts_with_i(f.name, name);
            });
 }

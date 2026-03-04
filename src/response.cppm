@@ -25,7 +25,7 @@ public:
     auto attribute(void) const -> rstd::Option<T> {
         auto a = attribute(A);
         if (a.index() == 0) {
-            return rstd::cppstd::nullopt;
+            return cppstd::nullopt;
         }
         return rstd::get<T>(a);
     }

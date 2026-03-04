@@ -11,7 +11,7 @@ struct Error {
         Coro = 0
     };
 
-    using data_t = rstd::cppstd::variant<CoroError>;
+    using data_t = cppstd::variant<CoroError>;
     data_t data;
 
     template<ErrorKind E>

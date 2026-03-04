@@ -7,7 +7,7 @@ export import ncrequest.type;
 namespace ncrequest
 {
 
-export class Session : public rstd::cppstd::enable_shared_from_this<Session>, NoCopy {
+export class Session : public cppstd::enable_shared_from_this<Session>, NoCopy {
     friend class Request;
     friend class Response;
 
@@ -20,7 +20,7 @@ public:
 
     static auto
     make(executor_type ex,
-         rstd::cppstd::pmr::memory_resource* = rstd::cppstd::pmr::get_default_resource())
+         cppstd::pmr::memory_resource* = cppstd::pmr::get_default_resource())
         -> Arc<Session>;
 
     auto get_executor() -> executor_type&;
@@ -31,9 +31,9 @@ public:
     auto post(const Request&) -> coro<rstd::Option<Arc<Response>>>;
     auto post(const Request&, asio::const_buffer) -> coro<rstd::Option<Arc<Response>>>;
 
-    auto cookies() -> rstd::cppstd::vector<rstd::cppstd::string>;
-    void load_cookie(rstd::cppstd::filesystem::path);
-    void save_cookie(rstd::cppstd::filesystem::path) const;
+    auto cookies() -> cppstd::vector<cppstd::string>;
+    void load_cookie(cppstd::filesystem::path);
+    void save_cookie(cppstd::filesystem::path) const;
     void set_proxy(const req_opt::Proxy&);
     void set_verify_certificate(bool);
 
@@ -41,11 +41,11 @@ public:
 
     auto channel() -> channel_type&;
     auto channel_rc() -> Arc<channel_type>;
-    auto allocator() -> rstd::cppstd::pmr::polymorphic_allocator<byte>;
+    auto allocator() -> cppstd::pmr::polymorphic_allocator<byte>;
 
 private:
     Session(executor_type ex,
-            rstd::cppstd::pmr::memory_resource* = rstd::cppstd::pmr::get_default_resource());
+            cppstd::pmr::memory_resource* = cppstd::pmr::get_default_resource());
     auto perform(Arc<Response>&) -> coro<bool>;
     auto prepare_req(const Request&) const -> Request;
 

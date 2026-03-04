@@ -3,12 +3,12 @@ import :init;
 import :error;
 import rstd.core;
 
-using max_align_t = rstd::cppstd::max_align_t;
+using max_align_t = cppstd::max_align_t;
 using namespace rstd;
 
 namespace
 {
-rstd::cppstd::pmr::memory_resource* g_resource = nullptr;
+cppstd::pmr::memory_resource* g_resource = nullptr;
 
 void* curl_malloc_fn(usize size) { return g_resource->allocate(size, alignof(max_align_t)); }
 

@@ -10,8 +10,8 @@ public:
     ~SessionShare();
 
     auto handle() const -> voidp;
-    void load(const rstd::cppstd::filesystem::path& p);
-    void save(const rstd::cppstd::filesystem::path& p) const;
+    void load(const cppstd::filesystem::path& p);
+    void save(const cppstd::filesystem::path& p) const;
 
 private:
     Arc<Private>          d_ptr;

@@ -15,7 +15,7 @@ struct is_error_code_enum<CURLcode> : rstd::mtp::true_type {};
 
 namespace ncrequest
 {
-class CURLMEcategory : public rstd::cppstd::error_category {
+class CURLMEcategory : public cppstd::error_category {
 public:
     static CURLMEcategory const& instance() {
         static CURLMEcategory instance;
@@ -24,14 +24,14 @@ public:
 
     char const* name() const noexcept override { return "CURLMEcategory"; }
 
-    rstd::cppstd::string message(int code) const override {
+    cppstd::string message(int code) const override {
         return curl_multi_strerror((CURLMcode)code);
     }
 };
 
 const CURLMEcategory theCURLMEcategory {};
 
-class CURLEcategory : public rstd::cppstd::error_category {
+class CURLEcategory : public cppstd::error_category {
 public:
     static CURLEcategory const& instance() {
         static CURLEcategory instance;
@@ -40,7 +40,7 @@ public:
 
     char const* name() const noexcept override { return "CURLEcategory"; }
 
-    rstd::cppstd::string message(int code) const override {
+    cppstd::string message(int code) const override {
         return curl_easy_strerror((CURLcode)code);
     }
 };
@@ -48,13 +48,13 @@ public:
 const CURLEcategory theCURLEcategory {};
 } // namespace ncrequest
 
-export inline rstd::cppstd::error_code make_error_code(CURLMcode code) {
+export inline cppstd::error_code make_error_code(CURLMcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLMEcategory,
     };
 }
-export inline rstd::cppstd::error_code make_error_code(CURLcode code) {
+export inline cppstd::error_code make_error_code(CURLcode code) {
     return {
         static_cast<int>(code),
         ncrequest::theCURLEcategory,

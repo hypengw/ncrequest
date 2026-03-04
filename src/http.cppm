@@ -7,54 +7,54 @@ namespace ncrequest
 export class URI {
 public:
     URI();
-    URI(rstd::cppstd::string_view);
+    URI(cppstd::string_view);
     ~URI();
     URI(const URI&);
     URI& operator=(const URI&);
 
-    static URI from(rstd::cppstd::string_view);
+    static URI from(cppstd::string_view);
 
-    rstd::cppstd::string_view uri;
-    rstd::cppstd::string_view scheme;
-    rstd::cppstd::string_view authority;
-    rstd::cppstd::string_view userinfo;
-    rstd::cppstd::string_view host;
-    rstd::cppstd::string_view port;
-    rstd::cppstd::string_view path;
-    rstd::cppstd::string_view query;
-    rstd::cppstd::string_view fragment;
+    cppstd::string_view uri;
+    cppstd::string_view scheme;
+    cppstd::string_view authority;
+    cppstd::string_view userinfo;
+    cppstd::string_view host;
+    cppstd::string_view port;
+    cppstd::string_view path;
+    cppstd::string_view query;
+    cppstd::string_view fragment;
 
     bool valid() const;
 
 private:
     bool                 m_valid;
-    rstd::cppstd::string m_holder;
+    cppstd::string m_holder;
 };
 
 export struct HttpHeader {
     struct Request {
-        rstd::cppstd::string method;
-        rstd::cppstd::string version;
-        rstd::cppstd::string target;
+        cppstd::string method;
+        cppstd::string version;
+        cppstd::string target;
     };
     struct Status {
-        rstd::cppstd::string version;
+        cppstd::string version;
         i32                  code;
     };
     struct Field {
-        rstd::cppstd::string name;
-        rstd::cppstd::string value;
+        cppstd::string name;
+        cppstd::string value;
     };
-    using Start = rstd::cppstd::variant<Request, Status>;
+    using Start = cppstd::variant<Request, Status>;
 
     rstd::Option<Start>         start;
-    rstd::cppstd::vector<Field> fields;
+    cppstd::vector<Field> fields;
 
-    auto has_field(rstd::cppstd::string_view) const -> bool;
+    auto has_field(cppstd::string_view) const -> bool;
 
-    static auto parse_header(rstd::cppstd::string_view) -> rstd::Option<HttpHeader>;
-    static auto parse_start_line(rstd::cppstd::string_view) -> rstd::Option<Start>;
-    static auto parse_field_line(rstd::cppstd::string_view) -> Field;
+    static auto parse_header(cppstd::string_view) -> rstd::Option<HttpHeader>;
+    static auto parse_start_line(cppstd::string_view) -> rstd::Option<Start>;
+    static auto parse_field_line(cppstd::string_view) -> Field;
 
     // trait
     auto clone() const -> ncrequest::HttpHeader;

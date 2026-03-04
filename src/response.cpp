@@ -48,7 +48,7 @@ void apply_easy_request(Response::Inner* rsp, CurlEasy& easy, const Request& req
 template<Attribute A, CURLINFO Info = to_curl_info(A)>
 attr_value attr_from_easy(CurlEasy& easy) {
     auto res = easy.template get_info<attr_type<A>>(Info);
-    return rstd::cppstd::visit(helper::overloaded { [](auto a) {
+    return cppstd::visit(helper::overloaded { [](auto a) {
                                    return attr_value(a);
                                } },
                                res);
@@ -88,7 +88,7 @@ Response::Response(Response&&) noexcept            = default;
 Response& Response::operator=(Response&&) noexcept = default;
 Response::~Response() noexcept { cancel(); }
 
-auto Response::allocator() const -> const rstd::cppstd::pmr::polymorphic_allocator<char>& {
+auto Response::allocator() const -> const cppstd::pmr::polymorphic_allocator<char>& {
     return m_inner->m_allocator;
 }
 
@@ -179,7 +179,7 @@ auto Response::connection() const -> const Connection& { return *(m_inner->m_con
 
 void Response::cancel() { connection().about_to_cancel(); }
 
-auto Response::text() -> coro<Result<rstd::cppstd::string>> {
+auto Response::text() -> coro<Result<cppstd::string>> {
     asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
     buf.prepare(ReadSize);
 
@@ -193,15 +193,15 @@ auto Response::text() -> coro<Result<rstd::cppstd::string>> {
         Error err = into(ec);
         co_return Err(rstd::move(err));
     }
-    rstd::cppstd::string out;
+    cppstd::string out;
     out.resize(buf.in_avail());
     auto bufs = buf.data();
     rstd::copy(
         asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
     co_return Ok(rstd::move(out));
 }
-auto Response::bytes() -> coro<Result<rstd::cppstd::vector<byte>>> {
-    rstd::cppstd::vector<byte>            out;
+auto Response::bytes() -> coro<Result<cppstd::vector<byte>>> {
+    cppstd::vector<byte>            out;
     asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
     buf.prepare(ReadSize);
 

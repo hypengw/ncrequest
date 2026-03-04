@@ -63,7 +63,7 @@ public:
     class Buffer {
     public:
         Buffer(usize limit, const Allocator& aloc)
-            : m_buf(rstd::cppstd::numeric_limits<usize>::max(), aloc),
+            : m_buf(cppstd::numeric_limits<usize>::max(), aloc),
               m_state(State::Empty),
               m_limit(limit),
               m_transferred(0),
@@ -181,7 +181,7 @@ public:
                 [this, buf, handler = rstd::move(handler)](asio::error_code ec) mutable {
                     usize copied { 0 };
                     if (! ec) {
-                        rstd::cppstd::unique_lock lock { m_send_mutex };
+                        cppstd::unique_lock lock { m_send_mutex };
                         copied = m_send_buf.commit(buf);
                     }
                     handler(ec, copied);
@@ -254,7 +254,7 @@ private:
                 return CURL_READFUNC_PAUSE;
             } else {
                 {
-                    rstd::cppstd::unique_lock lock { self->m_send_mutex };
+                    cppstd::unique_lock lock { self->m_send_mutex };
                     copied = self->m_send_buf.consume(asio::mutable_buffer { ptr, total_size });
                 }
                 asio::dispatch(self->m_ex, [self]() {
@@ -372,7 +372,7 @@ private:
     asio::any_completion_handler<void(asio::error_code)> m_read_some_handler;
 
     req_opt::Read::Callback                              m_send_callback;
-    rstd::cppstd::mutex                                  m_send_mutex;
+    cppstd::mutex                                  m_send_mutex;
     Buffer<allocator_type>                               m_send_buf;
     asio::any_completion_handler<void(asio::error_code)> m_write_some_handler;
 };

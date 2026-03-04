@@ -72,7 +72,7 @@ public:
 
     void set_error_callback(ErrorCallback callback) override { m_on_error = rstd::move(callback); }
 
-    void post(rstd::cppstd::function<void()> f) override { asio::post(m_socket.get_executor(), f); }
+    void post(cppstd::function<void()> f) override { asio::post(m_socket.get_executor(), f); }
 
 private:
     Socket        m_socket;

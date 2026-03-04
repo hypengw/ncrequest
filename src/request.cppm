@@ -39,7 +39,7 @@ export struct Proxy : rstd::WithTrait<Proxy, rstd::clone::Clone> {
         SOCKS5H = 7
     };
     REQ_OPT_PROP(Type, type, { Type::HTTP })
-    REQ_OPT_PROP(rstd::cppstd::string, content, {})
+    REQ_OPT_PROP(cppstd::string, content, {})
 };
 
 export struct Tcp {
@@ -53,7 +53,7 @@ export struct SSL {
 };
 
 export struct Read {
-    using Callback = rstd::cppstd::function<usize(byte* ptr, usize size)>;
+    using Callback = cppstd::function<usize(byte* ptr, usize size)>;
     REQ_OPT_PROP(Callback, callback, {})
     REQ_OPT_PROP(usize, size, { 0 })
 };
@@ -75,12 +75,12 @@ using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 } // namespace req_opt
 
 export using RequestOpts = req_opt::opts;
-export using RequestOpt  = RequestOpts::to<rstd::cppstd::variant>;
+export using RequestOpt  = RequestOpts::to<cppstd::variant>;
 
 export class Session;
 export class Response;
 
-export auto global_init(rstd::cppstd::pmr::memory_resource* resource = nullptr) -> rstd::error_code;
+export auto global_init(cppstd::pmr::memory_resource* resource = nullptr) -> rstd::error_code;
 } // namespace ncrequest
 namespace ncrequest
 {
@@ -92,20 +92,20 @@ export class Request : public rstd::WithTraitDefault<Request, rstd::clone::Clone
 public:
     class Private;
     Request() noexcept;
-    Request(rstd::cppstd::string_view url) noexcept;
+    Request(cppstd::string_view url) noexcept;
     Request(Request&&) noexcept;
     ~Request() noexcept;
     Request& operator=(Request&&) noexcept;
 
-    auto url() const -> rstd::cppstd::string_view;
+    auto url() const -> cppstd::string_view;
     auto url_info() const -> const URI&;
-    auto set_url(rstd::cppstd::string_view) -> Request&;
+    auto set_url(cppstd::string_view) -> Request&;
 
     auto header() const -> const Header&;
-    auto header(rstd::cppstd::string_view name) const -> rstd::cppstd::string;
+    auto header(cppstd::string_view name) const -> cppstd::string;
     auto update_header(const Header&) -> Request&;
-    auto set_header(rstd::cppstd::string_view name, rstd::cppstd::string_view value) -> Request&;
-    auto remove_header(rstd::cppstd::string_view name) -> Request&;
+    auto set_header(cppstd::string_view name, cppstd::string_view value) -> Request&;
+    auto remove_header(cppstd::string_view name) -> Request&;
     void set_opt(const Header&);
 
     template<typename T>
@@ -131,7 +131,7 @@ private:
 
     URI                                  m_uri;
     Header                               m_header;
-    RequestOpts::to<rstd::cppstd::tuple> m_opts;
+    RequestOpts::to<cppstd::tuple> m_opts;
 };
 
 } // namespace ncrequest

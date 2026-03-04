@@ -22,8 +22,8 @@ constexpr auto SOCKET_BAD = -1;
 export class Context {
 public:
     using WaitType      = event::WaitType;
-    using ErrorCallback = rstd::cppstd::function<void(rstd::ref<rstd::str>)>;
-    using EventCallback = rstd::cppstd::function<void()>;
+    using ErrorCallback = cppstd::function<void(rstd::ref<rstd::str>)>;
+    using EventCallback = cppstd::function<void()>;
 
     virtual ~Context() = default;
 
@@ -36,7 +36,7 @@ public:
 
     virtual void set_error_callback(ErrorCallback callback) = 0;
 
-    virtual void post(rstd::cppstd::function<void()>) = 0;
+    virtual void post(cppstd::function<void()>) = 0;
 };
 
 } // namespace ncrequest::event
