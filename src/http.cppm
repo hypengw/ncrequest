@@ -65,4 +65,4 @@ export struct HttpHeader {
 
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::HttpHeader>
-    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::HttpHeader> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::HttpHeader> {};

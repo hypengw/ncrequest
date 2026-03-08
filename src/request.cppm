@@ -138,7 +138,7 @@ private:
 
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
-    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::Request> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::Request> {};
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
-    : rstd::ImplInClass<rstd::clone::Clone, ncrequest::req_opt::Share> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Share> {};

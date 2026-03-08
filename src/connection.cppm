@@ -8,6 +8,7 @@ export import :request;
 
 using namespace curl;
 using rstd::sync::atomic::Atomic;
+using rstd::sync::atomic::Ordering;
 
 namespace ncrequest
 {
@@ -75,8 +76,8 @@ public:
             Full,
         };
 
-        bool is_full() const { return m_state == State::Full; }
-        bool empty() const { return m_state == State::Empty; }
+        bool is_full() const { return m_state.load() == State::Full; }
+        bool empty() const { return m_state.load() == State::Empty; }
 
         auto size() const { return m_buf.size(); };
         auto data() const { return m_buf.data(); };
@@ -100,12 +101,12 @@ public:
 
     private:
         void check_full() {
-            auto s  = size();
-            m_state = s == 0 ? State::Empty : (size() > m_limit ? State::Full : State::Normal);
+            auto s = size();
+            m_state.store(s == 0 ? State::Empty : (size() > m_limit ? State::Full : State::Normal));
         }
 
         asio::basic_streambuf<Allocator> m_buf;
-        Atomic<State>              m_state;
+        Atomic<State>                    m_state;
         usize                            m_limit;
         usize                            m_transferred;
         Allocator                        m_alloc;
@@ -231,7 +232,7 @@ private:
         rstd::copy(ptr, ptr + total_size, vec_buf.begin());
 
         if (self->m_recv_buf.is_full()) {
-            self->m_recv_paused = true;
+            self->m_recv_paused.store(true);
             return CURL_WRITEFUNC_PAUSE;
         } else {
             asio::dispatch(self->m_ex, [self, in = rstd::move(vec_buf)]() {
@@ -272,7 +273,7 @@ private:
         // after write_callback and make callback alive
         asio::post(m_ex, [this, self, ec]() {
             m_finish_ec = ec;
-            m_state     = State::Finished;
+            m_state.store(State::Finished);
             try_read_some_handler();
             try_wait_header_handler();
         });
@@ -284,7 +285,7 @@ private:
 
         auto state = m_state.load();
         if (state != State::Finished && state != State::Canceled) {
-            m_state = State::Canceled;
+            m_state.store(State::Canceled);
         }
         asio::post(m_ex, [this, self]() {
             try_read_some_handler();
@@ -297,23 +298,24 @@ private:
         auto self = get_arc();
         asio::post(m_ex, [this, self]() {
             auto state = m_state.load();
-            if (state == State::NotStarted) m_state = State::Transfering;
+            if (state == State::NotStarted) m_state.store(State::Transfering);
         });
     }
 
     void try_read_some_handler() {
         if (! m_read_some_handler) return;
         auto recv_size = m_recv_buf.size();
-        if (m_state == State::Canceled) {
+        if (m_state.load() == State::Canceled) {
             DEBUG_LOG("cancel {}", url());
             m_read_some_handler(asio::error::operation_aborted);
         } else if (recv_size > 0) {
             m_read_some_handler(asio::error_code {});
             bool pause { true };
-            if (m_recv_buf.size() == 0 && m_recv_paused.compare_exchange_strong(pause, false)) {
+            if (m_recv_buf.size() == 0 && m_recv_paused.compare_exchange_strong(
+                                              pause, false, Ordering::SeqCst, Ordering::SeqCst)) {
                 send_action(Action::UnPauseRecv);
             }
-        } else if (m_state == State::Finished) {
+        } else if (m_state.load() == State::Finished) {
             asio::error_code ec { asio::error::eof };
             if (m_finish_ec != CURLcode::CURLE_OK) {
                 ec = m_finish_ec;
@@ -325,16 +327,17 @@ private:
     void try_write_some_handler() {
         if (! m_write_some_handler) return;
 
-        if (m_state == State::Canceled) {
+        if (m_state.load() == State::Canceled) {
             DEBUG_LOG("cancel {}", url());
             m_write_some_handler(asio::error::operation_aborted);
         } else if (! m_send_buf.is_full()) {
             m_write_some_handler(asio::error_code {});
             bool pause { true };
-            if (m_send_paused.compare_exchange_strong(pause, false)) {
+            if (m_send_paused.compare_exchange_strong(
+                    pause, false, Ordering::SeqCst, Ordering::SeqCst)) {
                 send_action(Action::UnPauseSend);
             }
-        } else if (m_state == State::Finished) {
+        } else if (m_state.load() == State::Finished) {
             asio::error_code ec { asio::error::eof };
             if (m_finish_ec != CURLcode::CURLE_OK) {
                 ec = m_finish_ec;
@@ -346,7 +349,7 @@ private:
     void try_wait_header_handler() {
         if (! m_wait_header_handler) return;
         asio::error_code ec {};
-        if (m_state == State::Canceled) {
+        if (m_state.load() == State::Canceled) {
             ec = asio::error::operation_aborted;
         }
         m_wait_header_handler(ec);
@@ -354,7 +357,7 @@ private:
 
     cppstd::string m_url;
 
-    CURLcode            m_finish_ec;
+    CURLcode      m_finish_ec;
     Atomic<State> m_state;
     Atomic<bool>  m_recv_paused;
     Atomic<bool>  m_send_paused;
@@ -372,7 +375,7 @@ private:
     asio::any_completion_handler<void(asio::error_code)> m_read_some_handler;
 
     req_opt::Read::Callback                              m_send_callback;
-    cppstd::mutex                                  m_send_mutex;
+    cppstd::mutex                                        m_send_mutex;
     Buffer<allocator_type>                               m_send_buf;
     asio::any_completion_handler<void(asio::error_code)> m_write_some_handler;
 };

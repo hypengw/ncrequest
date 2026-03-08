@@ -27,13 +27,13 @@ using Result = rstd::Result<T, Error>;
 
 } // namespace ncrequest
 
+using rstd::string::String;
 template<>
-struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<rstd::alloc::string::String> {
+struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<String> {
     using Error = ncrequest::Error;
     template<typename C>
     auto format(const Error& e, C& ctx) const -> C::iterator {
         using namespace rstd;
-        using rstd::alloc::string::String;
         auto out = String::make();
         switch (e.kind()) {
         case Error::Coro: {
