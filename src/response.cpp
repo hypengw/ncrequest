@@ -49,9 +49,9 @@ template<Attribute A, CURLINFO Info = to_curl_info(A)>
 attr_value attr_from_easy(CurlEasy& easy) {
     auto res = easy.template get_info<attr_type<A>>(Info);
     return cppstd::visit(helper::overloaded { [](auto a) {
-                                   return attr_value(a);
-                               } },
-                               res);
+                             return attr_value(a);
+                         } },
+                         res);
 }
 
 } // namespace
@@ -168,7 +168,7 @@ auto Response::header() const -> const HttpHeader& { return connection().header(
 auto Response::code() const -> rstd::Option<i32> {
     auto& start = this->header().start;
     if (start) {
-        if (auto status = rstd::get_if<HttpHeader::Status>(&*start)) {
+        if (auto status = cppstd::get_if<HttpHeader::Status>(&*start)) {
             return Some((i32)(status->code));
         }
     }
@@ -188,7 +188,7 @@ auto Response::text() -> coro<Result<cppstd::string>> {
                                   buf,
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
-    auto ec = rstd::get<0>(ret);
+    auto ec = cppstd::get<0>(ret);
     if (ec.value() != asio::stream_errc::eof) {
         Error err = into(ec);
         co_return Err(rstd::move(err));
@@ -196,12 +196,12 @@ auto Response::text() -> coro<Result<cppstd::string>> {
     cppstd::string out;
     out.resize(buf.in_avail());
     auto bufs = buf.data();
-    rstd::copy(
+    cppstd::copy(
         asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
     co_return Ok(rstd::move(out));
 }
 auto Response::bytes() -> coro<Result<cppstd::vector<byte>>> {
-    cppstd::vector<byte>            out;
+    cppstd::vector<byte>                  out;
     asio::basic_streambuf<allocator_type> buf(rstd::numeric_limits<usize>::max(), allocator());
     buf.prepare(ReadSize);
 
@@ -210,13 +210,14 @@ auto Response::bytes() -> coro<Result<cppstd::vector<byte>>> {
                                   buf,
                                   asio::transfer_all(),
                                   asio::as_tuple(asio::bind_executor(get_executor(), use_coro)));
-    auto ec = rstd::get<0>(ret);
+    auto ec = cppstd::get<0>(ret);
     if (ec.value() != asio::stream_errc::eof) {
         Error err = into(ec);
         co_return Err(rstd::move(err));
     }
     out.resize(buf.in_avail());
     auto bufs = buf.data();
-    rstd::copy(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
+    cppstd::copy(
+        asio::buffers_begin(bufs), asio::buffers_begin(bufs) + buf.size(), (char*)out.data());
     co_return Ok(rstd::move(out));
 }

@@ -34,8 +34,8 @@ public:
         curl_share_cleanup(m_share);
     }
 
-    rstd::error_code add_handle(CurlEasy& easy) {
-        rstd::error_code cm {};
+    cppstd::error_code add_handle(CurlEasy& easy) {
+        cppstd::error_code cm {};
         if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
             cm = easy.setopt<CURLoption::CURLOPT_SHARE>(m_share);
         }
@@ -44,18 +44,18 @@ public:
         return cm;
     }
 
-    rstd::error_code remove_handle(CurlEasy& easy) {
+    cppstd::error_code remove_handle(CurlEasy& easy) {
         return curl_multi_remove_handle(m_multi, easy.handle());
     }
-    rstd::error_code remove_handle(CURL* easy) { return curl_multi_remove_handle(m_multi, easy); }
+    cppstd::error_code remove_handle(CURL* easy) { return curl_multi_remove_handle(m_multi, easy); }
 
-    rstd::error_code wakeup() { return curl_multi_wakeup(m_multi); }
+    cppstd::error_code wakeup() { return curl_multi_wakeup(m_multi); }
 
-    rstd::error_code perform(int& still_running) {
+    cppstd::error_code perform(int& still_running) {
         return curl_multi_perform(m_multi, &still_running);
     }
 
-    rstd::error_code poll(cppstd::chrono::milliseconds timeout) {
+    cppstd::error_code poll(cppstd::chrono::milliseconds timeout) {
         return curl_multi_poll(m_multi, nullptr, 0, (int)timeout.count(), nullptr);
     }
 
@@ -78,7 +78,7 @@ public:
 
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         auto list_ = x.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
-        if (auto plist = rstd::get_if<curl_slist*>(&list_)) {
+        if (auto plist = cppstd::get_if<curl_slist*>(&list_)) {
             auto list = *plist;
             while (list) {
                 out.emplace_back(list->data);

@@ -7,10 +7,10 @@ using namespace curl;
 namespace std
 {
 export template<>
-struct is_error_code_enum<CURLMcode> : rstd::mtp::true_type {};
+struct is_error_code_enum<CURLMcode> : cppstd::true_type {};
 
 export template<>
-struct is_error_code_enum<CURLcode> : rstd::mtp::true_type {};
+struct is_error_code_enum<CURLcode> : cppstd::true_type {};
 } // namespace std
 
 namespace ncrequest

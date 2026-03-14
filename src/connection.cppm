@@ -229,7 +229,7 @@ private:
 
         auto vec_buf =
             cppstd::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
-        rstd::copy(ptr, ptr + total_size, vec_buf.begin());
+        cppstd::copy(ptr, ptr + total_size, vec_buf.begin());
 
         if (self->m_recv_buf.is_full()) {
             self->m_recv_paused.store(true);

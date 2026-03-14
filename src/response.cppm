@@ -27,7 +27,7 @@ public:
         if (a.index() == 0) {
             return cppstd::nullopt;
         }
-        return rstd::get<T>(a);
+        return cppstd::get<T>(a);
     }
 
     auto attribute(Attribute) const -> attr_value;

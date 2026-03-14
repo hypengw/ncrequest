@@ -80,7 +80,7 @@ export using RequestOpt  = RequestOpts::to<cppstd::variant>;
 export class Session;
 export class Response;
 
-export auto global_init(cppstd::pmr::memory_resource* resource = nullptr) -> rstd::error_code;
+export auto global_init(cppstd::pmr::memory_resource* resource = nullptr) -> cppstd::error_code;
 } // namespace ncrequest
 namespace ncrequest
 {

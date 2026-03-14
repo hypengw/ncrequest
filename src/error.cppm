@@ -37,7 +37,7 @@ struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<String> {
         auto out = String::make();
         switch (e.kind()) {
         case Error::Coro: {
-            out = fmt::format("{}", rstd::get<0>(e.data).message());
+            out = fmt::format("{}", cppstd::get<0>(e.data).message());
             break;
         }
         }

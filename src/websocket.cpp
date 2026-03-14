@@ -202,7 +202,7 @@ void WebSocketClient::send(cppstd::string_view message) {
 
 void WebSocketClient::send(cppstd::span<const rstd::byte> in) {
     auto msg = rstd::rc::allocate_make_rc<rstd::byte[]>(m_alloc, in.size(), rstd::byte {});
-    rstd::copy_n(in.begin(), in.size(), msg.get());
+    cppstd::copy_n(in.begin(), in.size(), msg.get());
 
     m_context->post([this, msg = rstd::move(msg)] {
         m_msgs.emplace_back(msg);

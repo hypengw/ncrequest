@@ -5,7 +5,7 @@ import ncrequest.curl;
 
 using namespace ncrequest;
 
-auto ncrequest::global_init(cppstd::pmr::memory_resource* resource) -> rstd::error_code {
+auto ncrequest::global_init(cppstd::pmr::memory_resource* resource) -> cppstd::error_code {
     return ncrequest::curl_init(resource);
 }
 
@@ -60,19 +60,19 @@ void Request::set_opt(const Header& header) { m_header = header; }
 
 const_voidp Request::get_opt(usize idx) const {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> const_voidp {
-        return &rstd::get<I>(m_opts);
+        return &cppstd::get<I>(m_opts);
     });
 }
 voidp Request::get_opt(usize idx) {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> voidp {
-        return &rstd::get<I>(m_opts);
+        return &cppstd::get<I>(m_opts);
     });
 }
 
 void Request::set_opt(RequestOpt&& opt) {
-    rstd::get<req_opt::Proxy>(m_opts);
+    cppstd::get<req_opt::Proxy>(m_opts);
     cppstd::visit(helper::overloaded { [this](auto&& t) {
-                   rstd::get<rstd::mtp::decay_t<decltype(t)>>(m_opts) = rstd::move(t);
+                   cppstd::get<rstd::mtp::decay<decltype(t)>>(m_opts) = rstd::move(t);
                } },
                rstd::move(opt));
 }

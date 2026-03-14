@@ -16,7 +16,7 @@ void* curl_realloc_fn(void* ptr, usize size) {
     if (! ptr) return curl_malloc_fn(size);
     // reallocate with new size
     void* new_ptr = g_resource->allocate(size, alignof(max_align_t));
-    rstd::memcpy(new_ptr, ptr, size);
+    rstd::mem::memcpy(new_ptr, ptr, size);
     g_resource->deallocate(ptr, size, alignof(max_align_t));
     return new_ptr;
 }
@@ -30,9 +30,9 @@ void curl_free_fn(void* ptr) {
 char* curl_strdup_fn(const char* str) {
     if (! str) return nullptr;
     usize len     = rstd::strlen(str) + 1;
-    char*  new_str = (char*)curl_malloc_fn(len);
+    char* new_str = (char*)curl_malloc_fn(len);
     if (new_str) {
-        rstd::memcpy(new_str, str, len);
+        rstd::mem::memcpy(new_str, str, len);
     }
     return new_str;
 }
@@ -40,13 +40,13 @@ char* curl_strdup_fn(const char* str) {
 void* curl_calloc_fn(usize nmemb, usize size) {
     void* ptr = curl_malloc_fn(nmemb * size);
     if (ptr) {
-        rstd::memset(ptr, 0, nmemb * size);
+        rstd::mem::memset(ptr, 0, nmemb * size);
     }
     return ptr;
 }
 } // namespace
 
-auto ncrequest::curl_init(cppstd::pmr::memory_resource* resource) -> rstd::error_code {
+auto ncrequest::curl_init(cppstd::pmr::memory_resource* resource) -> cppstd::error_code {
     if (resource == nullptr) {
         return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
     } else {
