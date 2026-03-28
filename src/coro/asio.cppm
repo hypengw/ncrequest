@@ -12,6 +12,8 @@ export namespace asio
 using asio::any_io_executor;
 using asio::awaitable;
 using asio::use_awaitable_t;
+using asio::coroutine;
+using std::coroutine_traits;
 
 using asio::any_completion_handler;
 using asio::as_tuple;
@@ -103,6 +105,8 @@ namespace experimental
 using asio::experimental::concurrent_channel;
 using asio::experimental::make_parallel_group;
 using asio::experimental::wait_for_one;
+using asio::experimental::error::channel_errors;
+using asio::experimental::error::make_error_code;
 } // namespace experimental
 
 #ifdef _WIN32
