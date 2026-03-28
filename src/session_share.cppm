@@ -1,5 +1,6 @@
 export module ncrequest:session_share;
 export import ncrequest.type;
+export import cppstd;
 
 namespace ncrequest
 {

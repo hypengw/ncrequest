@@ -1,6 +1,7 @@
 export module ncrequest:error;
 export import rstd;
 export import ncrequest.coro;
+export import cppstd;
 
 namespace ncrequest
 {
@@ -27,25 +28,21 @@ using Result = rstd::Result<T, Error>;
 
 } // namespace ncrequest
 
-using rstd::string::String;
 template<>
-struct rstd::fmt::formatter<ncrequest::Error> : rstd::fmt::formatter<String> {
-    using Error = ncrequest::Error;
-    template<typename C>
-    auto format(const Error& e, C& ctx) const -> C::iterator {
-        using namespace rstd;
-        auto out = String::make();
-        switch (e.kind()) {
-        case Error::Coro: {
-            out = fmt::format("{}", cppstd::get<0>(e.data).message());
+struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
+    auto fmt(fmt::Formatter& f) const -> bool {
+        cppstd::string out;
+        switch (this->self().kind()) {
+        case ncrequest::Error::Coro: {
+            out = cppstd::get<0>(this->self().data).message();
             break;
         }
         }
-        return fmt::formatter<String>::format(out, ctx);
+        return f.write_raw((u8 const*)out.data(), out.size());
     }
 };
 
-export template<>
+template<>
 struct rstd::Impl<rstd::convert::From<ncrequest::CoroError>, ncrequest::Error> {
     static auto from(ncrequest::CoroError e) -> ncrequest::Error {
         ncrequest::Error out {};

@@ -73,7 +73,7 @@ if(NOT TARGET rstd::rstd)
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
-    GIT_TAG 6c685dde5605586dd6b0439f85149836c972d1ed
+    GIT_TAG a8f66879e0ed87094d5e3cf80c35fdda7bf078b4
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)
@@ -142,7 +142,7 @@ endif()
 
 target_link_libraries(
   ncrequest
-  PUBLIC rstd::rstd
+  PUBLIC rstd::rstd rstd.cppstd;
   PRIVATE taocpp::pegtl CURL::libcurl asio)
 
 if(NCREQUEST_BUILD_TESTS)

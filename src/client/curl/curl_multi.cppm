@@ -55,7 +55,7 @@ public:
         return curl_multi_perform(m_multi, &still_running);
     }
 
-    cppstd::error_code poll(cppstd::chrono::milliseconds timeout) {
+    cppstd::error_code poll(asio::chrono::milliseconds timeout) {
         return curl_multi_poll(m_multi, nullptr, 0, (int)timeout.count(), nullptr);
     }
 

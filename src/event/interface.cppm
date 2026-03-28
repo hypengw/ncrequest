@@ -4,6 +4,7 @@ module;
 #endif
 export module ncrequest.event:interface;
 export import rstd.core;
+export import cppstd;
 
 namespace ncrequest::event
 {

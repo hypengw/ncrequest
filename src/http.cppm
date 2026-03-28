@@ -1,5 +1,6 @@
 export module ncrequest:http;
 export import ncrequest.type;
+export import cppstd;
 
 namespace ncrequest
 {

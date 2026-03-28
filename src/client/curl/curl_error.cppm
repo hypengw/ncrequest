@@ -1,6 +1,7 @@
 export module ncrequest.curl:error;
 export import :curl;
 export import rstd.core;
+export import cppstd;
 
 using namespace curl;
 

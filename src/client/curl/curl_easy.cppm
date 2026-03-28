@@ -1,6 +1,7 @@
 module;
 export module ncrequest.curl:easy;
 export import ncrequest.type;
+export import cppstd;
 export import :curl;
 
 using namespace curl;
