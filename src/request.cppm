@@ -131,7 +131,7 @@ private:
 
     URI                                  m_uri;
     Header                               m_header;
-    RequestOpts::to<cppstd::tuple> m_opts;
+    RequestOpts::to<rstd::tuple> m_opts;
 };
 
 } // namespace ncrequest

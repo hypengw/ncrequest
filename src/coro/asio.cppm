@@ -11,8 +11,8 @@ export namespace asio
 {
 using asio::any_io_executor;
 using asio::awaitable;
-using asio::use_awaitable_t;
 using asio::coroutine;
+using asio::use_awaitable_t;
 using std::coroutine_traits;
 
 using asio::any_completion_handler;
@@ -40,13 +40,12 @@ using asio::transfer_all;
 
 using asio::bind_allocator;
 
+using asio::cancellation_type;
 using asio::deferred_t;
 using asio::execution_context;
-using asio::get_associated_executor;
 using asio::get_associated_allocator;
 using asio::get_associated_cancellation_slot;
-using asio::cancellation_type;
-
+using asio::get_associated_executor;
 
 using asio::system_error;
 
@@ -82,8 +81,14 @@ using asio::error::misc_errors;
 
 namespace execution
 {
+using asio::execution::is_executor_v;
+using asio::execution::outstanding_work_t;
+using asio::execution::relationship_t;
 using asio::execution::blocking_t;
 using asio::execution::context_t;
+constexpr auto outstanding_work_() { return asio::execution::outstanding_work; }
+constexpr auto relationship_() { return asio::execution::relationship; }
+constexpr auto blocking_() { return asio::execution::blocking; }
 }; // namespace execution
 
 namespace this_coro

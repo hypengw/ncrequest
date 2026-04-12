@@ -65,11 +65,11 @@ if(NOT TARGET asio)
   endif()
 endif()
 
+if(NOT TARGET rstd::rstd)
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/rstd")
 add_subdirectory(rstd)
-endif()
-
-if(NOT TARGET rstd::rstd)
+else()
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
@@ -77,6 +77,7 @@ if(NOT TARGET rstd::rstd)
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)
+endif()
 endif()
 
 add_library(ncrequest STATIC)

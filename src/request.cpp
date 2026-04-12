@@ -60,19 +60,19 @@ void Request::set_opt(const Header& header) { m_header = header; }
 
 const_voidp Request::get_opt(usize idx) const {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> const_voidp {
-        return &cppstd::get<I>(m_opts);
+        return &m_opts.get<I>();
     });
 }
 voidp Request::get_opt(usize idx) {
     return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> voidp {
-        return &cppstd::get<I>(m_opts);
+        return &m_opts.get<I>();
     });
 }
 
 void Request::set_opt(RequestOpt&& opt) {
-    cppstd::get<req_opt::Proxy>(m_opts);
+    m_opts.get<req_opt::Proxy>();
     cppstd::visit(helper::overloaded { [this](auto&& t) {
-                   cppstd::get<rstd::mtp::decay<decltype(t)>>(m_opts) = rstd::move(t);
+                   m_opts.get<rstd::mtp::decay<decltype(t)>>() = rstd::move(t);
                } },
                rstd::move(opt));
 }
