@@ -135,7 +135,7 @@ template<>
 struct action<grammer_http::HTTP_version> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s) {
-        cppstd::visit(helper::overloaded { [&in](auto& s) {
+        std::visit(helper::overloaded { [&in](auto& s) {
                           s.version = in.string_view();
                       } },
                       s);
@@ -145,7 +145,7 @@ template<>
 struct action<grammer_http::request_target> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s_) {
-        if (auto s = cppstd::get_if<HttpHeader::Request>(&s_)) {
+        if (auto s = std::get_if<HttpHeader::Request>(&s_)) {
             s->target = in.string_view();
         }
     }
@@ -154,7 +154,7 @@ template<>
 struct action<grammer_http::methon> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s_) {
-        if (auto s = cppstd::get_if<HttpHeader::Request>(&s_)) {
+        if (auto s = std::get_if<HttpHeader::Request>(&s_)) {
             s->method = in.string_view();
         }
     }
@@ -163,9 +163,9 @@ template<>
 struct action<grammer_http::status_code> {
     template<typename ActionInput>
     static void apply(const ActionInput& in, HttpHeader::Start& s_) {
-        if (auto s = cppstd::get_if<HttpHeader::Status>(&s_)) {
+        if (auto s = std::get_if<HttpHeader::Status>(&s_)) {
             auto str = in.string_view();
-            cppstd::from_chars(str.begin(), str.end(), s->code);
+            std::from_chars(str.begin(), str.end(), s->code);
         }
     }
 };
@@ -235,7 +235,7 @@ auto HttpHeader::parse_field_line(std::string_view in) -> Field {
 }
 auto HttpHeader::has_field(std::string_view name) const -> bool {
     return this->fields.end() !=
-           cppstd::find_if(this->fields.begin(), this->fields.end(), [name](auto& f) {
+           std::find_if(this->fields.begin(), this->fields.end(), [name](auto& f) {
                return helper::starts_with_i(f.name, name);
            });
 }

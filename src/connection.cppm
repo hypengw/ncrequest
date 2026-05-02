@@ -33,7 +33,7 @@ struct ConnectAction {
     Action          action;
 };
 
-using msg = cppstd::variant<Stop, ConnectAction>;
+using msg = std::variant<Stop, ConnectAction>;
 } // namespace session_message
 
 export using SessionMessage = session_message::msg;
@@ -42,12 +42,12 @@ export using SessionChannel =
     asio::experimental::concurrent_channel<asio::strand<asio::thread_pool::executor_type>,
                                            void(asio::error_code, SessionMessage)>;
 
-export class Connection : public cppstd::enable_shared_from_this<Connection> {
+export class Connection : public std::enable_shared_from_this<Connection> {
     friend Session;
 
 public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
-    using allocator_type = cppstd::pmr::polymorphic_allocator<char>;
+    using allocator_type = std::pmr::polymorphic_allocator<char>;
 
     static constexpr usize RECV_LIMIT { 64 * 1024 }; // 64K
     static constexpr usize SEND_LIMIT { 64 * 1024 }; // 64K
@@ -64,7 +64,7 @@ public:
     class Buffer {
     public:
         Buffer(usize limit, const Allocator& aloc)
-            : m_buf(cppstd::numeric_limits<usize>::max(), aloc),
+            : m_buf(std::numeric_limits<usize>::max(), aloc),
               m_state(State::Empty),
               m_limit(limit),
               m_transferred(0),
@@ -118,7 +118,7 @@ public:
           m_state(State::NotStarted),
           m_recv_paused(false),
           m_ex(ex),
-          m_easy(cppstd::make_unique<CurlEasy>()),
+          m_easy(std::make_unique<CurlEasy>()),
           m_session_channel(session_channel),
           m_recv_buf(RECV_LIMIT, allocator),
           m_send_buf(SEND_LIMIT, allocator) {
@@ -143,7 +143,7 @@ public:
 
     auto& header() const { return m_header_; }
     auto& url() const { return m_url; }
-    void  set_url(cppstd::string_view v) { m_url = v; }
+    void  set_url(std::string_view v) { m_url = v; }
     void  set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
 
     using Action = session_message::ConnectAction::Action;
@@ -182,7 +182,7 @@ public:
                 [this, buf, handler = rstd::move(handler)](asio::error_code ec) mutable {
                     usize copied { 0 };
                     if (! ec) {
-                        cppstd::unique_lock lock { m_send_mutex };
+                        std::unique_lock lock { m_send_mutex };
                         copied = m_send_buf.commit(buf);
                     }
                     handler(ec, copied);
@@ -206,7 +206,7 @@ public:
 
 private:
     static usize header_callback(char* ptr, usize size, usize nmemb, Connection* self) {
-        cppstd::string_view header { ptr, size * nmemb };
+        std::string_view header { ptr, size * nmemb };
         self->m_header_raw.append(header);
         if (! self->m_header_.start) {
             self->m_header_.start = HttpHeader::parse_start_line(header);
@@ -228,8 +228,8 @@ private:
         auto total_size = size * nmemb;
 
         auto vec_buf =
-            cppstd::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
-        cppstd::copy(ptr, ptr + total_size, vec_buf.begin());
+            std::vector<char, allocator_type>(total_size, self->m_recv_buf.allocator());
+        std::copy(ptr, ptr + total_size, vec_buf.begin());
 
         if (self->m_recv_buf.is_full()) {
             self->m_recv_paused.store(true);
@@ -255,7 +255,7 @@ private:
                 return CURL_READFUNC_PAUSE;
             } else {
                 {
-                    cppstd::unique_lock lock { self->m_send_mutex };
+                    std::unique_lock lock { self->m_send_mutex };
                     copied = self->m_send_buf.consume(asio::mutable_buffer { ptr, total_size });
                 }
                 asio::dispatch(self->m_ex, [self]() {
@@ -355,7 +355,7 @@ private:
         m_wait_header_handler(ec);
     }
 
-    cppstd::string m_url;
+    std::string m_url;
 
     CURLcode      m_finish_ec;
     Atomic<State> m_state;
@@ -366,7 +366,7 @@ private:
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
-    cppstd::string                                       m_header_raw;
+    std::string                                       m_header_raw;
     HttpHeader                                           m_header_;
     CookieJar                                            m_cookie_jar;
     asio::any_completion_handler<void(asio::error_code)> m_wait_header_handler;
@@ -375,7 +375,7 @@ private:
     asio::any_completion_handler<void(asio::error_code)> m_read_some_handler;
 
     req_opt::Read::Callback                              m_send_callback;
-    cppstd::mutex                                        m_send_mutex;
+    std::mutex                                        m_send_mutex;
     Buffer<allocator_type>                               m_send_buf;
     asio::any_completion_handler<void(asio::error_code)> m_write_some_handler;
 };

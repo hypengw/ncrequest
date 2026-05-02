@@ -13,7 +13,7 @@ public:
     ~Private() { curl_share_cleanup(share); }
 
     CURLSH*             share;
-    cppstd::mutex share_mutex;
+    std::mutex share_mutex;
 };
 
 namespace
@@ -46,7 +46,7 @@ auto SessionShare::handle() const -> voidp {
     C_D(const SessionShare);
     return d->share;
 }
-void SessionShare::load(const cppstd::filesystem::path& p) {
+void SessionShare::load(const std::filesystem::path& p) {
     C_D(SessionShare);
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d->share);
@@ -56,7 +56,7 @@ void SessionShare::load(const cppstd::filesystem::path& p) {
     x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
 }
 
-void SessionShare::save(const cppstd::filesystem::path& p) const {
+void SessionShare::save(const std::filesystem::path& p) const {
     C_D(const SessionShare);
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d->share);

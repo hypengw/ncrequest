@@ -3,12 +3,12 @@ import :init;
 import :error;
 import rstd.core;
 
-using max_align_t = cppstd::max_align_t;
+using max_align_t = std::max_align_t;
 using namespace rstd;
 
 namespace
 {
-cppstd::pmr::memory_resource* g_resource = nullptr;
+std::pmr::memory_resource* g_resource = nullptr;
 
 void* curl_malloc_fn(usize size) { return g_resource->allocate(size, alignof(max_align_t)); }
 
@@ -46,7 +46,7 @@ void* curl_calloc_fn(usize nmemb, usize size) {
 }
 } // namespace
 
-auto ncrequest::curl_init(cppstd::pmr::memory_resource* resource) -> cppstd::error_code {
+auto ncrequest::curl_init(std::pmr::memory_resource* resource) -> std::error_code {
     if (resource == nullptr) {
         return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
     } else {

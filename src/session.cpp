@@ -83,7 +83,7 @@ auto Session::make(executor_type ex, std::pmr::memory_resource* memory) -> Arc<S
          channel   = d->m_channel_with_notify]() -> coro<void> {
             for (;;) {
                 auto [ec, msg] = co_await channel->async_receive(asio::as_tuple(use_coro));
-                bool stopped   = cppstd::get_if<sm::Stop>(&msg);
+                bool stopped   = std::get_if<sm::Stop>(&msg);
                 if (auto self = self_weak.lock(); self && ! stopped) {
                     auto d       = self->m_d.get();
                     bool send_ok = d->m_channel->try_send(ec, msg);
@@ -286,7 +286,7 @@ auto Session::Private::run() -> coro<void> {
 
 void Session::Private::handle_message(const SessionMessage& msg) {
     namespace sm = session_message;
-    cppstd::visit(helper::overloaded { [this](sm::Stop) {
+    std::visit(helper::overloaded { [this](sm::Stop) {
                                           m_stopped = true;
                                           while (m_connect_set.size()) {
                                               auto& con = *m_connect_set.begin();

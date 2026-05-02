@@ -11,8 +11,8 @@ public:
     ~SessionShare();
 
     auto handle() const -> voidp;
-    void load(const cppstd::filesystem::path& p);
-    void save(const cppstd::filesystem::path& p) const;
+    void load(const std::filesystem::path& p);
+    void save(const std::filesystem::path& p) const;
 
 private:
     Arc<Private>          d_ptr;

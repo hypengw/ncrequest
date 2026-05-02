@@ -12,7 +12,7 @@ struct Error {
         Coro = 0
     };
 
-    using data_t = cppstd::variant<CoroError>;
+    using data_t = std::variant<CoroError>;
     data_t data;
 
     template<ErrorKind E>
@@ -31,10 +31,10 @@ using Result = rstd::Result<T, Error>;
 template<>
 struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
     auto fmt(fmt::Formatter& f) const -> bool {
-        cppstd::string out;
+        std::string out;
         switch (this->self().kind()) {
         case ncrequest::Error::Coro: {
-            out = cppstd::get<0>(this->self().data).message();
+            out = std::get<0>(this->self().data).message();
             break;
         }
         }

@@ -9,7 +9,7 @@ namespace ncrequest
 {
 
 WebSocketClient::WebSocketClient(Box<event::Context> ioc, rstd::Option<u64> max_buffer_size,
-                                 cppstd::pmr::memory_resource* mem_pool)
+                                 std::pmr::memory_resource* mem_pool)
     : m_curl(curl_easy_init()),
       m_connected(false),
       m_alloc(mem_pool),
@@ -32,8 +32,8 @@ WebSocketClient::~WebSocketClient() {
     m_curl = nullptr;
 }
 
-auto WebSocketClient::connect(const cppstd::string& url) -> cppstd::future<bool> {
-    auto promise = make_arc<cppstd::promise<bool>>();
+auto WebSocketClient::connect(const std::string& url) -> std::future<bool> {
+    auto promise = make_arc<std::promise<bool>>();
     auto future  = promise->get_future();
 
     m_context->post([this, url, promise] {
@@ -105,7 +105,7 @@ void WebSocketClient::do_read() {
             if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
                 if (m_on_message) {
                     m_on_message(
-                        cppstd::span<const rstd::byte> { m_read_buffer.data(), m_read_len },
+                        std::span<const rstd::byte> { m_read_buffer.data(), m_read_len },
                         last);
                 }
                 m_read_len = 0;
@@ -196,13 +196,13 @@ void WebSocketClient::do_disconnect(bool send) {
 
 bool WebSocketClient::is_connected() const { return m_connected; }
 
-void WebSocketClient::send(cppstd::string_view message) {
+void WebSocketClient::send(std::string_view message) {
     send(std::span<const rstd::byte> { (const rstd::byte*)(message.data()), message.size() });
 }
 
-void WebSocketClient::send(cppstd::span<const rstd::byte> in) {
+void WebSocketClient::send(std::span<const rstd::byte> in) {
     auto msg = rstd::rc::allocate_make_rc<rstd::byte[]>(m_alloc, in.size(), rstd::byte {});
-    cppstd::copy_n(in.begin(), in.size(), msg.get());
+    std::copy_n(in.begin(), in.size(), msg.get());
 
     m_context->post([this, msg = rstd::move(msg)] {
         m_msgs.emplace_back(msg);

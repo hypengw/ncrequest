@@ -14,7 +14,7 @@ class Response : public NoCopy {
 
 public:
     using executor_type  = asio::strand<asio::thread_pool::executor_type>;
-    using allocator_type = cppstd::pmr::polymorphic_allocator<char>;
+    using allocator_type = std::pmr::polymorphic_allocator<char>;
     class Inner;
     static constexpr usize ReadSize { 1024 * 16 };
 
@@ -25,9 +25,9 @@ public:
     auto attribute(void) const -> rstd::Option<T> {
         auto a = attribute(A);
         if (a.index() == 0) {
-            return cppstd::nullopt;
+            return std::nullopt;
         }
-        return cppstd::get<T>(a);
+        return std::get<T>(a);
     }
 
     auto attribute(Attribute) const -> attr_value;
@@ -35,8 +35,8 @@ public:
     auto header() const -> const HttpHeader&;
     auto code() const -> rstd::Option<i32>;
 
-    auto text() -> coro<Result<cppstd::string>>;
-    auto bytes() -> coro<Result<cppstd::vector<byte>>>;
+    auto text() -> coro<Result<std::string>>;
+    auto bytes() -> coro<Result<std::vector<byte>>>;
 
     template<typename MB, typename CompletionToken>
         requires asio::is_const_buffer_sequence<MB>::value
@@ -135,7 +135,7 @@ private:
     Arc<Connection>            m_connect;
     rstd::Option<SessionShare> m_share;
 
-    cppstd::pmr::polymorphic_allocator<char> m_allocator;
+    std::pmr::polymorphic_allocator<char> m_allocator;
 };
 
 } // namespace ncrequest

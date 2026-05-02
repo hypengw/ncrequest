@@ -53,7 +53,7 @@ public:
     }
 
     template<typename T>
-    inline auto get_info(CURLINFO info) noexcept -> cppstd::variant<T, CURLcode> {
+    inline auto get_info(CURLINFO info) noexcept -> std::variant<T, CURLcode> {
         T inst;
         if (auto res = curl_easy_getinfo(handle(), info, &inst)) {
             return res;
@@ -81,7 +81,7 @@ public:
     void set_header(const Header& headers) {
         reset_header();
         for (auto& [k, v] : headers) {
-            cppstd::string header = cppstd::format("{}: {}", k, v);
+            std::string header = std::format("{}: {}", k, v);
             m_headers             = curl_slist_append(m_headers, header.c_str());
         }
         if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);
