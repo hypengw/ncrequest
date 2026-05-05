@@ -73,7 +73,7 @@ else()
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
-    GIT_TAG a8f66879e0ed87094d5e3cf80c35fdda7bf078b4
+    GIT_TAG 5878b2058eb67adb615f691889d93e3ab13ba7d2
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)

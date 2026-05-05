@@ -26,7 +26,7 @@ template<typename T>
 T get_curl_private(CURL* c) {
     T        easy { nullptr };
     CURLcode rc = curl_easy_getinfo(c, CURLINFO_PRIVATE, &easy);
-    assert(! rc);
+    rstd_assert(! rc);
     return easy;
 }
 
