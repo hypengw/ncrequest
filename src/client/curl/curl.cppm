@@ -11,6 +11,7 @@ export using ::CURLM;
 export using ::CURLMcode;
 export using ::CURLSH;
 export using ::CURLoption;
+export using ::CURLMoption;
 export using ::CURLINFO;
 export using ::CURLMSG;
 export using ::CURLMsg;
@@ -84,7 +85,7 @@ export constexpr auto CURLWS_OFFSET = (1 << 5);
 
 #undef CURL_READFUNC_ABORT
 #undef CURL_READFUNC_PAUSE
-export constexpr auto CURL_READFUNC_ABORT = 0x10000001;
+export constexpr auto CURL_READFUNC_ABORT = 0x10000000;
 export constexpr auto CURL_READFUNC_PAUSE = 0x10000001;
 
 #undef CURL_WRITEFUNC_PAUSE

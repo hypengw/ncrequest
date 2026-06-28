@@ -1,14 +1,10 @@
 #include <gtest/gtest.h>
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-#    include <QCoreApplication>
-#endif
+#include <QCoreApplication>
 
 import ncrequest;
 
 int main(int argc, char** argv) {
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
     QCoreApplication app(argc, argv);
-#endif
     testing::InitGoogleTest(&argc, argv);
     ncrequest::global_init();
 

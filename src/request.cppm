@@ -28,7 +28,7 @@ export struct Timeout {
     REQ_OPT_PROP(i64, transfer_timeout, {})
 };
 
-export struct Proxy : rstd::WithTrait<Proxy, rstd::clone::Clone> {
+export struct Proxy : rstd::DefaultInClass<Proxy, rstd::clone::Clone> {
     enum class Type
     {
         HTTP    = 0,
@@ -40,6 +40,7 @@ export struct Proxy : rstd::WithTrait<Proxy, rstd::clone::Clone> {
     };
     REQ_OPT_PROP(Type, type, { Type::HTTP })
     REQ_OPT_PROP(std::string, content, {})
+    auto clone() const -> Proxy { return *this; }
 };
 
 export struct Tcp {
@@ -58,7 +59,7 @@ export struct Read {
     REQ_OPT_PROP(usize, size, { 0 })
 };
 
-export struct Share : rstd::WithTraitDefault<Share, rstd::clone::Clone> {
+export struct Share : rstd::DefaultInClass<Share, rstd::clone::Clone> {
     rstd::Option<SessionShare> share {};
     auto&                      set_share(rstd::Option<SessionShare> v) {
         share = rstd::move(v);
@@ -77,18 +78,12 @@ using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 export using RequestOpts = req_opt::opts;
 export using RequestOpt  = RequestOpts::to<std::variant>;
 
-export class Session;
-export class Response;
-
 export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
 } // namespace ncrequest
 namespace ncrequest
 {
 
-export class Request : public rstd::WithTraitDefault<Request, rstd::clone::Clone> {
-    friend class Session;
-    friend class Response;
-
+export class Request : public rstd::DefaultInClass<Request, rstd::clone::Clone> {
 public:
     class Private;
     Request() noexcept;
@@ -138,7 +133,10 @@ private:
 
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::Request> {};
+    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::Request> {};
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Share> {};
+    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::req_opt::Share> {};
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Proxy>
+    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::req_opt::Proxy> {};

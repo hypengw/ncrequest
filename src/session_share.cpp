@@ -6,13 +6,14 @@ import ncrequest.curl;
 
 namespace ncrequest
 {
+using namespace curl;
 
 class SessionShare::Private {
 public:
     Private(): share(curl_share_init()) {}
     ~Private() { curl_share_cleanup(share); }
 
-    CURLSH*             share;
+    CURLSH*    share;
     std::mutex share_mutex;
 };
 
@@ -35,7 +36,8 @@ static void static_share_unlock(CURL*, curl_lock_data data, void* clientp) {
 
 SessionShare::SessionShare(): d_ptr(make_arc<Private>()) {
     C_D(SessionShare);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+    curl_share_setopt(
+        d->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
     curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_LOCKFUNC, static_share_lock);
     curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, static_share_unlock);
     curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_USERDATA, d);
@@ -46,6 +48,8 @@ auto SessionShare::handle() const -> voidp {
     C_D(const SessionShare);
     return d->share;
 }
+auto SessionShare::clone() const -> SessionShare { return *this; }
+
 void SessionShare::load(const std::filesystem::path& p) {
     C_D(SessionShare);
     CurlEasy x;

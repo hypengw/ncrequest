@@ -1,57 +1,60 @@
 export module ncrequest:session;
-export import :request;
+
 export import :response;
-export import :connection;
-export import ncrequest.type;
+#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+export import :client_qt_network;
+#else
+export import :client_curl_session;
+#endif
+export import :client_http_backend;
 
 namespace ncrequest
 {
 
-export class Session : public std::enable_shared_from_this<Session>, NoCopy {
-    friend class Request;
-    friend class Response;
+#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+using SelectedSessionBackend = client::qt_network::SessionBackend;
+#else
+using SelectedSessionBackend = client::curl::SessionBackend;
+#endif
 
+static_assert(client::HttpSessionBackend<SelectedSessionBackend, Response::Backend>);
+
+export class Session : public SelectedSessionBackend {
 public:
-    using executor_type = asio::thread_pool::executor_type;
-    using channel_type  = SessionChannel;
+    using Backend = SelectedSessionBackend;
 
-    class Private;
-    ~Session();
+    using Backend::Backend;
 
-    static auto
-    make(executor_type ex,
-         std::pmr::memory_resource* = std::pmr::get_default_resource())
-        -> Arc<Session>;
+    template<typename... Args>
+    static auto make(Args&&... args) -> Arc<Session> {
+        auto session = make_arc<Session>(rstd::forward<Args>(args)...);
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+        static_cast<Backend&>(*session).start();
+#endif
+        return session;
+    }
 
-    auto get_executor() -> executor_type&;
-    auto get_strand() -> asio::strand<executor_type>&;
-    auto get_arc() { return shared_from_this(); }
+    auto get(const Request& req) -> coro<Result<Arc<Response>>> {
+        co_return co_await send(req, Operation::GetOperation, None<rstd::bytes::Bytes>());
+    }
 
-    auto get(const Request&) -> coro<rstd::Option<Arc<Response>>>;
-    auto post(const Request&) -> coro<rstd::Option<Arc<Response>>>;
-    auto post(const Request&, asio::const_buffer) -> coro<rstd::Option<Arc<Response>>>;
+    auto post(const Request& req) -> coro<Result<Arc<Response>>> {
+        co_return co_await post(req, rstd::bytes::Bytes::make());
+    }
 
-    auto cookies() -> std::vector<std::string>;
-    void load_cookie(std::filesystem::path);
-    void save_cookie(std::filesystem::path) const;
-    void set_proxy(const req_opt::Proxy&);
-    void set_verify_certificate(bool);
-
-    void about_to_stop();
-
-    auto channel() -> channel_type&;
-    auto channel_rc() -> Arc<channel_type>;
-    auto allocator() -> std::pmr::polymorphic_allocator<byte>;
+    auto post(const Request& req, rstd::bytes::Bytes body) -> coro<Result<Arc<Response>>> {
+        co_return co_await send(req, Operation::PostOperation, Some(rstd::move(body)));
+    }
 
 private:
-    Session(executor_type ex,
-            std::pmr::memory_resource* = std::pmr::get_default_resource());
-    auto perform(Arc<Response>&) -> coro<bool>;
-    auto prepare_req(const Request&) const -> Request;
-
-    Box<Private>          m_d;
-    inline Private*       d_func() { return m_d.get(); }
-    inline const Private* d_func() const { return m_d.get(); }
+    auto send(const Request& req, Operation operation, rstd::Option<rstd::bytes::Bytes> body)
+        -> coro<Result<Arc<Response>>> {
+        auto res = co_await this->start_request(req, operation, rstd::move(body));
+        if (res.is_err()) {
+            co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
+        }
+        co_return Result<Arc<Response>>(Ok(make_arc<Response>(rstd::move(res).unwrap())));
+    }
 };
 
 } // namespace ncrequest

@@ -1,12 +1,15 @@
-#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <future>
-#include <gtest/gtest.h>
 #include <span>
-#include <string>
+#include <utility>
+#include <gtest/gtest.h>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <thread>
 
 import ncrequest;
+import ncrequest.qt_websockets;
 
 namespace
 {
@@ -24,6 +27,7 @@ auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> b
         if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             return true;
         }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
@@ -31,41 +35,26 @@ auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> b
 
 } // namespace
 
-TEST(websocket, ConstructDisconnected) {
-    auto client = ncrequest::WebSocketClient {};
+TEST(qt_websockets, ConstructDisconnected) {
+    auto client = ncrequest::qt_websockets::WebSocketClient {};
     EXPECT_FALSE(client.is_connected());
     client.send("ignored while disconnected");
     client.disconnect();
 }
 
-TEST(websocket, LocalEchoText) {
+TEST(qt_websockets, LocalEchoText) {
     auto url = local_ws_url();
     if (url.empty()) {
         GTEST_SKIP() << "NCREQUEST_TEST_WS_URL is not set";
     }
 
-    auto client = ncrequest::WebSocketClient {};
+    auto client = ncrequest::qt_websockets::WebSocketClient {};
 
     std::promise<std::string> message_promise;
     auto                      message = message_promise.get_future();
-    std::atomic_bool          got_message { false };
-
-    std::promise<std::string> error_promise;
-    auto                      error = error_promise.get_future();
-    std::atomic_bool          got_error { false };
-
-    client.set_on_message_callback(
-        [&message_promise, &got_message](std::span<const rstd::byte> data, bool) {
-            if (got_message.exchange(true)) return;
-
-            std::string out(reinterpret_cast<const char*>(data.data()), data.size());
-            message_promise.set_value(std::move(out));
-        });
-    client.set_on_error_callback([&error_promise, &got_error](rstd::ref<rstd::str> data) {
-        if (got_error.exchange(true)) return;
-
+    client.set_on_message_callback([&message_promise](std::span<const rstd::byte> data, bool) {
         std::string out(reinterpret_cast<const char*>(data.data()), data.size());
-        error_promise.set_value(std::move(out));
+        message_promise.set_value(std::move(out));
     });
 
     auto connected = client.connect(url);
@@ -73,10 +62,9 @@ TEST(websocket, LocalEchoText) {
     ASSERT_TRUE(connected.get());
     EXPECT_TRUE(client.is_connected());
 
-    client.send("curl websocket payload");
-    ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)))
-        << (wait_future(error, std::chrono::milliseconds(0)) ? error.get() : "message timed out");
-    EXPECT_EQ(message.get(), "curl websocket payload");
+    client.send("qt websocket payload");
+    ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)));
+    EXPECT_EQ(message.get(), "qt websocket payload");
 
     client.disconnect();
 }

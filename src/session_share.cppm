@@ -4,7 +4,7 @@ export import cppstd;
 
 namespace ncrequest
 {
-export class SessionShare : public rstd::WithTrait<SessionShare, rstd::clone::Clone> {
+export class SessionShare : public rstd::DefaultInClass<SessionShare, rstd::clone::Clone> {
 public:
     class Private;
     SessionShare();
@@ -13,6 +13,7 @@ public:
     auto handle() const -> voidp;
     void load(const std::filesystem::path& p);
     void save(const std::filesystem::path& p) const;
+    auto clone() const -> SessionShare;
 
 private:
     Arc<Private>          d_ptr;
@@ -20,3 +21,7 @@ private:
     inline const Private* d_func() const { return d_ptr.get(); }
 };
 } // namespace ncrequest
+
+export template<>
+struct rstd::Impl<rstd::clone::Clone, ncrequest::SessionShare>
+    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::SessionShare> {};
