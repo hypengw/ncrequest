@@ -1,4 +1,5 @@
 module;
+#include <rstd/enum.hpp>
 #define REQ_OPT_PROP(Type, Name, Init)    \
     Type Name Init;                       \
     auto&     set_##Name(const Type& v) { \
@@ -76,7 +77,20 @@ using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 } // namespace req_opt
 
 export using RequestOpts = req_opt::opts;
-export using RequestOpt  = RequestOpts::to<std::variant>;
+
+#define NCREQUEST_REQUEST_OPT_VARIANTS(V) \
+    V(Timeout, (req_opt::Timeout value;)) \
+    V(Proxy, (req_opt::Proxy value;))     \
+    V(Tcp, (req_opt::Tcp value;))         \
+    V(SSL, (req_opt::SSL value;))         \
+    V(Read, (req_opt::Read value;))       \
+    V(Share, (req_opt::Share value;))
+
+export struct RequestOpt {
+    RSTD_ENUM_BODY(RequestOpt, NCREQUEST_REQUEST_OPT_VARIANTS)
+};
+
+#undef NCREQUEST_REQUEST_OPT_VARIANTS
 
 export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
 } // namespace ncrequest
@@ -116,6 +130,13 @@ public:
     }
 
     void set_opt(RequestOpt&&);
+
+    template<typename T>
+        requires(RequestOpts::template contains<rstd::mtp::decay<T>>())
+    auto set_opt(T&& opt) -> Request& {
+        get_opt<rstd::mtp::decay<T>>() = rstd::forward<T>(opt);
+        return *this;
+    }
 
     // trait
     auto clone() const -> ncrequest::Request;

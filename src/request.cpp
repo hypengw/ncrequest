@@ -1,3 +1,5 @@
+module;
+#include <rstd/enum.hpp>
 module ncrequest;
 import :request;
 
@@ -70,11 +72,26 @@ voidp Request::get_opt(usize idx) {
 }
 
 void Request::set_opt(RequestOpt&& opt) {
-    m_opts.get<req_opt::Proxy>();
-    std::visit(helper::overloaded { [this](auto&& t) {
-                   m_opts.get<rstd::mtp::decay<decltype(t)>>() = rstd::move(t);
-               } },
-               rstd::move(opt));
+    RSTD_MATCH(rstd::move(opt)) {
+        RSTD_CASE(Timeout, value) {
+            m_opts.get<req_opt::Timeout>() = rstd::move(value);
+        }
+        RSTD_CASE(Proxy, value) {
+            m_opts.get<req_opt::Proxy>() = rstd::move(value);
+        }
+        RSTD_CASE(Tcp, value) {
+            m_opts.get<req_opt::Tcp>() = rstd::move(value);
+        }
+        RSTD_CASE(SSL, value) {
+            m_opts.get<req_opt::SSL>() = rstd::move(value);
+        }
+        RSTD_CASE(Read, value) {
+            m_opts.get<req_opt::Read>() = rstd::move(value);
+        }
+        RSTD_CASE(Share, value) {
+            m_opts.get<req_opt::Share>() = rstd::move(value);
+        }
+    }
 }
 
 auto Request::clone() const -> ncrequest::Request {

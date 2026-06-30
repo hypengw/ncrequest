@@ -515,6 +515,32 @@ TEST(http, ErrorModelVariants) {
     EXPECT_EQ(client.as_Client().error.code, 7);
 }
 
+TEST(http, RequestOptionEnumSetOpt) {
+    auto req = ncrequest::Request {};
+
+    req.set_opt(ncrequest::RequestOpt::Timeout(ncrequest::req_opt::Timeout {
+        .low_speed        = 2,
+        .connect_timeout  = 3,
+        .transfer_timeout = 4,
+    }));
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().low_speed, 2);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().connect_timeout, 3);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().transfer_timeout, 4);
+
+    req.set_opt(ncrequest::RequestOpt::Proxy(ncrequest::req_opt::Proxy {
+        .type    = ncrequest::req_opt::Proxy::Type::SOCKS5,
+        .content = "127.0.0.1:1080",
+    }));
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Proxy>().type,
+              ncrequest::req_opt::Proxy::Type::SOCKS5);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Proxy>().content, "127.0.0.1:1080");
+
+    req.set_opt(ncrequest::RequestOpt::SSL(ncrequest::req_opt::SSL {
+        .verify_certificate = false,
+    }));
+    EXPECT_FALSE(req.get_opt<ncrequest::req_opt::SSL>().verify_certificate);
+}
+
 TEST(http, LocalHttpGetText) {
     auto base = local_http_base_url();
     if (base.empty()) {
