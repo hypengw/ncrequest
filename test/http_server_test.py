@@ -15,6 +15,18 @@ def large_body() -> bytes:
     return (b"0123456789abcdef" * 8192) + b"tail\n"
 
 
+def download_body() -> bytes:
+    return bytes(((i * 37 + 11) % 256 for i in range(256 * 1024)))
+
+
+def slow_stream_body() -> bytes:
+    return (b"slow-stream-body-" * 8192) + b"done\n"
+
+
+class LocalHttpServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -38,7 +50,36 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header(name, value)
         self.end_headers()
         if body:
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
+
+    def send_stream(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        chunk_size: int,
+        initial_delay: float,
+        chunk_delay: float,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.send_header("X-Ncrequest-Test", "local-http")
+        self.end_headers()
+        try:
+            self.wfile.flush()
+            time.sleep(initial_delay)
+            for offset in range(0, len(body), chunk_size):
+                self.wfile.write(body[offset : offset + chunk_size])
+                self.wfile.flush()
+                time.sleep(chunk_delay)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def do_GET(self) -> None:
         if self.path == "/text":
@@ -47,6 +88,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/large":
             self.send_payload(HTTPStatus.OK, large_body())
+            return
+
+        if self.path == "/download.bin":
+            self.send_payload(
+                HTTPStatus.OK,
+                download_body(),
+                content_type="application/octet-stream",
+                extra_headers={"Content-Disposition": 'attachment; filename="download.bin"'},
+            )
             return
 
         if self.path == "/empty":
@@ -66,10 +116,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_payload(HTTPStatus.OK, b"delayed\n")
             return
 
+        if self.path == "/slow-first-byte":
+            time.sleep(1.5)
+            self.send_payload(HTTPStatus.OK, b"too late\n")
+            return
+
+        if self.path == "/slow-stream":
+            self.send_stream(
+                HTTPStatus.OK,
+                slow_stream_body(),
+                chunk_size=4096,
+                initial_delay=0.2,
+                chunk_delay=0.005,
+            )
+            return
+
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
 
     def do_POST(self) -> None:
-        if self.path != "/echo":
+        if self.path not in ("/echo", "/upload"):
             self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
             return
 
@@ -82,7 +147,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_payload(
             HTTPStatus.OK,
             body,
-            extra_headers={"X-Ncrequest-Method": "POST"},
+            extra_headers={
+                "X-Ncrequest-Method": "POST",
+                "X-Ncrequest-Upload-Size": str(len(body)),
+            },
         )
 
 
@@ -96,7 +164,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LocalHttpServer(("127.0.0.1", 0), Handler)
     host, port = server.server_address
     thread = threading.Thread(target=server.serve_forever)
     thread.start()

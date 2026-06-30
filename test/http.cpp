@@ -1,6 +1,11 @@
 #include <future>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -17,13 +22,28 @@ import rstd;
 namespace
 {
 
+using ncrequest::byte;
+using ncrequest::usize;
+
 struct FetchResult {
     bool        got_response { false };
     bool        got_body { false };
     int         code { 0 };
     bool        has_test_header { false };
+    bool        finished_while_paused { false };
+    usize       upload_callback_count { 0 };
     std::string body;
     std::string error;
+};
+
+struct ErrorResult {
+    bool                     got_response { false };
+    bool                     got_error { false };
+    ncrequest::ErrorKind     kind { ncrequest::ErrorKind::InvalidState };
+    curl::CURLcode           curl_code { curl::CURLcode::CURLE_OK };
+    ncrequest::ClientBackend backend { ncrequest::ClientBackend::QtNetwork };
+    int                      client_code { 0 };
+    std::string              error;
 };
 
 auto local_http_base_url() -> std::string {
@@ -53,15 +73,83 @@ auto large_body() -> std::string {
     return out;
 }
 
+auto download_body() -> std::string {
+    std::string out;
+    out.resize(256 * 1024);
+    for (usize i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<char>((i * 37 + 11) % 256);
+    }
+    return out;
+}
+
+[[maybe_unused]] auto slow_stream_body() -> std::string {
+    std::string out;
+    out.reserve(17 * 8192 + 5);
+    for (int i = 0; i < 8192; ++i) {
+        out += "slow-stream-body-";
+    }
+    out += "done\n";
+    return out;
+}
+
+auto upload_body() -> std::string {
+    std::string out;
+    out.reserve(192 * 1024);
+    for (usize i = 0; i < 192 * 1024; ++i) {
+        out.push_back(static_cast<char>((i * 19 + 5) % 256));
+    }
+    return out;
+}
+
 auto bytes_from_string(const std::string& body) -> rstd::bytes::Bytes {
     return rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
         reinterpret_cast<const rstd::u8*>(body.data()), body.size()));
+}
+
+auto string_from_bytes(const rstd::bytes::Bytes& bytes) -> std::string {
+    if (bytes.size() == 0) return {};
+    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.size() };
+}
+
+auto unique_temp_path(std::string_view name) -> std::filesystem::path {
+    auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    return std::filesystem::temp_directory_path() /
+           (std::string("ncrequest-") + std::string(name) + "-" + std::to_string(ticks));
+}
+
+auto write_file(const std::filesystem::path& path, const std::string& body) -> bool {
+    std::ofstream out { path, std::ios::binary };
+    if (! out) return false;
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    return static_cast<bool>(out);
+}
+
+auto read_file(const std::filesystem::path& path) -> std::optional<std::string> {
+    std::ifstream in { path, std::ios::binary };
+    if (! in) return std::nullopt;
+    return std::string { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+}
+
+void remove_file(const std::filesystem::path& path) {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
 }
 
 auto response_code(ncrequest::Arc<ncrequest::Response> rsp) -> int {
     auto code = rsp->code();
     if (code.is_some()) return code.unwrap();
     return 0;
+}
+
+void record_error(ErrorResult& result, const ncrequest::Error& error) {
+    result.got_error = true;
+    result.kind      = error.kind();
+    if (error.is_Curl()) {
+        result.curl_code = error.as_Curl().code;
+    } else if (error.is_Client()) {
+        result.backend     = error.as_Client().error.backend;
+        result.client_code = error.as_Client().error.code;
+    }
 }
 
 auto fetch_text(ncrequest::Arc<ncrequest::Session> session, std::string url)
@@ -86,6 +174,32 @@ auto fetch_text(ncrequest::Arc<ncrequest::Session> session, std::string url)
     result.code            = response_code(response);
     result.has_test_header = response->header().has_field("x-ncrequest-test");
     result.body            = text.unwrap();
+    result.got_body        = true;
+    co_return result;
+}
+
+auto fetch_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<FetchResult> {
+    FetchResult result;
+    auto        req = ncrequest::Request { url };
+    auto        rsp = co_await session->get(req);
+    if (rsp.is_err()) {
+        result.error = "session returned error";
+        co_return result;
+    }
+
+    auto response       = rsp.unwrap();
+    result.got_response = true;
+
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) {
+        result.error = "response bytes read failed";
+        co_return result;
+    }
+
+    result.code            = response_code(response);
+    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.body            = string_from_bytes(rstd::move(bytes).unwrap());
     result.got_body        = true;
     co_return result;
 }
@@ -115,6 +229,164 @@ auto post_text(ncrequest::Arc<ncrequest::Session> session, std::string url, std:
     result.got_body        = true;
     co_return result;
 }
+
+auto post_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url, std::string body)
+    -> ncrequest::coro<FetchResult> {
+    FetchResult result;
+    auto        req = ncrequest::Request { url };
+    auto        rsp = co_await session->post(req, bytes_from_string(body));
+    if (rsp.is_err()) {
+        result.error = "session returned error";
+        co_return result;
+    }
+
+    auto response       = rsp.unwrap();
+    result.got_response = true;
+
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) {
+        result.error = "response bytes read failed";
+        co_return result;
+    }
+
+    result.code            = response_code(response);
+    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.body            = string_from_bytes(rstd::move(bytes).unwrap());
+    result.got_body        = true;
+    co_return result;
+}
+
+auto fetch_timeout(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<ErrorResult> {
+    ErrorResult result;
+    auto        req = ncrequest::Request { url };
+    auto&       timeout = req.get_opt<ncrequest::req_opt::Timeout>();
+#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+    timeout.transfer_timeout = 100;
+#else
+    timeout.low_speed        = 1;
+    timeout.transfer_timeout = 1;
+#endif
+
+    auto rsp = co_await session->get(req);
+    if (rsp.is_err()) {
+        auto error = rstd::move(rsp).unwrap_err();
+        record_error(result, error);
+        co_return result;
+    }
+    result.got_response = true;
+
+    auto text = co_await rsp.unwrap()->text();
+    if (text.is_err()) {
+        auto error = rstd::move(text).unwrap_err();
+        record_error(result, error);
+        co_return result;
+    }
+
+    result.error = "timeout request completed";
+    co_return result;
+}
+
+auto fetch_then_cancel(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<ErrorResult> {
+    ErrorResult result;
+    auto        req = ncrequest::Request { url };
+
+    auto rsp = co_await session->get(req);
+    if (rsp.is_err()) {
+        result.error = "session returned error before cancel";
+        co_return result;
+    }
+    result.got_response = true;
+
+    auto response = rsp.unwrap();
+    response->cancel();
+
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) {
+        auto error = rstd::move(bytes).unwrap_err();
+        record_error(result, error);
+        co_return result;
+    }
+
+    result.error = "cancel request completed";
+    co_return result;
+}
+
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<FetchResult> {
+    FetchResult result;
+    auto        req = ncrequest::Request { url };
+    auto        rsp = co_await session->get(req);
+    if (rsp.is_err()) {
+        result.error = "session returned error";
+        co_return result;
+    }
+
+    auto response       = rsp.unwrap();
+    result.got_response = true;
+    response->pause_recv(true);
+    co_await rstd::async::sleep(rstd::time::Duration::from_millis(350));
+    result.finished_while_paused = response->is_finished();
+    response->pause_recv(false);
+
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) {
+        result.error = "response bytes read failed after pause";
+        co_return result;
+    }
+
+    result.code            = response_code(response);
+    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.body            = string_from_bytes(rstd::move(bytes).unwrap());
+    result.got_body        = true;
+    co_return result;
+}
+
+auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::string url,
+                           std::string body) -> ncrequest::coro<FetchResult> {
+    FetchResult result;
+    auto        req    = ncrequest::Request { url };
+    usize       offset = 0;
+    usize       calls  = 0;
+    auto&       reader = req.get_opt<ncrequest::req_opt::Read>();
+    reader.size        = body.size();
+    reader.callback    = [&body, &offset, &calls](byte* ptr, usize size) -> usize {
+        ++calls;
+        auto remaining = body.size() - offset;
+        auto copied    = remaining;
+        if (copied > size) copied = size;
+        if (copied > 4096) copied = 4096;
+        if (copied == 0) return 0;
+        std::memcpy(ptr, body.data() + offset, copied);
+        offset += copied;
+        return copied;
+    };
+
+    auto rsp = co_await session->post(req);
+    if (rsp.is_err()) {
+        result.error = "session returned error";
+        co_return result;
+    }
+
+    auto response       = rsp.unwrap();
+    result.got_response = true;
+
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) {
+        result.error = "response bytes read failed";
+        co_return result;
+    }
+
+    result.code                  = response_code(response);
+    result.has_test_header       = response->header().has_field("x-ncrequest-test");
+    result.body                  = string_from_bytes(rstd::move(bytes).unwrap());
+    result.upload_callback_count = calls;
+    result.got_body              = true;
+    co_return result;
+}
+#endif
 
 struct WakeTarget {
     virtual void schedule_poll() = 0;
@@ -194,7 +466,7 @@ auto run_qt_future(F future) -> rstd::future::future_output_t<F> {
 #endif
 
 template<typename Start>
-auto run_http(Start&& start) -> FetchResult {
+auto run_http(Start&& start) {
     auto session = ncrequest::Session::make();
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
     return run_qt_future(start(session));
@@ -322,4 +594,126 @@ TEST(http, LocalHttpPostEcho) {
     EXPECT_EQ(result.code, 200);
     EXPECT_TRUE(result.has_test_header);
     EXPECT_EQ(result.body, payload);
+}
+
+TEST(http, LocalHttpDownloadFile) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http([url = local_http_url(base, "/download.bin")](auto session) {
+        return fetch_bytes(session, url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, download_body());
+
+    auto path = unique_temp_path("download.bin");
+    ASSERT_TRUE(write_file(path, result.body));
+    auto stored = read_file(path);
+    remove_file(path);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(*stored, download_body());
+}
+
+TEST(http, LocalHttpUploadFile) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto payload = upload_body();
+    auto path    = unique_temp_path("upload.bin");
+    ASSERT_TRUE(write_file(path, payload));
+    auto stored = read_file(path);
+    remove_file(path);
+    ASSERT_TRUE(stored.has_value());
+
+    auto result = run_http([url = local_http_url(base, "/upload"), body = *stored](auto session) {
+        return post_bytes(session, url, body);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, payload);
+}
+
+TEST(http, LocalHttpTimeout) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http([url = local_http_url(base, "/slow-first-byte")](auto session) {
+        return fetch_timeout(session, url);
+    });
+    ASSERT_TRUE(result.got_error) << result.error;
+#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
+    EXPECT_EQ(result.backend, ncrequest::ClientBackend::QtNetwork);
+#else
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Curl);
+    EXPECT_EQ(result.curl_code, curl::CURLcode::CURLE_OPERATION_TIMEDOUT);
+#endif
+}
+
+TEST(http, LocalHttpCancel) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
+        return fetch_then_cancel(session, url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_error) << result.error;
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Canceled);
+}
+
+TEST(http, LocalHttpCurlPauseRecv) {
+#ifndef NCREQUEST_CLIENT_BACKEND_CURL
+    GTEST_SKIP() << "curl-only recv pause test";
+#else
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
+        return curl_pause_recv(session, url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_FALSE(result.finished_while_paused);
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, slow_stream_body());
+#endif
+}
+
+TEST(http, LocalHttpCurlStreamingUpload) {
+#ifndef NCREQUEST_CLIENT_BACKEND_CURL
+    GTEST_SKIP() << "curl-only streaming upload test";
+#else
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto payload = upload_body();
+    auto result  = run_http([url = local_http_url(base, "/upload"), payload](auto session) {
+        return curl_streaming_upload(session, url, payload);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, payload);
+    EXPECT_GT(result.upload_callback_count, 1u);
+#endif
 }
