@@ -4,3 +4,4 @@
 /CMakeUserPresets.json
 /.vscode
 /rstd
+__pycache__

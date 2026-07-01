@@ -254,6 +254,20 @@ auto run_http(Start&& start) {
     return run_qt_future(start(session));
 }
 
+template<typename Start>
+auto run_http_rstd(Start&& start) {
+    auto session = ncrequest::qt_network::Session::make();
+    return rstd::async::block_on(start(session));
+}
+
+template<typename Start>
+auto run_http_rstd_multi_thread(Start&& start) {
+    auto runtime_result = rstd::async::RuntimeBuilder::multi_thread().worker_threads(2).build();
+    auto runtime        = runtime_result.unwrap();
+    auto session        = ncrequest::qt_network::Session::make();
+    return runtime.block_on(start(session));
+}
+
 } // namespace
 
 TEST(qt_network, LocalHttpGetText) {
@@ -263,6 +277,38 @@ TEST(qt_network, LocalHttpGetText) {
     }
 
     auto result = run_http([url = local_http_url(base, "/text")](auto session) {
+        return fetch_text(session, url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, "ncrequest python http server body\n");
+}
+
+TEST(qt_network, LocalHttpGetTextRstdBlockOn) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http_rstd([url = local_http_url(base, "/text")](auto session) {
+        return fetch_text(session, url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, "ncrequest python http server body\n");
+}
+
+TEST(qt_network, LocalHttpGetTextRstdMultiThreadRuntime) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http_rstd_multi_thread([url = local_http_url(base, "/text")](auto session) {
         return fetch_text(session, url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
