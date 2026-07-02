@@ -1,6 +1,8 @@
 module;
 #include <atomic>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <QByteArray>
@@ -76,32 +78,137 @@ struct BodyEvent {
 };
 
 struct OperationState {
-    Request                                                        request;
-    Operation                                                      operation;
-    Weak<QtNetworkDriver>                                          driver;
-    rstd::Option<req_opt::Proxy>                                   proxy;
-    rstd::async::CompletionHandle<Arc<OperationState>, Error>      ready;
-    rstd::async::CompletionQueue<BodyEvent>                        body_queue;
-    rstd::async::CompletionQueueHandle<BodyEvent>                  body_producer;
-    std::atomic<bool>                                              finished { false };
-    std::atomic<bool>                                              cancel_requested { false };
+    using ReadyWaiter = rstd_coro::PollStateArc<rstd::Option<Error>>;
+    using BodyWaiter  = rstd_coro::PollStateArc<rstd::Option<BodyEvent>>;
+
+    Request                       request;
+    Operation                     operation;
+    Weak<QtNetworkDriver>         driver;
+    rstd::Option<req_opt::Proxy>  proxy;
+    std::atomic<bool>             finished { false };
+    std::atomic<bool>             cancel_requested { false };
 
     OperationState(Request request,
                    Operation operation,
                    Weak<QtNetworkDriver> driver,
-                   rstd::Option<req_opt::Proxy> proxy,
-                   rstd::async::CompletionHandle<Arc<OperationState>, Error> ready,
-                   rstd::async::CompletionQueue<BodyEvent> body_queue,
-                   rstd::async::CompletionQueueHandle<BodyEvent> body_producer)
+                   rstd::Option<req_opt::Proxy> proxy)
         : request(rstd::move(request)),
           operation(operation),
           driver(rstd::move(driver)),
-          proxy(rstd::move(proxy)),
-          ready(rstd::move(ready)),
-          body_queue(rstd::move(body_queue)),
-          body_producer(rstd::move(body_producer)) {}
+          proxy(rstd::move(proxy)) {}
 
     void cancel();
+
+    void start_ready_wait(ReadyWaiter waiter) {
+        auto result = rstd::Option<Error> {};
+        {
+            auto lock = std::lock_guard { mutex };
+            if (waiter->is_canceled()) return;
+            if (! ready) {
+                ready_waiter = Some(rstd::move(waiter));
+                return;
+            }
+            result = rstd::move(ready_error);
+        }
+        waiter->set_ready(rstd::move(result));
+    }
+
+    void cancel_ready_wait(const ReadyWaiter& waiter) {
+        auto lock = std::lock_guard { mutex };
+        if (ready_waiter.is_some() && *ready_waiter == waiter) {
+            ready_waiter = None();
+        }
+    }
+
+    void complete_ready(rstd::Option<Error> error = None<Error>()) {
+        auto waiter = rstd::Option<ReadyWaiter> {};
+        {
+            auto lock = std::lock_guard { mutex };
+            if (ready) return;
+            ready = true;
+            if (ready_waiter.is_some()) {
+                waiter = ready_waiter.take();
+            } else {
+                ready_error = rstd::move(error);
+                return;
+            }
+        }
+
+        (*waiter)->set_ready(rstd::move(error));
+    }
+
+    void start_body_wait(BodyWaiter waiter) {
+        auto result = rstd::Option<BodyEvent> {};
+        {
+            auto lock = std::lock_guard { mutex };
+            if (waiter->is_canceled()) return;
+            if (! body_events.empty()) {
+                auto event = rstd::move(body_events.front());
+                body_events.pop_front();
+                result = Some(rstd::move(event));
+            } else if (body_closed) {
+                result = None<BodyEvent>();
+            } else if (body_waiter.is_some()) {
+                result = Some(BodyEvent::make_error(
+                    Error::InvalidState("Qt response body read already pending")));
+            } else {
+                body_waiter = Some(rstd::move(waiter));
+                return;
+            }
+        }
+        waiter->set_ready(rstd::move(result));
+    }
+
+    void cancel_body_wait(const BodyWaiter& waiter) {
+        auto lock = std::lock_guard { mutex };
+        if (body_waiter.is_some() && *body_waiter == waiter) {
+            body_waiter = None();
+        }
+    }
+
+    void push_body_event(BodyEvent event) {
+        auto waiter = rstd::Option<BodyWaiter> {};
+        auto result = rstd::Option<BodyEvent> {};
+        auto close  = event.kind == BodyEvent::Kind::Finished ||
+                     event.kind == BodyEvent::Kind::Error;
+        {
+            auto lock = std::lock_guard { mutex };
+            if (body_closed) return;
+            body_closed = close;
+            if (body_waiter.is_some()) {
+                waiter = body_waiter.take();
+                result = Some(rstd::move(event));
+            } else {
+                body_events.push_back(rstd::move(event));
+                return;
+            }
+        }
+
+        (*waiter)->set_ready(rstd::move(result));
+    }
+
+    void close_body() {
+        auto waiter = rstd::Option<BodyWaiter> {};
+        {
+            auto lock = std::lock_guard { mutex };
+            if (body_closed) return;
+            body_closed = true;
+            waiter      = body_waiter.take();
+        }
+
+        if (waiter.is_some()) {
+            (*waiter)->set_ready(None<BodyEvent>());
+        }
+    }
+
+private:
+    std::mutex                  mutex;
+    bool                        ready { false };
+    rstd::Option<Error>         ready_error;
+    rstd::Option<ReadyWaiter>   ready_waiter;
+    std::deque<BodyEvent>       body_events;
+    bool                        body_closed { false };
+    rstd::Option<BodyWaiter>    body_waiter;
 };
 
 auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
@@ -212,19 +319,113 @@ auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
     }));
 }
 
-auto queue_io_error(rstd::io::error::Error error) -> Error {
-    return Error::Io(rstd::move(error));
-}
+class OperationReadyFuture {
+public:
+    using Output = rstd::Option<Error>;
 
-auto completion_error_to_error(rstd::async::CompletionError<Error> error) -> Error {
-    if (error.is_canceled()) {
-        return Error::Canceled();
+    explicit OperationReadyFuture(Arc<OperationState> state)
+        : m_operation(rstd::move(state)),
+          m_waiter(rstd_coro::make_poll_state<rstd::Option<Error>>()) {}
+
+    OperationReadyFuture(const OperationReadyFuture&)            = delete;
+    OperationReadyFuture& operator=(const OperationReadyFuture&) = delete;
+
+    OperationReadyFuture(OperationReadyFuture&& other) noexcept
+        : m_operation(rstd::move(other.m_operation)),
+          m_waiter(rstd::move(other.m_waiter)),
+          m_started(other.m_started) {}
+
+    auto operator=(OperationReadyFuture&& other) noexcept -> OperationReadyFuture& {
+        if (this != &other) {
+            cancel();
+            m_operation = rstd::move(other.m_operation);
+            m_waiter    = rstd::move(other.m_waiter);
+            m_started   = other.m_started;
+        }
+        return *this;
     }
-    if (error.is_notify()) {
-        return Error::Io(rstd::move(error).unwrap_notify());
+
+    ~OperationReadyFuture() { cancel(); }
+
+    auto poll(rstd::mut_ref<OperationReadyFuture> self, rstd::task::Context& cx)
+        -> rstd::task::Poll<Output> {
+        auto& future = *self;
+        if (! future.m_started) {
+            future.m_started = true;
+            future.m_operation->start_ready_wait(future.m_waiter);
+        }
+        return future.m_waiter->poll(cx);
     }
-    return rstd::move(error).unwrap_failed();
-}
+
+private:
+    void cancel() {
+        if (! m_waiter) return;
+        m_waiter->cancel();
+        if (m_operation) {
+            m_operation->cancel_ready_wait(m_waiter);
+        }
+        m_waiter.reset();
+        m_operation.reset();
+    }
+
+    Arc<OperationState>                       m_operation;
+    OperationState::ReadyWaiter               m_waiter;
+    bool                                      m_started { false };
+};
+
+class BodyEventFuture {
+public:
+    using Output = rstd::Option<BodyEvent>;
+
+    explicit BodyEventFuture(Arc<OperationState> state)
+        : m_operation(rstd::move(state)),
+          m_waiter(rstd_coro::make_poll_state<rstd::Option<BodyEvent>>()) {}
+
+    BodyEventFuture(const BodyEventFuture&)            = delete;
+    BodyEventFuture& operator=(const BodyEventFuture&) = delete;
+
+    BodyEventFuture(BodyEventFuture&& other) noexcept
+        : m_operation(rstd::move(other.m_operation)),
+          m_waiter(rstd::move(other.m_waiter)),
+          m_started(other.m_started) {}
+
+    auto operator=(BodyEventFuture&& other) noexcept -> BodyEventFuture& {
+        if (this != &other) {
+            cancel();
+            m_operation = rstd::move(other.m_operation);
+            m_waiter    = rstd::move(other.m_waiter);
+            m_started   = other.m_started;
+        }
+        return *this;
+    }
+
+    ~BodyEventFuture() { cancel(); }
+
+    auto poll(rstd::mut_ref<BodyEventFuture> self, rstd::task::Context& cx)
+        -> rstd::task::Poll<Output> {
+        auto& future = *self;
+        if (! future.m_started) {
+            future.m_started = true;
+            future.m_operation->start_body_wait(future.m_waiter);
+        }
+        return future.m_waiter->poll(cx);
+    }
+
+private:
+    void cancel() {
+        if (! m_waiter) return;
+        m_waiter->cancel();
+        if (m_operation) {
+            m_operation->cancel_body_wait(m_waiter);
+        }
+        m_waiter.reset();
+        m_operation.reset();
+    }
+
+    Arc<OperationState>                       m_operation;
+    OperationState::BodyWaiter                m_waiter;
+    bool                                      m_started { false };
+};
 
 struct ReplyWakeState : public std::enable_shared_from_this<ReplyWakeState> {
     bool                            connected { false };
@@ -262,9 +463,9 @@ public:
     explicit ReplyWakeFuture(QPointer<QNetworkReply> reply)
         : m_state(std::make_shared<ReplyWakeState>(rstd::move(reply))) {}
 
-    auto poll(rstd::pin::Pin<rstd::mut_ref<ReplyWakeFuture>> self, rstd::task::Context& cx)
+    auto poll(rstd::mut_ref<ReplyWakeFuture> self, rstd::task::Context& cx)
         -> rstd::task::Poll<Output> {
-        auto& future = *self.get_unchecked_mut();
+        auto& future = *self;
         if (future.m_state->is_ready()) {
             return rstd::task::Poll<Output>::Ready(rstd::empty {});
         }
@@ -375,7 +576,7 @@ public:
 
         m_replies[state.get()] = ReplyEntry { QPointer<QNetworkReply>(reply), state };
         connect_reply(state, reply);
-        (void)state->ready.complete(state);
+        state->complete_ready();
     }
 
     void cancel(OperationState* state) {
@@ -392,9 +593,8 @@ public:
         for (auto& [_, entry] : m_replies) {
             auto state = entry.state;
             if (! state->finished.exchange(true)) {
-                (void)state->ready.fail(Error::Canceled());
-                (void)state->body_producer.push(BodyEvent::make_error(Error::Canceled()));
-                state->body_producer.close();
+                state->complete_ready(Some(Error::Canceled()));
+                state->push_body_event(BodyEvent::make_error(Error::Canceled()));
             }
 
             auto* reply = entry.reply.data();
@@ -409,8 +609,8 @@ public:
 private:
     void fail_start(Arc<OperationState> state, Error error) {
         state->finished.store(true);
-        (void)state->ready.fail(rstd::move(error));
-        state->body_producer.close();
+        state->complete_ready(Some(rstd::move(error)));
+        state->close_body();
     }
 
     void connect_reply(Arc<OperationState> state, QNetworkReply* reply) {
@@ -429,16 +629,15 @@ private:
         QObject::connect(reply, &QObject::destroyed, this, [this, state] {
             if (state->finished.load()) return;
             state->finished.store(true);
-            (void)state->body_producer.push(
+            state->push_body_event(
                 BodyEvent::make_error(Error::InvalidState("QNetworkReply was destroyed")));
-            state->body_producer.close();
             m_replies.erase(state.get());
         });
     }
 
     void emit_header(const Arc<OperationState>& state, QNetworkReply* reply) {
         if (state->finished.load()) return;
-        (void)state->body_producer.push(BodyEvent::make_header(read_header(reply)));
+        state->push_body_event(BodyEvent::make_header(read_header(reply)));
     }
 
     void emit_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
@@ -452,7 +651,7 @@ private:
                 rstd::slice<rstd::u8>::from_raw_parts(
                     reinterpret_cast<const rstd::u8*>(chunk.constData()),
                     static_cast<rstd::usize>(chunk.size())));
-            (void)state->body_producer.push(BodyEvent::make_chunk(rstd::move(bytes)));
+            state->push_body_event(BodyEvent::make_chunk(rstd::move(bytes)));
         }
     }
 
@@ -465,12 +664,10 @@ private:
 
         auto error = transport_error(reply);
         if (error.is_some()) {
-            (void)state->body_producer.push(
-                BodyEvent::make_error(rstd::move(error).unwrap()));
+            state->push_body_event(BodyEvent::make_error(rstd::move(error).unwrap()));
         } else {
-            (void)state->body_producer.push(BodyEvent::make_finished());
+            state->push_body_event(BodyEvent::make_finished());
         }
-        state->body_producer.close();
         m_replies.erase(state.get());
     }
 };
@@ -734,22 +931,6 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
 
     auto prepared = prepare_req(req);
 
-    auto ready_result = rstd::async::Completion<Arc<OperationState>, Error>::make();
-    if (ready_result.is_err()) {
-        co_return Result<ResponseBackend>(
-            Err(Error::Io(rstd::move(ready_result).unwrap_err_unchecked())));
-    }
-    auto ready_pair = rstd::move(ready_result).unwrap_unchecked();
-    auto ready      = rstd::move(ready_pair.get<0>());
-    auto ready_tx   = rstd::move(ready_pair.get<1>());
-
-    auto body_result = rstd::async::CompletionQueue<BodyEvent>::make();
-    if (body_result.is_err()) {
-        co_return Result<ResponseBackend>(
-            Err(Error::Io(rstd::move(body_result).unwrap_err_unchecked())));
-    }
-    auto body_pair = rstd::move(body_result).unwrap_unchecked();
-
     auto proxy = rstd::Option<req_opt::Proxy> {};
     if (m_proxy) {
         proxy = Some(m_proxy.clone().unwrap());
@@ -759,25 +940,21 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
         rstd::move(prepared),
         operation,
         Weak<QtNetworkDriver>(m_driver),
-        rstd::move(proxy),
-        rstd::move(ready_tx),
-        rstd::move(body_pair.get<0>()),
-        rstd::move(body_pair.get<1>()));
+        rstd::move(proxy));
 
     if (! m_driver->start(state, rstd::move(body))) {
-        state->body_producer.close();
+        state->close_body();
         co_return Result<ResponseBackend>(
             Err(Error::InvalidState("Qt network driver is not running")));
     }
 
-    auto completed = co_await rstd::move(ready);
-    if (completed.is_err()) {
+    auto ready_error = co_await OperationReadyFuture { state };
+    if (ready_error.is_some()) {
         co_return Result<ResponseBackend>(
-            Err(completion_error_to_error(rstd::move(completed).unwrap_err())));
+            Err(rstd::move(ready_error).unwrap_unchecked()));
     }
 
-    co_return Result<ResponseBackend>(
-        Ok(ResponseBackend(rstd::move(completed).unwrap())));
+    co_return Result<ResponseBackend>(Ok(ResponseBackend(rstd::move(state))));
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
@@ -831,18 +1008,12 @@ auto ResponseBackend::transport_error() const -> rstd::Option<Error> {
 auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
     rstd::bytes::BytesMut out = rstd::bytes::BytesMut::with_capacity(ReadSize);
 
-    if (m_state) {
-        for (;;) {
-            auto next = co_await m_state->body_queue.next();
-            if (next.is_err()) {
-                co_return Result<rstd::bytes::Bytes>(
-                    Err(queue_io_error(rstd::move(next).unwrap_err_unchecked())));
-            }
-
-            auto item = rstd::move(next).unwrap_unchecked();
-            if (item.is_none()) {
-                co_return Result<rstd::bytes::Bytes>(
-                    Err(Error::InvalidState("Qt response body ended without finished event")));
+	    if (m_state) {
+	        for (;;) {
+	            auto item = co_await BodyEventFuture { m_state };
+	            if (item.is_none()) {
+	                co_return Result<rstd::bytes::Bytes>(
+	                    Err(Error::InvalidState("Qt response body ended without finished event")));
             }
 
             auto event = rstd::move(item).unwrap_unchecked();

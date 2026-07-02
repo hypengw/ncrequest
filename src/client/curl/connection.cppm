@@ -283,9 +283,9 @@ public:
 
         ~ReadSomeFuture() { cancel(); }
 
-        auto poll(rstd::pin::Pin<rstd::mut_ref<ReadSomeFuture>> self, rstd::task::Context& cx)
+        auto poll(rstd::mut_ref<ReadSomeFuture> self, rstd::task::Context& cx)
             -> rstd::task::Poll<IoResult> {
-            auto& future = *self.get_unchecked_mut();
+            auto& future = *self;
             if (! future.m_started) {
                 future.m_started = true;
                 future.m_connection->start_read_some(*future.m_buffer, future.m_state);
@@ -341,9 +341,9 @@ public:
 
         ~WriteSomeFuture() { cancel(); }
 
-        auto poll(rstd::pin::Pin<rstd::mut_ref<WriteSomeFuture>> self, rstd::task::Context& cx)
+        auto poll(rstd::mut_ref<WriteSomeFuture> self, rstd::task::Context& cx)
             -> rstd::task::Poll<IoResult> {
-            auto& future = *self.get_unchecked_mut();
+            auto& future = *self;
             if (! future.m_started) {
                 future.m_started = true;
                 future.m_connection->start_write_some(*future.m_buffer, future.m_state);
@@ -396,9 +396,9 @@ public:
 
         ~WaitHeaderFuture() { cancel(); }
 
-        auto poll(rstd::pin::Pin<rstd::mut_ref<WaitHeaderFuture>> self, rstd::task::Context& cx)
+        auto poll(rstd::mut_ref<WaitHeaderFuture> self, rstd::task::Context& cx)
             -> rstd::task::Poll<rstd::Option<Error>> {
-            auto& future = *self.get_unchecked_mut();
+            auto& future = *self;
             if (! future.m_started) {
                 future.m_started = true;
                 future.m_connection->start_wait_header(future.m_state);

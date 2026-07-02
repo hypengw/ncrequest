@@ -141,9 +141,9 @@ class WebSocketBackend::Impl {
 
         ~NextEventFuture() { cancel(); }
 
-        auto poll(rstd::pin::Pin<rstd::mut_ref<NextEventFuture>> self, rstd::task::Context& cx)
+        auto poll(rstd::mut_ref<NextEventFuture> self, rstd::task::Context& cx)
             -> rstd::task::Poll<LoopEvent> {
-            auto& future = *self.get_unchecked_mut();
+            auto& future = *self;
 
             auto command = future.m_owner->m_commands.poll_receive(cx);
             if (command.is_ready()) {

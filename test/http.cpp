@@ -394,10 +394,14 @@ struct WakeTarget {
 };
 
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-void  waker_drop(void*) {}
-void* waker_clone(void* data) { return data; }
-void  waker_wake(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
-void  waker_wake_by_ref(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
+extern const rstd::task::RawWakerVTable QT_WAKER_VTABLE;
+
+void waker_drop(void*) {}
+auto waker_clone(void* data) -> rstd::task::RawWaker {
+    return rstd::task::RawWaker::from_raw_parts(data, &QT_WAKER_VTABLE);
+}
+void waker_wake(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
+void waker_wake_by_ref(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
 
 const rstd::task::RawWakerVTable QT_WAKER_VTABLE {
     &waker_clone,
