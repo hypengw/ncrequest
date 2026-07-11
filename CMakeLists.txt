@@ -64,7 +64,7 @@ else()
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
-    GIT_TAG 5878b2058eb67adb615f691889d93e3ab13ba7d2
+    GIT_TAG 4fad0ba75d4bd9b99999d170953ce6d2b088accc 
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)
@@ -107,7 +107,6 @@ set(NCREQUEST_MODULE_FILES
     src/client/curl/init.cppm
     src/client/curl/mod.cppm
     src/coro/base.cppm
-    src/coro/rstd.cppm
     src/coro/mod.cppm
     src/mod.cppm)
 

@@ -21,6 +21,17 @@ namespace ncrequest::client::curl
 {
 export class SessionBackend;
 
+template<typename T>
+struct CompletionProducer {
+    rstd::async::CompletionHandle<T> handle;
+
+    explicit CompletionProducer(rstd::async::CompletionHandle<T> handle)
+        : handle(rstd::move(handle)) {}
+
+    void complete(T value) { (void)handle.complete(rstd::move(value)); }
+    auto is_closed() -> bool { return handle.is_closed(); }
+};
+
 export class Connection;
 namespace session_message
 {
@@ -116,9 +127,7 @@ public:
 
         static auto ok(usize size) -> IoResult { return { None<Error>(), false, size }; }
         static auto done() -> IoResult { return { None<Error>(), true, 0 }; }
-        static auto fail(Error error) -> IoResult {
-            return { Some(rstd::move(error)), false, 0 };
-        }
+        static auto fail(Error error) -> IoResult { return { Some(rstd::move(error)), false, 0 }; }
     };
 
     template<typename Allocator>
@@ -252,189 +261,79 @@ public:
         m_session_channel->try_send(rstd::move(msg));
     }
 
-    class ReadSomeFuture {
-    public:
-        using Output = IoResult;
-
-        ReadSomeFuture(Arc<Connection> connection, rstd::bytes::BytesMut& buffer)
-            : m_connection(rstd::move(connection)),
-              m_buffer(&buffer),
-              m_state(rstd_coro::make_poll_state<IoResult>()) {}
-
-        ReadSomeFuture(const ReadSomeFuture&)            = delete;
-        ReadSomeFuture& operator=(const ReadSomeFuture&) = delete;
-
-        ReadSomeFuture(ReadSomeFuture&& other) noexcept
-            : m_connection(rstd::move(other.m_connection)),
-              m_buffer(other.m_buffer),
-              m_state(rstd::move(other.m_state)),
-              m_started(other.m_started) {}
-
-        auto operator=(ReadSomeFuture&& other) noexcept -> ReadSomeFuture& {
-            if (this != &other) {
-                cancel();
-                m_connection = rstd::move(other.m_connection);
-                m_buffer     = other.m_buffer;
-                m_state      = rstd::move(other.m_state);
-                m_started    = other.m_started;
-            }
-            return *this;
+    auto read_some(rstd::bytes::BytesMut& buffer) -> coro<IoResult> {
+        auto made = rstd::async::Completion<IoResult>::make();
+        if (made.is_err()) {
+            co_return IoResult::fail(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
+        auto pair     = rstd::move(made).unwrap_unchecked();
+        auto receiver = rstd::move(pair.get<0>());
+        auto state    = make_arc<CompletionProducer<IoResult>>(rstd::move(pair.get<1>()));
 
-        ~ReadSomeFuture() { cancel(); }
-
-        auto poll(rstd::mut_ref<ReadSomeFuture> self, rstd::task::Context& cx)
-            -> rstd::task::Poll<IoResult> {
-            auto& future = *self;
-            if (! future.m_started) {
-                future.m_started = true;
-                future.m_connection->start_read_some(*future.m_buffer, future.m_state);
-            }
-            return future.m_state->poll(cx);
+        struct CancelOnDrop {
+            Arc<Connection>                   connection;
+            Arc<CompletionProducer<IoResult>> state;
+            ~CancelOnDrop() { connection->cancel_read_some(state); }
+        };
+        auto cancel = CancelOnDrop { get_arc(), state };
+        start_read_some(buffer, state);
+        auto result = co_await rstd::move(receiver);
+        if (result.is_err()) {
+            co_return IoResult::fail(Error::Canceled());
         }
+        co_return rstd::move(result).unwrap_unchecked();
+    }
 
-    private:
-        void cancel() {
-            if (! m_state) return;
-            m_state->cancel();
-            if (m_connection) {
-                m_connection->cancel_read_some(m_state);
-            }
-            m_state.reset();
-            m_connection.reset();
+    auto write_some(rstd::bytes::Bytes& buffer) -> coro<IoResult> {
+        auto made = rstd::async::Completion<IoResult>::make();
+        if (made.is_err()) {
+            co_return IoResult::fail(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
+        auto pair     = rstd::move(made).unwrap_unchecked();
+        auto receiver = rstd::move(pair.get<0>());
+        auto state    = make_arc<CompletionProducer<IoResult>>(rstd::move(pair.get<1>()));
 
-        Arc<Connection>                   m_connection;
-        rstd::bytes::BytesMut*            m_buffer;
-        rstd_coro::PollStateArc<IoResult> m_state;
-        bool                              m_started { false };
-    };
-
-    class WriteSomeFuture {
-    public:
-        using Output = IoResult;
-
-        WriteSomeFuture(Arc<Connection> connection, rstd::bytes::Bytes& buffer)
-            : m_connection(rstd::move(connection)),
-              m_buffer(&buffer),
-              m_state(rstd_coro::make_poll_state<IoResult>()) {}
-
-        WriteSomeFuture(const WriteSomeFuture&)            = delete;
-        WriteSomeFuture& operator=(const WriteSomeFuture&) = delete;
-
-        WriteSomeFuture(WriteSomeFuture&& other) noexcept
-            : m_connection(rstd::move(other.m_connection)),
-              m_buffer(other.m_buffer),
-              m_state(rstd::move(other.m_state)),
-              m_started(other.m_started) {}
-
-        auto operator=(WriteSomeFuture&& other) noexcept -> WriteSomeFuture& {
-            if (this != &other) {
-                cancel();
-                m_connection = rstd::move(other.m_connection);
-                m_buffer     = other.m_buffer;
-                m_state      = rstd::move(other.m_state);
-                m_started    = other.m_started;
-            }
-            return *this;
+        struct CancelOnDrop {
+            Arc<Connection>                   connection;
+            Arc<CompletionProducer<IoResult>> state;
+            ~CancelOnDrop() { connection->cancel_write_some(state); }
+        };
+        auto cancel = CancelOnDrop { get_arc(), state };
+        start_write_some(buffer, state);
+        auto result = co_await rstd::move(receiver);
+        if (result.is_err()) {
+            co_return IoResult::fail(Error::Canceled());
         }
+        co_return rstd::move(result).unwrap_unchecked();
+    }
 
-        ~WriteSomeFuture() { cancel(); }
-
-        auto poll(rstd::mut_ref<WriteSomeFuture> self, rstd::task::Context& cx)
-            -> rstd::task::Poll<IoResult> {
-            auto& future = *self;
-            if (! future.m_started) {
-                future.m_started = true;
-                future.m_connection->start_write_some(*future.m_buffer, future.m_state);
-            }
-            return future.m_state->poll(cx);
-        }
-
-    private:
-        void cancel() {
-            if (! m_state) return;
-            m_state->cancel();
-            if (m_connection) {
-                m_connection->cancel_write_some(m_state);
-            }
-            m_state.reset();
-            m_connection.reset();
-        }
-
-        Arc<Connection>                   m_connection;
-        rstd::bytes::Bytes*               m_buffer;
-        rstd_coro::PollStateArc<IoResult> m_state;
-        bool                              m_started { false };
-    };
-
-    class WaitHeaderFuture {
-    public:
+    auto wait_header() -> coro<rstd::Option<Error>> {
         using Output = rstd::Option<Error>;
-
-        explicit WaitHeaderFuture(Arc<Connection> connection)
-            : m_connection(rstd::move(connection)),
-              m_state(rstd_coro::make_poll_state<rstd::Option<Error>>()) {}
-
-        WaitHeaderFuture(const WaitHeaderFuture&)            = delete;
-        WaitHeaderFuture& operator=(const WaitHeaderFuture&) = delete;
-
-        WaitHeaderFuture(WaitHeaderFuture&& other) noexcept
-            : m_connection(rstd::move(other.m_connection)),
-              m_state(rstd::move(other.m_state)),
-              m_started(other.m_started) {}
-
-        auto operator=(WaitHeaderFuture&& other) noexcept -> WaitHeaderFuture& {
-            if (this != &other) {
-                cancel();
-                m_connection = rstd::move(other.m_connection);
-                m_state      = rstd::move(other.m_state);
-                m_started    = other.m_started;
-            }
-            return *this;
+        auto made    = rstd::async::Completion<Output>::make();
+        if (made.is_err()) {
+            co_return Some(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
+        auto pair     = rstd::move(made).unwrap_unchecked();
+        auto receiver = rstd::move(pair.get<0>());
+        auto state    = make_arc<CompletionProducer<Output>>(rstd::move(pair.get<1>()));
 
-        ~WaitHeaderFuture() { cancel(); }
-
-        auto poll(rstd::mut_ref<WaitHeaderFuture> self, rstd::task::Context& cx)
-            -> rstd::task::Poll<rstd::Option<Error>> {
-            auto& future = *self;
-            if (! future.m_started) {
-                future.m_started = true;
-                future.m_connection->start_wait_header(future.m_state);
-            }
-            return future.m_state->poll(cx);
+        struct CancelOnDrop {
+            Arc<Connection>                 connection;
+            Arc<CompletionProducer<Output>> state;
+            ~CancelOnDrop() { connection->cancel_wait_header(state); }
+        };
+        auto cancel = CancelOnDrop { get_arc(), state };
+        start_wait_header(state);
+        auto result = co_await rstd::move(receiver);
+        if (result.is_err()) {
+            co_return Some(Error::Canceled());
         }
-
-    private:
-        void cancel() {
-            if (! m_state) return;
-            m_state->cancel();
-            if (m_connection) {
-                m_connection->cancel_wait_header(m_state);
-            }
-            m_state.reset();
-            m_connection.reset();
-        }
-
-        Arc<Connection>                                  m_connection;
-        rstd_coro::PollStateArc<rstd::Option<Error>>     m_state;
-        bool                                             m_started { false };
-    };
-
-    auto read_some(rstd::bytes::BytesMut& buffer) -> ReadSomeFuture {
-        return ReadSomeFuture { get_arc(), buffer };
+        co_return rstd::move(result).unwrap_unchecked();
     }
-
-    auto write_some(rstd::bytes::Bytes& buffer) -> WriteSomeFuture {
-        return WriteSomeFuture { get_arc(), buffer };
-    }
-
-    auto wait_header() -> WaitHeaderFuture { return WaitHeaderFuture { get_arc() }; }
 
 private:
-    using RstdIoState     = rstd_coro::PollStateArc<IoResult>;
-    using RstdHeaderState = rstd_coro::PollStateArc<rstd::Option<Error>>;
+    using RstdIoState     = Arc<CompletionProducer<IoResult>>;
+    using RstdHeaderState = Arc<CompletionProducer<rstd::Option<Error>>>;
 
     struct RstdReadWaiter {
         rstd::bytes::BytesMut* buffer;
@@ -448,55 +347,55 @@ private:
 
     void start_read_some(rstd::bytes::BytesMut& buffer, RstdIoState state) {
         auto lock = std::lock_guard { m_mutex };
-        if (state->is_canceled()) return;
-        if (m_read_some_future.is_some()) {
-            state->set_ready(IoResult::fail(Error::InvalidState("curl read already pending")));
+        if (state->is_closed()) return;
+        if (m_read_waiter.is_some()) {
+            state->complete(IoResult::fail(Error::InvalidState("curl read already pending")));
             return;
         }
-        m_read_some_future = Some(RstdReadWaiter { &buffer, rstd::move(state) });
-        try_read_some_future_locked();
+        m_read_waiter = Some(RstdReadWaiter { &buffer, rstd::move(state) });
+        try_read_waiter_locked();
     }
 
     void start_write_some(rstd::bytes::Bytes& buffer, RstdIoState state) {
         auto lock = std::lock_guard { m_mutex };
-        if (state->is_canceled()) return;
-        if (m_write_some_future.is_some()) {
-            state->set_ready(IoResult::fail(Error::InvalidState("curl write already pending")));
+        if (state->is_closed()) return;
+        if (m_write_waiter.is_some()) {
+            state->complete(IoResult::fail(Error::InvalidState("curl write already pending")));
             return;
         }
-        m_write_some_future = Some(RstdWriteWaiter { &buffer, rstd::move(state) });
-        try_write_some_future_locked();
+        m_write_waiter = Some(RstdWriteWaiter { &buffer, rstd::move(state) });
+        try_write_waiter_locked();
     }
 
     void start_wait_header(RstdHeaderState state) {
         auto lock = std::lock_guard { m_mutex };
-        if (state->is_canceled()) return;
-        if (m_wait_header_future.is_some()) {
-            state->set_ready(Some(Error::InvalidState("curl header wait already pending")));
+        if (state->is_closed()) return;
+        if (m_header_waiter.is_some()) {
+            state->complete(Some(Error::InvalidState("curl header wait already pending")));
             return;
         }
-        m_wait_header_future = Some(rstd::move(state));
-        try_wait_header_future_locked();
+        m_header_waiter = Some(rstd::move(state));
+        try_header_waiter_locked();
     }
 
     void cancel_read_some(const RstdIoState& state) {
         auto lock = std::lock_guard { m_mutex };
-        if (m_read_some_future.is_some() && m_read_some_future->state == state) {
-            m_read_some_future = None();
+        if (m_read_waiter.is_some() && m_read_waiter->state == state) {
+            m_read_waiter = None();
         }
     }
 
     void cancel_write_some(const RstdIoState& state) {
         auto lock = std::lock_guard { m_mutex };
-        if (m_write_some_future.is_some() && m_write_some_future->state == state) {
-            m_write_some_future = None();
+        if (m_write_waiter.is_some() && m_write_waiter->state == state) {
+            m_write_waiter = None();
         }
     }
 
     void cancel_wait_header(const RstdHeaderState& state) {
         auto lock = std::lock_guard { m_mutex };
-        if (m_wait_header_future.is_some() && *m_wait_header_future == state) {
-            m_wait_header_future = None();
+        if (m_header_waiter.is_some() && *m_header_waiter == state) {
+            m_header_waiter = None();
         }
     }
 
@@ -518,7 +417,7 @@ private:
         }
         if (self->m_header.start && header == "\r\n") {
             self->m_header_done = true;
-            self->try_wait_header_future_locked();
+            self->try_header_waiter_locked();
         }
         return header.size();
     }
@@ -532,9 +431,9 @@ private:
             return CURL_WRITEFUNC_PAUSE;
         }
 
-        self->try_wait_header_future_locked();
+        self->try_header_waiter_locked();
         self->m_recv_buf.commit(reinterpret_cast<const u8*>(ptr), total_size);
-        self->try_read_some_future_locked();
+        self->try_read_waiter_locked();
         return total_size;
     }
 
@@ -551,17 +450,17 @@ private:
         }
 
         auto copied = self->m_send_buf.consume(reinterpret_cast<u8*>(ptr), total_size);
-        self->try_write_some_future_locked();
+        self->try_write_waiter_locked();
         return copied;
     }
 
     void finish(CURLcode ec) {
-        auto lock  = std::lock_guard { m_mutex };
+        auto lock   = std::lock_guard { m_mutex };
         m_finish_ec = ec;
         m_state     = State::Finished;
-        try_read_some_future_locked();
-        try_write_some_future_locked();
-        try_wait_header_future_locked();
+        try_read_waiter_locked();
+        try_write_waiter_locked();
+        try_header_waiter_locked();
     }
 
     void cancel() {
@@ -569,9 +468,9 @@ private:
         if (m_state != State::Finished && m_state != State::Canceled) {
             m_state = State::Canceled;
         }
-        try_read_some_future_locked();
-        try_write_some_future_locked();
-        try_wait_header_future_locked();
+        try_read_waiter_locked();
+        try_write_waiter_locked();
+        try_header_waiter_locked();
     }
 
     void transfreing() {
@@ -585,19 +484,19 @@ private:
         return None<Error>();
     }
 
-    void try_read_some_future_locked() {
-        auto waiter_option = m_read_some_future.take();
+    void try_read_waiter_locked() {
+        auto waiter_option = m_read_waiter.take();
         if (waiter_option.is_none()) return;
 
         auto waiter = rstd::move(waiter_option).unwrap_unchecked();
-        if (waiter.state->is_canceled()) return;
+        if (waiter.state->is_closed()) return;
 
         auto recv_size = m_recv_buf.size();
         if (m_state == State::Canceled) {
-            waiter.state->set_ready(IoResult::fail(Error::Canceled()));
+            waiter.state->complete(IoResult::fail(Error::Canceled()));
         } else if (recv_size > 0) {
             auto copied = m_recv_buf.consume(*waiter.buffer);
-            waiter.state->set_ready(IoResult::ok(copied));
+            waiter.state->complete(IoResult::ok(copied));
             bool pause { true };
             if (m_recv_buf.size() == 0 && m_recv_paused.compare_exchange_strong(
                                               pause, false, Ordering::SeqCst, Ordering::SeqCst)) {
@@ -606,27 +505,27 @@ private:
         } else if (m_state == State::Finished) {
             auto err = finish_error_locked();
             if (err.is_some()) {
-                waiter.state->set_ready(IoResult::fail(rstd::move(err).unwrap_unchecked()));
+                waiter.state->complete(IoResult::fail(rstd::move(err).unwrap_unchecked()));
             } else {
-                waiter.state->set_ready(IoResult::done());
+                waiter.state->complete(IoResult::done());
             }
         } else {
-            m_read_some_future = Some(rstd::move(waiter));
+            m_read_waiter = Some(rstd::move(waiter));
         }
     }
 
-    void try_write_some_future_locked() {
-        auto waiter_option = m_write_some_future.take();
+    void try_write_waiter_locked() {
+        auto waiter_option = m_write_waiter.take();
         if (waiter_option.is_none()) return;
 
         auto waiter = rstd::move(waiter_option).unwrap_unchecked();
-        if (waiter.state->is_canceled()) return;
+        if (waiter.state->is_closed()) return;
 
         if (m_state == State::Canceled) {
-            waiter.state->set_ready(IoResult::fail(Error::Canceled()));
+            waiter.state->complete(IoResult::fail(Error::Canceled()));
         } else if (! m_send_buf.is_full()) {
             auto copied = m_send_buf.commit(*waiter.buffer);
-            waiter.state->set_ready(IoResult::ok(copied));
+            waiter.state->complete(IoResult::ok(copied));
             bool pause { true };
             if (m_send_paused.compare_exchange_strong(
                     pause, false, Ordering::SeqCst, Ordering::SeqCst)) {
@@ -635,32 +534,32 @@ private:
         } else if (m_state == State::Finished) {
             auto err = finish_error_locked();
             if (err.is_some()) {
-                waiter.state->set_ready(IoResult::fail(rstd::move(err).unwrap_unchecked()));
+                waiter.state->complete(IoResult::fail(rstd::move(err).unwrap_unchecked()));
             } else {
-                waiter.state->set_ready(IoResult::done());
+                waiter.state->complete(IoResult::done());
             }
         } else {
-            m_write_some_future = Some(rstd::move(waiter));
+            m_write_waiter = Some(rstd::move(waiter));
         }
     }
 
-    void try_wait_header_future_locked() {
-        if (m_wait_header_future.is_none()) return;
+    void try_header_waiter_locked() {
+        if (m_header_waiter.is_none()) return;
         if (! m_header_done && m_state != State::Canceled && m_state != State::Finished) {
             return;
         }
 
-        auto state           = rstd::move(m_wait_header_future).unwrap_unchecked();
-        m_wait_header_future = None();
-        if (state->is_canceled()) return;
+        auto state      = rstd::move(m_header_waiter).unwrap_unchecked();
+        m_header_waiter = None();
+        if (state->is_closed()) return;
 
-        state->set_ready(finish_error_locked());
+        state->complete(finish_error_locked());
     }
 
     std::string m_url;
 
-    CURLcode m_finish_ec;
-    State    m_state;
+    CURLcode     m_finish_ec;
+    State        m_state;
     Atomic<bool> m_recv_paused;
     Atomic<bool> m_send_paused;
 
@@ -668,18 +567,18 @@ private:
     Arc<SessionChannel> m_session_channel;
 
     std::string m_header_raw;
-    HttpHeader   m_header;
-    bool         m_header_done { false };
-    CookieJar    m_cookie_jar;
+    HttpHeader  m_header;
+    bool        m_header_done { false };
+    CookieJar   m_cookie_jar;
 
     Buffer<allocator_type> m_recv_buf;
 
     req_opt::Read::Callback m_send_callback;
     Buffer<allocator_type>  m_send_buf;
 
-    Option<RstdHeaderState> m_wait_header_future;
-    Option<RstdReadWaiter>  m_read_some_future;
-    Option<RstdWriteWaiter> m_write_some_future;
+    Option<RstdHeaderState> m_header_waiter;
+    Option<RstdReadWaiter>  m_read_waiter;
+    Option<RstdWriteWaiter> m_write_waiter;
 
     mutable std::mutex m_mutex;
 };

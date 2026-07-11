@@ -24,4 +24,4 @@ private:
 
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::SessionShare>
-    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::SessionShare> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::SessionShare> {};

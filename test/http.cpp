@@ -1,4 +1,3 @@
-#include <future>
 #include <gtest/gtest.h>
 #include <chrono>
 #include <cstdlib>
@@ -7,14 +6,8 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-#    include <QEventLoop>
-#    include <QTimer>
-#endif
-
 import ncrequest;
 import ncrequest.curl;
 import rstd;
@@ -388,95 +381,10 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
 }
 #endif
 
-struct WakeTarget {
-    virtual void schedule_poll() = 0;
-    virtual ~WakeTarget()        = default;
-};
-
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-extern const rstd::task::RawWakerVTable QT_WAKER_VTABLE;
-
-void waker_drop(void*) {}
-auto waker_clone(void* data) -> rstd::task::RawWaker {
-    return rstd::task::RawWaker::from_raw_parts(data, &QT_WAKER_VTABLE);
-}
-void waker_wake(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
-void waker_wake_by_ref(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
-
-const rstd::task::RawWakerVTable QT_WAKER_VTABLE {
-    &waker_clone,
-    &waker_wake,
-    &waker_wake_by_ref,
-    &waker_drop,
-};
-
-template<rstd::future::FutureLike F>
-auto run_qt_future(F future) -> rstd::future::future_output_t<F> {
-    using Output = rstd::future::future_output_t<F>;
-
-    struct Runner : WakeTarget {
-        F&                    future;
-        QEventLoop            loop;
-        std::optional<Output> result;
-        bool                  polling { false };
-        bool                  poll_posted { false };
-        bool                  timed_out { false };
-        rstd::task::Waker     waker;
-        rstd::task::Context   cx;
-
-        explicit Runner(F& future)
-            : future(future),
-              waker(rstd::task::Waker::from_raw(rstd::task::RawWaker { this, &QT_WAKER_VTABLE })),
-              cx(waker) {}
-
-        void schedule_poll() override {
-            if (poll_posted || result.has_value()) return;
-            poll_posted = true;
-            QTimer::singleShot(0, &loop, [this] {
-                poll_posted = false;
-                poll_once();
-            });
-        }
-
-        void poll_once() {
-            if (polling || result.has_value()) return;
-            polling  = true;
-            auto out = rstd::future::poll(future, cx);
-            if (out.is_ready()) {
-                result.emplace(rstd::move(out).take());
-                loop.quit();
-            }
-            polling = false;
-        }
-    };
-
-    Runner runner { future };
-    QTimer::singleShot(10000, &runner.loop, [&runner] {
-        runner.timed_out = true;
-        runner.loop.quit();
-    });
-
-    runner.poll_once();
-    if (! runner.result.has_value()) {
-        runner.loop.exec();
-    }
-
-    if (! runner.result.has_value() || runner.timed_out) {
-        throw std::runtime_error("Qt future timed out");
-    }
-
-    return rstd::move(*runner.result);
-}
-#endif
-
 template<typename Start>
 auto run_http(Start&& start) {
     auto session = ncrequest::Session::make();
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-    return run_qt_future(start(session));
-#else
     return rstd::async::block_on(start(session));
-#endif
 }
 
 auto rstd_wait_yield() -> ncrequest::coro<int> {

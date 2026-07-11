@@ -154,10 +154,10 @@ private:
 
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
-    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::Request> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::Request> {};
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
-    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::req_opt::Share> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Share> {};
 export template<>
 struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Proxy>
-    : rstd::LinkClassRequiredWithDefault<rstd::clone::Clone, ncrequest::req_opt::Proxy> {};
+    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Proxy> {};

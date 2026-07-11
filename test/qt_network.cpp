@@ -2,12 +2,12 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <QEventLoop>
+#include <QMetaObject>
 #include <QNetworkAccessManager>
-#include <QTimer>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import ncrequest.qt_network;
 import rstd;
@@ -63,85 +63,6 @@ auto large_body() -> std::string {
 auto bytes_from_string(const std::string& body) -> rstd::bytes::Bytes {
     return rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
         reinterpret_cast<const rstd::u8*>(body.data()), body.size()));
-}
-
-struct WakeTarget {
-    virtual void schedule_poll() = 0;
-    virtual ~WakeTarget()        = default;
-};
-
-extern const rstd::task::RawWakerVTable QT_WAKER_VTABLE;
-
-void waker_drop(void*) {}
-auto waker_clone(void* data) -> rstd::task::RawWaker {
-    return rstd::task::RawWaker::from_raw_parts(data, &QT_WAKER_VTABLE);
-}
-void waker_wake(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
-void waker_wake_by_ref(void* data) { static_cast<WakeTarget*>(data)->schedule_poll(); }
-
-const rstd::task::RawWakerVTable QT_WAKER_VTABLE {
-    &waker_clone,
-    &waker_wake,
-    &waker_wake_by_ref,
-    &waker_drop,
-};
-
-template<rstd::future::FutureLike F>
-auto run_qt_future(F future) -> rstd::future::future_output_t<F> {
-    using Output = rstd::future::future_output_t<F>;
-
-    struct Runner : WakeTarget {
-        F&                    future;
-        QEventLoop            loop;
-        std::optional<Output> result;
-        bool                  polling { false };
-        bool                  poll_posted { false };
-        bool                  timed_out { false };
-        rstd::task::Waker     waker;
-        rstd::task::Context   cx;
-
-        explicit Runner(F& future)
-            : future(future),
-              waker(rstd::task::Waker::from_raw(rstd::task::RawWaker { this, &QT_WAKER_VTABLE })),
-              cx(waker) {}
-
-        void schedule_poll() override {
-            if (poll_posted || result.has_value()) return;
-            poll_posted = true;
-            QTimer::singleShot(0, &loop, [this] {
-                poll_posted = false;
-                poll_once();
-            });
-        }
-
-        void poll_once() {
-            if (polling || result.has_value()) return;
-            polling  = true;
-            auto out = rstd::future::poll(future, cx);
-            if (out.is_ready()) {
-                result.emplace(rstd::move(out).take());
-                loop.quit();
-            }
-            polling = false;
-        }
-    };
-
-    Runner runner { future };
-    QTimer::singleShot(10000, &runner.loop, [&runner] {
-        runner.timed_out = true;
-        runner.loop.quit();
-    });
-
-    runner.poll_once();
-    if (! runner.result.has_value()) {
-        runner.loop.exec();
-    }
-
-    if (! runner.result.has_value() || runner.timed_out) {
-        throw std::runtime_error("Qt future timed out");
-    }
-
-    return rstd::move(*runner.result);
 }
 
 auto response_code(ncrequest::Arc<ncrequest::qt_network::Response> response) -> int {
@@ -255,7 +176,7 @@ auto fetch_then_cancel(ncrequest::Arc<ncrequest::qt_network::Session> session, s
 template<typename Start>
 auto run_http(Start&& start) {
     auto session = ncrequest::qt_network::Session::make();
-    return run_qt_future(start(session));
+    return rstd::async::block_on(start(session));
 }
 
 template<typename Start>
@@ -270,6 +191,25 @@ auto run_http_rstd_multi_thread(Start&& start) {
     auto runtime        = runtime_result.unwrap();
     auto session        = ncrequest::qt_network::Session::make();
     return runtime.block_on(start(session));
+}
+
+template<typename T>
+auto run_qt_owner_coro(ncrequest::coro<T> task) -> T {
+    QEventLoop       loop;
+    std::optional<T> result;
+    auto             worker = std::thread([&loop, &result, task = rstd::move(task)]() mutable {
+        result.emplace(rstd::async::block_on(rstd::move(task)));
+        (void)QMetaObject::invokeMethod(
+            &loop,
+            [&loop] {
+                loop.quit();
+            },
+            Qt::QueuedConnection);
+    });
+
+    loop.exec();
+    worker.join();
+    return rstd::move(*result);
 }
 
 } // namespace
@@ -426,7 +366,7 @@ TEST(qt_network, LocalHttpManagerAutoDeleteOverride) {
     manager.setAutoDeleteReplies(true);
     auto session = ncrequest::qt_network::Session::make(&manager);
 
-    auto result = run_qt_future(fetch_text(session, local_http_url(base, "/text")));
+    auto result = run_qt_owner_coro(fetch_text(session, local_http_url(base, "/text")));
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
     EXPECT_EQ(result.code, 200);
