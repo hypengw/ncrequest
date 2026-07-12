@@ -52,6 +52,11 @@ TEST(qt_websockets, LocalEchoText) {
 
     std::promise<std::string> message_promise;
     auto                      message = message_promise.get_future();
+    std::promise<void>        disconnected_promise;
+    auto                      disconnected = disconnected_promise.get_future();
+    client.set_on_disconnected_callback([&disconnected_promise] {
+        disconnected_promise.set_value();
+    });
     client.set_on_message_callback([&message_promise](std::span<const rstd::byte> data, bool) {
         std::string out(reinterpret_cast<const char*>(data.data()), data.size());
         message_promise.set_value(std::move(out));
@@ -67,4 +72,6 @@ TEST(qt_websockets, LocalEchoText) {
     EXPECT_EQ(message.get(), "qt websocket payload");
 
     client.disconnect();
+    ASSERT_TRUE(wait_future(disconnected, std::chrono::seconds(5)));
+    EXPECT_FALSE(client.is_connected());
 }

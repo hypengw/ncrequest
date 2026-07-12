@@ -270,6 +270,11 @@ public:
         m_on_connected = rstd::move(callback);
     }
 
+    void set_on_disconnected_callback(DisconnectedCallback callback) {
+        auto lock         = std::lock_guard { m_callback_mutex };
+        m_on_disconnected = rstd::move(callback);
+    }
+
     void set_on_message_callback(MessageCallback callback) {
         auto lock    = std::lock_guard { m_callback_mutex };
         m_on_message = rstd::move(callback);
@@ -504,6 +509,7 @@ private:
         }
 
         reset_states();
+        if (was_connected) emit_disconnected();
     }
 
     void reset_states() {
@@ -537,6 +543,11 @@ private:
         return m_on_message;
     }
 
+    auto disconnected_callback() -> DisconnectedCallback {
+        auto lock = std::lock_guard { m_callback_mutex };
+        return m_on_disconnected;
+    }
+
     auto error_callback() -> ErrorCallback {
         auto lock = std::lock_guard { m_callback_mutex };
         return m_on_error;
@@ -544,6 +555,11 @@ private:
 
     void emit_connected() {
         auto callback = connected_callback();
+        if (callback) callback();
+    }
+
+    void emit_disconnected() {
+        auto callback = disconnected_callback();
         if (callback) callback();
     }
 
@@ -580,10 +596,11 @@ private:
     CommandQueue                   m_commands;
     std::thread                    m_worker;
 
-    std::mutex        m_callback_mutex;
-    ConnectedCallback m_on_connected;
-    MessageCallback   m_on_message;
-    ErrorCallback     m_on_error;
+    std::mutex           m_callback_mutex;
+    ConnectedCallback    m_on_connected;
+    DisconnectedCallback m_on_disconnected;
+    MessageCallback      m_on_message;
+    ErrorCallback        m_on_error;
 
     rstd::string::String m_error_message;
 };
@@ -608,6 +625,10 @@ void WebSocketBackend::send(std::span<const rstd::byte> message) { m_impl->send(
 
 void WebSocketBackend::set_on_connected_callback(ConnectedCallback cb) {
     m_impl->set_on_connected_callback(rstd::move(cb));
+}
+
+void WebSocketBackend::set_on_disconnected_callback(DisconnectedCallback cb) {
+    m_impl->set_on_disconnected_callback(rstd::move(cb));
 }
 
 void WebSocketBackend::set_on_message_callback(MessageCallback cb) {

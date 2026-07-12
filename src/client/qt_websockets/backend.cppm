@@ -28,12 +28,14 @@ namespace ncrequest::client::qt_websockets
 export class WebSocketBackend : public NoCopy {
 public:
     constexpr static u64 MaxBufferSize { 16 * 1024 };
-    using ConnectedCallback = std::function<void()>;
-    using MessageCallback   = std::function<void(std::span<const rstd::byte>, bool last)>;
-    using ErrorCallback     = std::function<void(rstd::ref<rstd::str>)>;
+    using ConnectedCallback    = std::function<void()>;
+    using DisconnectedCallback = std::function<void()>;
+    using MessageCallback      = std::function<void(std::span<const rstd::byte>, bool last)>;
+    using ErrorCallback        = std::function<void(rstd::ref<rstd::str>)>;
 
-    explicit WebSocketBackend(QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
-                              std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource())
+    explicit WebSocketBackend(
+        QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
+        std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource())
         : m_owned_socket(parent == nullptr ? std::make_unique<QWebSocket>(
                                                  QString {}, QWebSocketProtocol::VersionLatest)
                                            : nullptr),
@@ -115,6 +117,10 @@ public:
         m_on_connected = rstd::move(callback);
     }
 
+    void set_on_disconnected_callback(DisconnectedCallback callback) {
+        m_on_disconnected = rstd::move(callback);
+    }
+
     void set_on_message_callback(MessageCallback callback) { m_on_message = rstd::move(callback); }
 
     void set_on_error_callback(ErrorCallback callback) { m_on_error = rstd::move(callback); }
@@ -139,6 +145,7 @@ private:
                 m_connecting = false;
                 complete_connect(false);
             }
+            if (m_on_disconnected) m_on_disconnected();
         }));
 
         m_connections.append(QObject::connect(
@@ -205,6 +212,7 @@ private:
 
     Arc<std::promise<bool>> m_connect_promise;
     ConnectedCallback       m_on_connected;
+    DisconnectedCallback    m_on_disconnected;
     MessageCallback         m_on_message;
     ErrorCallback           m_on_error;
 

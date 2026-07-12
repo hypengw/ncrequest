@@ -17,9 +17,10 @@ namespace ncrequest::client::curl
 export class WebSocketBackend {
 public:
     constexpr static u64 MaxBufferSize { 16 * 1024 }; // 16KB
-    using ConnectedCallback = std::function<void()>;
-    using MessageCallback   = std::function<void(std::span<const rstd::byte>, bool last)>;
-    using ErrorCallback     = std::function<void(rstd::ref<rstd::str>)>;
+    using ConnectedCallback    = std::function<void()>;
+    using DisconnectedCallback = std::function<void()>;
+    using MessageCallback      = std::function<void(std::span<const rstd::byte>, bool last)>;
+    using ErrorCallback        = std::function<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketBackend(
         rstd::Option<u64>          max_buffer_size = None(),
@@ -36,6 +37,7 @@ public:
     void send(std::span<const rstd::byte> message);
 
     void set_on_connected_callback(ConnectedCallback callback);
+    void set_on_disconnected_callback(DisconnectedCallback callback);
     void set_on_message_callback(MessageCallback callback);
     void set_on_error_callback(ErrorCallback callback);
 

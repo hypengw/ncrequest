@@ -53,6 +53,12 @@ TEST(websocket, LocalEchoText) {
     std::promise<std::string> error_promise;
     auto                      error = error_promise.get_future();
     std::atomic_bool          got_error { false };
+    std::promise<void>        disconnected_promise;
+    auto                      disconnected = disconnected_promise.get_future();
+
+    client.set_on_disconnected_callback([&disconnected_promise] {
+        disconnected_promise.set_value();
+    });
 
     client.set_on_message_callback(
         [&message_promise, &got_message](std::span<const rstd::byte> data, bool) {
@@ -79,4 +85,6 @@ TEST(websocket, LocalEchoText) {
     EXPECT_EQ(message.get(), "curl websocket payload");
 
     client.disconnect();
+    ASSERT_TRUE(wait_future(disconnected, std::chrono::seconds(5)));
+    EXPECT_FALSE(client.is_connected());
 }

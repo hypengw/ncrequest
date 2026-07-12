@@ -189,11 +189,11 @@ target_link_libraries(
   PRIVATE taocpp::pegtl CURL::libcurl)
 
 if(NCREQUEST_USE_QT_NETWORK OR NCREQUEST_USE_QT_WEBSOCKETS)
-  target_link_libraries(ncrequest PRIVATE Qt6::Core Qt6::Network)
+  target_link_libraries(ncrequest PUBLIC Qt6::Core Qt6::Network)
 endif()
 
 if(NCREQUEST_USE_QT_WEBSOCKETS)
-  target_link_libraries(ncrequest PRIVATE Qt6::WebSockets)
+  target_link_libraries(ncrequest PUBLIC Qt6::WebSockets)
 endif()
 
 if(NCREQUEST_BUILD_TESTS)

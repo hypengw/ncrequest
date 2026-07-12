@@ -20,10 +20,11 @@ static_assert(client::WebSocketBackend<SelectedWebSocketBackend>);
 
 export class WebSocketClient : public SelectedWebSocketBackend {
 public:
-    using Backend           = SelectedWebSocketBackend;
-    using ConnectedCallback = Backend::ConnectedCallback;
-    using MessageCallback   = Backend::MessageCallback;
-    using ErrorCallback     = Backend::ErrorCallback;
+    using Backend              = SelectedWebSocketBackend;
+    using ConnectedCallback    = Backend::ConnectedCallback;
+    using DisconnectedCallback = Backend::DisconnectedCallback;
+    using MessageCallback      = Backend::MessageCallback;
+    using ErrorCallback        = Backend::ErrorCallback;
 
     using Backend::Backend;
 };
