@@ -8,8 +8,7 @@
 #include <QEventLoop>
 #include <thread>
 
-import ncrequest;
-import ncrequest.qt_websockets;
+import ncrequest.qt_network;
 
 namespace
 {
@@ -35,20 +34,20 @@ auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> b
 
 } // namespace
 
-TEST(qt_websockets, ConstructDisconnected) {
-    auto client = ncrequest::qt_websockets::WebSocketClient {};
+TEST(qt_network_websocket, ConstructDisconnected) {
+    auto client = ncrequest::qt_network::WebSocketClient {};
     EXPECT_FALSE(client.is_connected());
     client.send("ignored while disconnected");
     client.disconnect();
 }
 
-TEST(qt_websockets, LocalEchoText) {
+TEST(qt_network_websocket, LocalEchoText) {
     auto url = local_ws_url();
     if (url.empty()) {
         GTEST_SKIP() << "NCREQUEST_TEST_WS_URL is not set";
     }
 
-    auto client = ncrequest::qt_websockets::WebSocketClient {};
+    auto client = ncrequest::qt_network::WebSocketClient {};
 
     std::promise<std::string> message_promise;
     auto                      message = message_promise.get_future();

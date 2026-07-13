@@ -104,11 +104,11 @@ if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
        src/client/curl/session.cppm
        src/client/curl/websocket.cppm)
 else()
-  list(APPEND NCREQUEST_MODULE_FILES src/client/qt_network/session_share.cppm
+  list(APPEND NCREQUEST_MODULE_FILES src/client/qt_network/qt.cppm
+       src/client/qt_network/session_share.cppm
        src/client/qt_network/backend.cppm
-       src/client/qt_network/mod.cppm
-       src/client/qt_websockets/backend.cppm
-       src/client/qt_websockets/mod.cppm)
+       src/client/qt_network/websocket.cppm
+       src/client/qt_network/mod.cppm)
 endif()
 
 target_sources(
@@ -145,13 +145,9 @@ target_compile_definitions(ncrequest PUBLIC ${WIN_DEFS})
 target_compile_definitions(ncrequest PUBLIC NCREQUEST_USE_RSTD_CORO)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
-  target_compile_definitions(
-    ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-                     NCREQUEST_WEBSOCKET_BACKEND_QT_WEBSOCKETS)
+  target_compile_definitions(ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
 else()
-  target_compile_definitions(ncrequest
-                             PUBLIC NCREQUEST_CLIENT_BACKEND_CURL
-                                    NCREQUEST_WEBSOCKET_BACKEND_CURL)
+  target_compile_definitions(ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_CURL)
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)

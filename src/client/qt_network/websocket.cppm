@@ -6,24 +6,15 @@ module;
 #include <span>
 #include <string>
 #include <string_view>
-#include <QAbstractSocket>
-#include <QByteArray>
-#include <QCoreApplication>
-#include <QList>
-#include <QMetaObject>
-#include <QObject>
-#include <QPointer>
-#include <QString>
-#include <QThread>
-#include <QUrl>
-#include <QWebSocket>
-#include <QWebSocketProtocol>
 
-export module ncrequest:client_qt_websockets;
+export module ncrequest:client_qt_network_websocket;
+export import :qt;
 export import ncrequest.type;
 
-namespace ncrequest::client::qt_websockets
+namespace ncrequest::client::qt_network
 {
+
+using namespace ncrequest::qt;
 
 export class WebSocketBackend : public NoCopy {
 public:
@@ -220,4 +211,4 @@ private:
     std::pmr::vector<rstd::byte>                m_read_buffer;
 };
 
-} // namespace ncrequest::client::qt_websockets
+} // namespace ncrequest::client::qt_network

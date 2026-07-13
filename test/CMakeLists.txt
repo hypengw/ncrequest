@@ -68,24 +68,24 @@ if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
 endif()
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
-  add_executable(ncrequest_qt_websockets_test qt_websockets.cpp
-                                              qt_websockets_main.cpp)
-  target_link_libraries(ncrequest_qt_websockets_test
+  add_executable(ncrequest_qt_network_websocket_test qt_network_websocket.cpp
+                                                     qt_network_websocket_main.cpp)
+  target_link_libraries(ncrequest_qt_network_websocket_test
                         PRIVATE ncrequest::ncrequest GTest::gtest Qt6::Core
                                 Qt6::WebSockets)
 
-  gtest_discover_tests(ncrequest_qt_websockets_test
-                       TEST_FILTER "*-qt_websockets.LocalEcho*")
+  gtest_discover_tests(ncrequest_qt_network_websocket_test
+                       TEST_FILTER "*-qt_network_websocket.LocalEcho*")
 
   if(Python3_EXECUTABLE)
     add_test(
-      NAME ncrequest_qt_websockets_local_echo
+      NAME ncrequest_qt_network_websocket_local_echo
       COMMAND
         ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/websocket_server_test.py
-        --test-executable $<TARGET_FILE:ncrequest_qt_websockets_test>
-        --gtest-filter "qt_websockets.LocalEcho*")
-    set_tests_properties(ncrequest_qt_websockets_local_echo
-                         PROPERTIES LABELS "websocket;integration;qt_websockets")
+        --test-executable $<TARGET_FILE:ncrequest_qt_network_websocket_test>
+        --gtest-filter "qt_network_websocket.LocalEcho*")
+    set_tests_properties(ncrequest_qt_network_websocket_local_echo
+                         PROPERTIES LABELS "websocket;integration;qt_network")
   endif()
 endif()

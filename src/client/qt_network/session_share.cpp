@@ -5,20 +5,15 @@ module;
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <QByteArray>
-#include <QDateTime>
-#include <QList>
-#include <QNetworkCookie>
-#include <QNetworkCookieJar>
-#include <QObject>
-#include <QString>
-#include <QUrl>
 
 module ncrequest;
+import :qt;
 import :session_share_backend;
 
 namespace ncrequest
 {
+
+using namespace ncrequest::qt;
 
 namespace
 {

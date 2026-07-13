@@ -104,7 +104,7 @@ class ThreadingServer(socketserver.ThreadingTCPServer):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-executable", required=True)
-    parser.add_argument("--gtest-filter", default="qt_websockets.LocalEcho*")
+    parser.add_argument("--gtest-filter", default="qt_network_websocket.LocalEcho*")
     args = parser.parse_args()
 
     with ThreadingServer(("127.0.0.1", 0), WebSocketHandler) as server:

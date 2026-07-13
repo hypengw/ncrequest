@@ -4,21 +4,9 @@ module;
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <QByteArray>
-#include <QCoreApplication>
-#include <QMetaObject>
-#include <QNetworkAccessManager>
-#include <QNetworkProxy>
-#include <QNetworkReply>
-#include <QNetworkRequest>
-#include <QObject>
-#include <QPointer>
-#include <QSslConfiguration>
-#include <QSslSocket>
-#include <QThread>
-#include <QUrl>
 
 export module ncrequest:client_qt_network;
+export import :qt;
 export import :request;
 export import :http;
 export import :error;
@@ -28,6 +16,8 @@ import :session_share_backend;
 
 namespace ncrequest::client::qt_network
 {
+
+using namespace ncrequest::qt;
 
 export struct Options {};
 
@@ -63,6 +53,8 @@ struct rstd::Impl<rstd::async::Executor, ncrequest::client::qt_network::QtExecut
 
 namespace ncrequest::client::qt_network
 {
+
+using namespace ncrequest::qt;
 
 auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor> {
     if (target == nullptr) return None<rstd::async::AnyExecutor>();

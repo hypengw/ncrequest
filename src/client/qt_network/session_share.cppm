@@ -1,13 +1,14 @@
 module;
 #include <memory>
-#include <QNetworkCookieJar>
-#include <QObject>
 
 export module ncrequest:session_share_backend;
+export import :qt;
 import :session_share;
 
 namespace ncrequest::detail
 {
+
+using namespace ncrequest::qt;
 
 export class SessionShareAccess {
 public:
