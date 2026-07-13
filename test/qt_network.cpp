@@ -4,6 +4,7 @@
 #include <QEventLoop>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
+#include <QObject>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -146,6 +147,68 @@ auto fetch_timeout(ncrequest::Arc<ncrequest::qt_network::Session> session, std::
             result.client_code = error.as_Client().error.code;
         }
     }
+    co_return result;
+}
+
+auto fetch_with_share(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url)
+    -> ncrequest::coro<ErrorResult> {
+    auto result = ErrorResult {};
+    auto req    = ncrequest::Request { url };
+    req.get_opt<ncrequest::req_opt::Share>().set_share(
+        rstd::Some(ncrequest::SessionShare {}));
+
+    auto response = co_await session->get(req);
+    if (response.is_err()) {
+        auto error       = rstd::move(response).unwrap_err();
+        result.got_error = true;
+        result.kind      = error.kind();
+        co_return result;
+    }
+    result.got_response = true;
+    co_return result;
+}
+
+auto share_roundtrip(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string base)
+    -> ncrequest::coro<FetchResult> {
+    auto share = ncrequest::SessionShare {};
+    auto set_request = ncrequest::Request {
+        local_http_url(base, "/cookie/set?name=owned_manager_cookie&value=shared")
+    };
+    set_request.get_opt<ncrequest::req_opt::Share>().set_share(rstd::Some(share.clone()));
+    auto set_response = co_await session->get(set_request);
+    if (set_response.is_err()) {
+        auto result  = FetchResult {};
+        result.error = "share cookie set failed";
+        co_return result;
+    }
+    auto set_body = co_await rstd::move(set_response).unwrap()->text();
+    if (set_body.is_err()) {
+        auto result  = FetchResult {};
+        result.error = "share cookie set body failed";
+        co_return result;
+    }
+
+    auto echo_request = ncrequest::Request { local_http_url(base, "/cookie/echo") };
+    echo_request.get_opt<ncrequest::req_opt::Share>().set_share(rstd::Some(share.clone()));
+    auto echo_response = co_await session->get(echo_request);
+    if (echo_response.is_err()) {
+        auto result  = FetchResult {};
+        result.error = "share cookie echo failed";
+        co_return result;
+    }
+
+    auto result          = FetchResult {};
+    auto response        = rstd::move(echo_response).unwrap();
+    result.got_response  = true;
+    auto echo_body       = co_await response->text();
+    if (echo_body.is_err()) {
+        result.error = "share cookie echo body failed";
+        co_return result;
+    }
+    result.code            = response_code(response);
+    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.body            = rstd::move(echo_body).unwrap();
+    result.got_body        = true;
     co_return result;
 }
 
@@ -372,4 +435,37 @@ TEST(qt_network, LocalHttpManagerAutoDeleteOverride) {
     EXPECT_EQ(result.code, 200);
     EXPECT_TRUE(result.has_test_header);
     EXPECT_EQ(result.body, "ncrequest python http server body\n");
+}
+
+TEST(qt_network, LocalHttpExternalManagerRejectsShare) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    QNetworkAccessManager manager;
+    auto session = ncrequest::qt_network::Session::make(&manager);
+
+    auto result =
+        run_qt_owner_coro(fetch_with_share(session, local_http_url(base, "/cookie/echo")));
+    EXPECT_FALSE(result.got_response);
+    ASSERT_TRUE(result.got_error) << result.error;
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::InvalidState);
+}
+
+TEST(qt_network, LocalHttpOwnedManagerSupportsShare) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    QObject parent;
+    auto session = ncrequest::qt_network::Session::make(&parent);
+
+    auto result = run_qt_owner_coro(share_roundtrip(session, base));
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_NE(result.body.find("owned_manager_cookie=shared"), std::string::npos);
 }

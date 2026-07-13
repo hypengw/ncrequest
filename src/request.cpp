@@ -3,12 +3,19 @@ module;
 module ncrequest;
 import :request;
 
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 import ncrequest.curl;
+#endif
 
 using namespace ncrequest;
 
 auto ncrequest::global_init(std::pmr::memory_resource* resource) -> std::error_code {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
     return ncrequest::curl_init(resource);
+#else
+    (void)resource;
+    return {};
+#endif
 }
 
 Request::Request() noexcept

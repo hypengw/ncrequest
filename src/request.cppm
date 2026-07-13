@@ -78,12 +78,12 @@ using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
 
 export using RequestOpts = req_opt::opts;
 
-#define NCREQUEST_REQUEST_OPT_VARIANTS(V) \
-    V(Timeout, (req_opt::Timeout value;)) \
-    V(Proxy, (req_opt::Proxy value;))     \
-    V(Tcp, (req_opt::Tcp value;))         \
-    V(SSL, (req_opt::SSL value;))         \
-    V(Read, (req_opt::Read value;))       \
+#define NCREQUEST_REQUEST_OPT_VARIANTS(V)  \
+    V(Timeout, (req_opt::Timeout value;))  \
+    V(Proxy, (req_opt::Proxy value;))      \
+    V(Tcp, (req_opt::Tcp value;))          \
+    V(SSL, (req_opt::SSL value;))          \
+    V(Read, (req_opt::Read value;))        \
     V(Share, (req_opt::Share value;))
 
 export struct RequestOpt {

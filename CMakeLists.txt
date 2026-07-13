@@ -20,13 +20,6 @@ if(NOT NCREQUEST_CLIENT_BACKEND IN_LIST NCREQUEST_CLIENT_BACKEND_VALUES)
   )
 endif()
 
-set(NCREQUEST_USE_QT_NETWORK OFF)
-set(NCREQUEST_USE_QT_WEBSOCKETS OFF)
-if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
-  set(NCREQUEST_USE_QT_NETWORK ON)
-  set(NCREQUEST_USE_QT_WEBSOCKETS ON)
-endif()
-
 if(PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,9 +35,6 @@ include(FetchContent)
 set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
 set(WIN_DEFS "$<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX;NOGDI>")
 add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
-
-# curl
-find_package(CURL REQUIRED)
 
 # pegtl
 if(NOT TARGET taocpp::pegtl)
@@ -73,16 +63,10 @@ else()
 endif()
 endif()
 
-set(NCREQUEST_QT_COMPONENTS)
-if(NCREQUEST_USE_QT_NETWORK)
-  list(APPEND NCREQUEST_QT_COMPONENTS Core Network)
-endif()
-if(NCREQUEST_USE_QT_WEBSOCKETS)
-  list(APPEND NCREQUEST_QT_COMPONENTS Core Network WebSockets)
-endif()
-if(NCREQUEST_QT_COMPONENTS)
-  list(REMOVE_DUPLICATES NCREQUEST_QT_COMPONENTS)
-  find_package(Qt6 REQUIRED COMPONENTS ${NCREQUEST_QT_COMPONENTS})
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
+  find_package(Qt6 REQUIRED COMPONENTS Core Network WebSockets)
+else()
+  find_package(CURL REQUIRED)
 endif()
 
 add_library(ncrequest STATIC)
@@ -94,42 +78,36 @@ set(NCREQUEST_MODULE_FILES
     src/type.cppm
     src/type_list.cppm
     src/error.cppm
+    src/session_share.cppm
     src/request.cppm
     src/client/http_backend.cppm
     src/client/websocket_backend.cppm
     src/response.cppm
     src/session.cppm
-    src/session_share.cppm
     src/http.cppm
     src/websocket.cppm
-    src/client/curl/curl_error.cppm
-    src/client/curl/curl_easy.cppm
-    src/client/curl/curl_multi.cppm
-    src/client/curl/curl.cppm
-    src/client/curl/init.cppm
-    src/client/curl/mod.cppm
     src/coro/base.cppm
     src/coro/mod.cppm
     src/mod.cppm)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   list(APPEND NCREQUEST_MODULE_FILES
+       src/client/curl/session_share.cppm
+       src/client/curl/curl_error.cppm
+       src/client/curl/curl_easy.cppm
+       src/client/curl/curl_multi.cppm
+       src/client/curl/curl.cppm
+       src/client/curl/init.cppm
+       src/client/curl/mod.cppm
        src/client/curl/connection.cppm
        src/client/curl/response.cppm
-       src/client/curl/session.cppm)
-endif()
-
-if(NOT NCREQUEST_USE_QT_WEBSOCKETS)
-  list(APPEND NCREQUEST_MODULE_FILES src/client/curl/websocket.cppm)
-endif()
-
-if(NCREQUEST_USE_QT_NETWORK)
-  list(APPEND NCREQUEST_MODULE_FILES src/client/qt_network/backend.cppm
-       src/client/qt_network/mod.cppm)
-endif()
-
-if(NCREQUEST_USE_QT_WEBSOCKETS)
-  list(APPEND NCREQUEST_MODULE_FILES src/client/qt_websockets/backend.cppm
+       src/client/curl/session.cppm
+       src/client/curl/websocket.cppm)
+else()
+  list(APPEND NCREQUEST_MODULE_FILES src/client/qt_network/session_share.cppm
+       src/client/qt_network/backend.cppm
+       src/client/qt_network/mod.cppm
+       src/client/qt_websockets/backend.cppm
        src/client/qt_websockets/mod.cppm)
 endif()
 
@@ -146,36 +124,34 @@ target_sources(
   ncrequest
   PRIVATE src/peg/uri.hpp
           src/peg/http.hpp
-          src/client/curl/init.cpp
           src/http.cpp
           src/request.cpp
-          src/session_share.cpp
           src/type.cpp)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
-  target_sources(ncrequest PRIVATE src/client/curl/response.cpp
-                                   src/client/curl/session.cpp)
-endif()
-
-if(NOT NCREQUEST_USE_QT_WEBSOCKETS)
-  target_sources(ncrequest PRIVATE src/client/curl/websocket.cpp)
+  target_sources(
+    ncrequest
+    PRIVATE src/session_share.cpp
+            src/client/curl/init.cpp
+            src/client/curl/response.cpp
+            src/client/curl/session.cpp
+            src/client/curl/websocket.cpp)
+else()
+  target_sources(ncrequest PRIVATE src/client/qt_network/session_share.cpp)
 endif()
 
 target_include_directories(ncrequest PRIVATE src)
 target_compile_definitions(ncrequest PUBLIC ${WIN_DEFS})
 target_compile_definitions(ncrequest PUBLIC NCREQUEST_USE_RSTD_CORO)
 
-if(NCREQUEST_USE_QT_NETWORK)
-  target_compile_definitions(ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
+  target_compile_definitions(
+    ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+                     NCREQUEST_WEBSOCKET_BACKEND_QT_WEBSOCKETS)
 else()
-  target_compile_definitions(ncrequest PUBLIC NCREQUEST_CLIENT_BACKEND_CURL)
-endif()
-
-if(NCREQUEST_USE_QT_WEBSOCKETS)
   target_compile_definitions(ncrequest
-                             PUBLIC NCREQUEST_WEBSOCKET_BACKEND_QT_WEBSOCKETS)
-else()
-  target_compile_definitions(ncrequest PUBLIC NCREQUEST_WEBSOCKET_BACKEND_CURL)
+                             PUBLIC NCREQUEST_CLIENT_BACKEND_CURL
+                                    NCREQUEST_WEBSOCKET_BACKEND_CURL)
 endif()
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -187,15 +163,13 @@ endif()
 
 target_link_libraries(
   ncrequest
-  PUBLIC rstd::rstd rstd.cppstd;
-  PRIVATE taocpp::pegtl CURL::libcurl)
+  PUBLIC rstd::rstd rstd.cppstd
+  PRIVATE taocpp::pegtl)
 
-if(NCREQUEST_USE_QT_NETWORK OR NCREQUEST_USE_QT_WEBSOCKETS)
-  target_link_libraries(ncrequest PUBLIC Qt6::Core Qt6::Network)
-endif()
-
-if(NCREQUEST_USE_QT_WEBSOCKETS)
-  target_link_libraries(ncrequest PUBLIC Qt6::WebSockets)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
+  target_link_libraries(ncrequest PUBLIC Qt6::Core Qt6::Network Qt6::WebSockets)
+else()
+  target_link_libraries(ncrequest PRIVATE CURL::libcurl)
 endif()
 
 if(NCREQUEST_BUILD_TESTS)

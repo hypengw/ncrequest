@@ -2,6 +2,7 @@ module;
 #include "macro.hpp"
 module ncrequest;
 import :session_share;
+import :session_share_backend;
 import ncrequest.curl;
 
 namespace ncrequest
@@ -13,40 +14,32 @@ public:
     Private(): share(curl_share_init()) {}
     ~Private() { curl_share_cleanup(share); }
 
+    static void lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
+        auto* self = static_cast<Private*>(clientp);
+        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) self->share_mutex.lock();
+    }
+
+    static void unlock(CURL*, curl_lock_data data, void* clientp) {
+        auto* self = static_cast<Private*>(clientp);
+        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) self->share_mutex.unlock();
+    }
+
     CURLSH*    share;
     std::mutex share_mutex;
 };
-
-namespace
-{
-static void static_share_lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
-    auto info = static_cast<SessionShare::Private*>(clientp);
-    if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
-        info->share_mutex.lock();
-    }
-}
-
-static void static_share_unlock(CURL*, curl_lock_data data, void* clientp) {
-    auto info = static_cast<SessionShare::Private*>(clientp);
-    if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
-        info->share_mutex.unlock();
-    }
-}
-} // namespace
 
 SessionShare::SessionShare(): d_ptr(make_arc<Private>()) {
     C_D(SessionShare);
     curl_share_setopt(
         d->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_LOCKFUNC, static_share_lock);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, static_share_unlock);
+    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
+    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
     curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_USERDATA, d);
 }
 SessionShare::~SessionShare() {}
 
-auto SessionShare::handle() const -> voidp {
-    C_D(const SessionShare);
-    return d->share;
+auto detail::SessionShareAccess::curl_handle(const SessionShare& share) -> CURLSH* {
+    return share.d_ptr->share;
 }
 auto SessionShare::clone() const -> SessionShare { return *this; }
 

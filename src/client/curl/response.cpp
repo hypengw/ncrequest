@@ -3,6 +3,7 @@ module;
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;
+import :session_share_backend;
 import ncrequest.coro;
 
 namespace ncrequest::client::curl
@@ -39,7 +40,8 @@ void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Reque
     {
         auto& p = req.get_opt<req_opt::Share>();
         if (p.share) {
-            easy.setopt<CURLoption::CURLOPT_SHARE>(p.share->handle());
+            easy.setopt<CURLoption::CURLOPT_SHARE>(
+                detail::SessionShareAccess::curl_handle(*p.share));
         }
         rsp->set_share(p.share.clone());
     }

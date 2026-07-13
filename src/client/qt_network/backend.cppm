@@ -1,10 +1,10 @@
 module;
 #include <atomic>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <QByteArray>
-#include <QBuffer>
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -24,6 +24,7 @@ export import :http;
 export import :error;
 export import ncrequest.coro;
 export import ncrequest.type;
+import :session_share_backend;
 
 namespace ncrequest::client::qt_network
 {
@@ -222,6 +223,79 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
     manager->setProxy(qproxy);
 }
 
+auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, Operation operation,
+                  rstd::Option<rstd::bytes::Bytes> body) -> QNetworkReply* {
+    if (manager == nullptr) return nullptr;
+    if (operation != Operation::PostOperation) {
+        return manager->get(rstd::move(request));
+    }
+
+    if (! request.hasRawHeader("Content-Type")) {
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
+    }
+
+    auto payload = QByteArray {};
+    if (body.is_some()) {
+        auto bytes = rstd::move(body).unwrap();
+        payload    = QByteArray(reinterpret_cast<const char*>(bytes.data()),
+                             static_cast<qsizetype>(bytes.size()));
+    }
+    return manager->post(request, payload);
+}
+
+class QtNetworkManagerRouter : public QObject {
+    using ShareKey = std::weak_ptr<void>;
+
+    QPointer<QNetworkAccessManager> m_default_manager;
+    std::map<ShareKey, QPointer<QNetworkAccessManager>, std::owner_less<ShareKey>> m_share_managers;
+    bool m_allow_share;
+
+public:
+    QtNetworkManagerRouter(QNetworkAccessManager* default_manager, bool allow_share,
+                           QObject* parent = nullptr)
+        : QObject(parent), m_default_manager(default_manager), m_allow_share(allow_share) {}
+
+    auto manager_for(const Request& request) -> Result<QNetworkAccessManager*> {
+        auto* default_manager = m_default_manager.data();
+        if (default_manager == nullptr) {
+            return Err(Error::InvalidState("QNetworkAccessManager is not available"));
+        }
+
+        cleanup();
+        auto const& share = request.get_opt<req_opt::Share>().share;
+        if (share.is_none()) return Ok(default_manager);
+        if (! m_allow_share) {
+            return Err(Error::InvalidState(
+                "request Share is not supported with an external QNetworkAccessManager"));
+        }
+
+        auto token = detail::SessionShareAccess::token(*share);
+        auto key   = ShareKey { token };
+        if (auto it = m_share_managers.find(key); it != m_share_managers.end()) {
+            if (auto* manager = it->second.data()) return Ok(manager);
+            m_share_managers.erase(it);
+        }
+
+        auto* manager = new QNetworkAccessManager(this);
+        manager->setRedirectPolicy(default_manager->redirectPolicy());
+        manager->setCookieJar(detail::SessionShareAccess::make_cookie_jar(*share, manager));
+        m_share_managers.emplace(rstd::move(key), manager);
+        return Ok(manager);
+    }
+
+private:
+    void cleanup() {
+        for (auto it = m_share_managers.begin(); it != m_share_managers.end();) {
+            if (! it->first.expired() && ! it->second.isNull()) {
+                ++it;
+                continue;
+            }
+            if (auto* manager = it->second.data()) manager->deleteLater();
+            it = m_share_managers.erase(it);
+        }
+    }
+};
+
 auto read_header(QNetworkReply* reply) -> HttpHeader {
     auto header = HttpHeader {};
     if (reply == nullptr) return header;
@@ -304,6 +378,7 @@ class QtNetworkWorker : public QObject {
     };
 
     QNetworkAccessManager*                          m_manager { nullptr };
+    QtNetworkManagerRouter*                         m_router { nullptr };
     std::unordered_map<OperationState*, ReplyEntry> m_replies;
 
 public:
@@ -314,15 +389,21 @@ public:
     void ensure_manager() {
         if (m_manager == nullptr) {
             m_manager = new QNetworkAccessManager(this);
+            m_router  = new QtNetworkManagerRouter(m_manager, true, this);
         }
     }
 
     void start(Arc<OperationState> state, rstd::Option<rstd::bytes::Bytes> body) {
         ensure_manager();
 
-        if (state->proxy.is_some()) {
-            apply_proxy(m_manager, *state->proxy);
+        auto manager_result = m_router->manager_for(state->request);
+        if (manager_result.is_err()) {
+            fail_start(rstd::move(state), rstd::move(manager_result).unwrap_err());
+            return;
         }
+        auto* manager = rstd::move(manager_result).unwrap();
+
+        if (state->proxy.is_some()) apply_proxy(manager, *state->proxy);
 
         auto request = make_qnetwork_request(state->request);
         if (request.is_err()) {
@@ -330,31 +411,8 @@ public:
             return;
         }
 
-        QNetworkReply* reply = nullptr;
-        if (state->operation == Operation::PostOperation) {
-            auto qrequest = rstd::move(request).unwrap();
-            if (! qrequest.hasRawHeader("Content-Type")) {
-                qrequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
-            }
-
-            QByteArray payload;
-            if (body.is_some()) {
-                auto bytes = rstd::move(body).unwrap();
-                payload    = QByteArray(reinterpret_cast<const char*>(bytes.data()),
-                                        static_cast<qsizetype>(bytes.size()));
-            }
-            auto* upload = new QBuffer(this);
-            upload->setData(payload);
-            upload->open(QIODevice::ReadOnly);
-            reply = m_manager->post(qrequest, upload);
-            if (reply != nullptr) {
-                upload->setParent(reply);
-            } else {
-                delete upload;
-            }
-        } else {
-            reply = m_manager->get(rstd::move(request).unwrap());
-        }
+        auto* reply = send_request(
+            manager, rstd::move(request).unwrap(), state->operation, rstd::move(body));
 
         if (reply == nullptr) {
             fail_start(rstd::move(state), Error::InvalidState("Qt did not create a reply"));
@@ -515,12 +573,20 @@ public:
     explicit SessionBackend(QObject* parent)
         : m_driver(parent == nullptr ? std::make_shared<QtNetworkDriver>() : nullptr),
           m_manager(parent == nullptr ? nullptr : new QNetworkAccessManager(parent)),
-          m_executor(make_qt_executor(m_manager.data())) {}
+          m_executor(make_qt_executor(m_manager.data())) {
+        if (m_manager != nullptr) {
+            m_router = new QtNetworkManagerRouter(m_manager, true);
+        }
+    }
 
     explicit SessionBackend(QNetworkAccessManager* manager)
-        : m_manager(manager), m_executor(make_qt_executor(manager)) {}
+        : m_manager(manager), m_executor(make_qt_executor(manager)) {
+        if (m_manager != nullptr) {
+            m_router = new QtNetworkManagerRouter(m_manager, false);
+        }
+    }
 
-    ~SessionBackend() = default;
+    ~SessionBackend();
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {
@@ -538,15 +604,14 @@ public:
     void set_verify_certificate(bool);
 
 private:
-    auto manager() const -> QNetworkAccessManager* { return m_manager.data(); }
     auto prepare_req(const Request&) const -> Request;
-    auto to_qnetwork_request(const Request&) const -> Result<QNetworkRequest>;
     auto start_request_direct(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
 
 private:
     std::shared_ptr<QtNetworkDriver>       m_driver;
     QPointer<QNetworkAccessManager>        m_manager;
+    QPointer<QtNetworkManagerRouter>       m_router;
     rstd::Option<rstd::async::AnyExecutor> m_executor;
     rstd::Option<req_opt::Proxy>           m_proxy;
     bool                                   m_verify_certificate { true };
@@ -621,16 +686,14 @@ auto SessionBackend::prepare_req(const Request& req) const -> Request {
     return out;
 }
 
-auto SessionBackend::to_qnetwork_request(const Request& req) const -> Result<QNetworkRequest> {
-    auto* manager = this->manager();
-    if (manager == nullptr) {
-        return Err(Error::InvalidState("QNetworkAccessManager is not available"));
+SessionBackend::~SessionBackend() {
+    auto* router = m_router.data();
+    if (router == nullptr) return;
+    if (router->thread() == QThread::currentThread()) {
+        delete router;
+    } else {
+        (void)QMetaObject::invokeMethod(router, &QObject::deleteLater, Qt::QueuedConnection);
     }
-    if (manager->thread() != QThread::currentThread()) {
-        return Err(Error::InvalidState("QNetworkAccessManager must be used from its owner thread"));
-    }
-
-    return make_qnetwork_request(req);
 }
 
 auto SessionBackend::start_request_direct(const Request& req, Operation operation,
@@ -659,7 +722,22 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
     }
 
     auto prepared = prepare_req(req);
-    auto request  = to_qnetwork_request(prepared);
+    auto* router  = m_router.data();
+    if (router == nullptr) {
+        co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt manager router is unavailable")));
+    }
+
+    auto manager_result = router->manager_for(prepared);
+    if (manager_result.is_err()) {
+        co_return Result<ResponseBackend>(Err(rstd::move(manager_result).unwrap_err()));
+    }
+    auto* manager = rstd::move(manager_result).unwrap();
+    if (manager->thread() != QThread::currentThread()) {
+        co_return Result<ResponseBackend>(
+            Err(Error::InvalidState("QNetworkAccessManager must be used from its owner thread")));
+    }
+
+    auto request = make_qnetwork_request(prepared);
     if (request.is_err()) {
         co_return Result<ResponseBackend>(Err(rstd::move(request).unwrap_err()));
     }
@@ -667,7 +745,7 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
     auto proxy = rstd::Option<req_opt::Proxy> {};
     if (m_proxy) {
         proxy = Some(m_proxy.clone().unwrap());
-        apply_proxy(manager(), *proxy);
+        apply_proxy(manager, *proxy);
     }
 
     auto state = std::make_shared<OperationState>(rstd::move(prepared),
@@ -678,24 +756,8 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
                                                   rstd::move(ready_pair.get<1>()),
                                                   rstd::move(body_pair.get<1>()));
 
-    auto*          manager = this->manager();
-    QNetworkReply* reply   = nullptr;
-    if (operation == Operation::PostOperation) {
-        auto qrequest = rstd::move(request).unwrap();
-        if (! qrequest.hasRawHeader("Content-Type")) {
-            qrequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
-        }
-
-        QByteArray payload;
-        if (body.is_some()) {
-            auto bytes = rstd::move(body).unwrap();
-            payload    = QByteArray(reinterpret_cast<const char*>(bytes.data()),
-                                    static_cast<qsizetype>(bytes.size()));
-        }
-        reply = manager->post(qrequest, payload);
-    } else {
-        reply = manager->get(rstd::move(request).unwrap());
-    }
+    auto* reply =
+        send_request(manager, rstd::move(request).unwrap(), operation, rstd::move(body));
 
     if (reply == nullptr) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt did not create a reply")));

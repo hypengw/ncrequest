@@ -1,25 +1,59 @@
 module;
 
-#include <curl/curl.h>
 #include <format>
+#include <string>
 #include <vector>
 
 module ncrequest.type;
 
 using namespace ncrequest;
 
+namespace
+{
+constexpr auto hex_digits = "0123456789ABCDEF";
+
+constexpr bool is_unreserved(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '.' || c == '_' || c == '~';
+}
+
+constexpr int hex_value(unsigned char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+} // namespace
+
 std::string ncrequest::url_encode(std::string_view c) {
-    char*       curl_out = curl_easy_escape(NULL, c.data(), c.size());
-    std::string out      = curl_out;
-    curl_free(curl_out);
+    std::string out;
+    out.reserve(c.size() * 3);
+    for (unsigned char value : c) {
+        if (is_unreserved(value)) {
+            out.push_back(static_cast<char>(value));
+            continue;
+        }
+        out.push_back('%');
+        out.push_back(hex_digits[value >> 4]);
+        out.push_back(hex_digits[value & 0x0f]);
+    }
     return out;
 }
 std::string ncrequest::url_decode(std::string_view c) {
-    int         len { 0 };
-    char*       curl_out = curl_easy_unescape(NULL, c.data(), c.size(), &len);
-    usize       slen     = len > 0 ? (usize)len : 0u;
-    std::string out { curl_out, slen };
-    curl_free(curl_out);
+    std::string out;
+    out.reserve(c.size());
+    for (usize i = 0; i < c.size(); ++i) {
+        if (c[i] == '%' && i + 2 < c.size()) {
+            auto high = hex_value(static_cast<unsigned char>(c[i + 1]));
+            auto low  = hex_value(static_cast<unsigned char>(c[i + 2]));
+            if (high >= 0 && low >= 0) {
+                out.push_back(static_cast<char>((high << 4) | low));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(c[i]);
+    }
     return out;
 }
 

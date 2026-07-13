@@ -480,7 +480,9 @@ private:
 
     auto finish_error_locked() const -> rstd::Option<Error> {
         if (m_state == State::Canceled) return Some(Error::Canceled());
-        if (m_finish_ec != CURLcode::CURLE_OK) return Some(Error::Curl(m_finish_ec));
+        if (m_finish_ec != CURLcode::CURLE_OK) {
+            return Some(rstd::into<Error>(static_cast<CURLcode>(m_finish_ec)));
+        }
         return None<Error>();
     }
 

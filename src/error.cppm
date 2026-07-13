@@ -4,7 +4,9 @@ module;
 export module ncrequest:error;
 export import rstd;
 export import rstd.error;
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 export import ncrequest.curl;
+#endif
 export import cppstd;
 
 namespace ncrequest
@@ -21,7 +23,6 @@ export enum class ProtocolError
 
 export enum class ErrorKind
 {
-    Curl,
     Client,
     Io,
     Protocol,
@@ -32,16 +33,16 @@ export enum class ErrorKind
 export enum class ClientBackend
 {
     QtNetwork,
+    Curl,
 };
 
 export struct ClientError {
     ClientBackend backend;
-    i32           code;
+    rstd::i32     code;
     std::string   message;
 };
 
 #define NCREQUEST_ERROR_VARIANTS(V)                    \
-    V(Curl, (curl::CURLcode code;))                    \
     V(Client, (ClientError error;))                    \
     V(Io, (rstd::io::error::Error error;))             \
     V(Protocol, (ProtocolError kind; const char* msg;)) \
@@ -54,7 +55,6 @@ export struct Error {
 
     auto kind() const noexcept -> ErrorKind {
         switch (tag()) {
-        case Tag::Curl: return ErrorKind::Curl;
         case Tag::Client: return ErrorKind::Client;
         case Tag::Io: return ErrorKind::Io;
         case Tag::Protocol: return ErrorKind::Protocol;
@@ -88,10 +88,6 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncreque
     auto fmt(fmt::Formatter& f) const -> bool {
         auto& e = this->self();
         switch (e.tag()) {
-        case ncrequest::Error::Tag::Curl: {
-            auto* msg = curl::curl_easy_strerror(e.as_Curl().code);
-            return f.write_raw((u8 const*)msg, rstd::strlen(msg));
-        }
         case ncrequest::Error::Tag::Client: {
             auto& msg = e.as_Client().error.message;
             return f.write_raw((u8 const*)msg.data(), msg.size());
@@ -129,12 +125,19 @@ struct rstd::Impl<rstd::fmt::Debug, ncrequest::Error> : rstd::ImplBase<ncrequest
 template<>
 struct rstd::Impl<rstd::error::Error, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {};
 
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 template<>
 struct rstd::Impl<rstd::convert::From<curl::CURLcode>, ncrequest::Error> {
     static auto from(curl::CURLcode e) -> ncrequest::Error {
-        return ncrequest::Error::Curl(e);
+        auto* message = curl::curl_easy_strerror(e);
+        return ncrequest::Error::Client(ncrequest::ClientError {
+            .backend = ncrequest::ClientBackend::Curl,
+            .code    = static_cast<rstd::i32>(e),
+            .message = message != nullptr ? message : "curl client error",
+        });
     };
 };
+#endif
 
 template<>
 struct rstd::Impl<rstd::convert::From<rstd::io::error::Error>, ncrequest::Error> {

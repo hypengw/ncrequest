@@ -13,11 +13,11 @@ add_executable(ncrequest_test http.cpp main.cpp)
 
 target_link_libraries(ncrequest_test PRIVATE ncrequest::ncrequest GTest::gtest_main)
 
-if(NOT NCREQUEST_USE_QT_WEBSOCKETS)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   target_sources(ncrequest_test PRIVATE websocket.cpp)
 endif()
 
-if(NCREQUEST_USE_QT_NETWORK OR NCREQUEST_USE_QT_WEBSOCKETS)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
   target_link_libraries(ncrequest_test PRIVATE Qt6::Core)
 endif()
 
@@ -35,7 +35,7 @@ if(Python3_EXECUTABLE)
   set_tests_properties(ncrequest_local_http PROPERTIES LABELS "http;integration")
 endif()
 
-if((NOT NCREQUEST_USE_QT_WEBSOCKETS) AND Python3_EXECUTABLE)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl" AND Python3_EXECUTABLE)
   add_test(
     NAME ncrequest_websocket_local_echo
     COMMAND
@@ -46,7 +46,7 @@ if((NOT NCREQUEST_USE_QT_WEBSOCKETS) AND Python3_EXECUTABLE)
                        PROPERTIES LABELS "websocket;integration")
 endif()
 
-if(NCREQUEST_USE_QT_NETWORK)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
   add_executable(ncrequest_qt_network_test qt_network.cpp qt_network_main.cpp)
   target_link_libraries(ncrequest_qt_network_test PRIVATE ncrequest::ncrequest
                                                           GTest::gtest Qt6::Core
@@ -67,7 +67,7 @@ if(NCREQUEST_USE_QT_NETWORK)
   endif()
 endif()
 
-if(NCREQUEST_USE_QT_WEBSOCKETS)
+if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
   add_executable(ncrequest_qt_websockets_test qt_websockets.cpp
                                               qt_websockets_main.cpp)
   target_link_libraries(ncrequest_qt_websockets_test

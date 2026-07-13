@@ -9,6 +9,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, Optional
+from urllib.parse import parse_qs, urlsplit
 
 
 def large_body() -> bytes:
@@ -64,12 +65,16 @@ class Handler(BaseHTTPRequestHandler):
         initial_delay: float,
         chunk_delay: float,
         content_type: str = "application/octet-stream",
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.send_header("X-Ncrequest-Test", "local-http")
+        if extra_headers:
+            for name, value in extra_headers.items():
+                self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.flush()
@@ -82,15 +87,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     def do_GET(self) -> None:
-        if self.path == "/text":
+        target = urlsplit(self.path)
+
+        if target.path == "/text":
             self.send_payload(HTTPStatus.OK, b"ncrequest python http server body\n")
             return
 
-        if self.path == "/large":
+        if target.path == "/large":
             self.send_payload(HTTPStatus.OK, large_body())
             return
 
-        if self.path == "/download.bin":
+        if target.path == "/download.bin":
             self.send_payload(
                 HTTPStatus.OK,
                 download_body(),
@@ -99,29 +106,29 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/empty":
+        if target.path == "/empty":
             self.send_payload(HTTPStatus.NO_CONTENT, b"")
             return
 
-        if self.path == "/missing":
+        if target.path == "/missing":
             self.send_payload(HTTPStatus.NOT_FOUND, b"missing\n")
             return
 
-        if self.path == "/server-error":
+        if target.path == "/server-error":
             self.send_payload(HTTPStatus.INTERNAL_SERVER_ERROR, b"server error\n")
             return
 
-        if self.path == "/delay":
+        if target.path == "/delay":
             time.sleep(0.5)
             self.send_payload(HTTPStatus.OK, b"delayed\n")
             return
 
-        if self.path == "/slow-first-byte":
+        if target.path == "/slow-first-byte":
             time.sleep(1.5)
             self.send_payload(HTTPStatus.OK, b"too late\n")
             return
 
-        if self.path == "/slow-stream":
+        if target.path == "/slow-stream":
             self.send_stream(
                 HTTPStatus.OK,
                 slow_stream_body(),
@@ -129,6 +136,36 @@ class Handler(BaseHTTPRequestHandler):
                 initial_delay=0.2,
                 chunk_delay=0.005,
             )
+            return
+
+        if target.path == "/cookie/echo":
+            cookie = self.headers.get("Cookie", "")
+            self.send_payload(HTTPStatus.OK, cookie.encode("utf-8") + b"\n")
+            return
+
+        if target.path in ("/cookie/set", "/cookie/slow-set", "/cookie/redirect-set"):
+            query = parse_qs(target.query, keep_blank_values=True)
+            name = query.get("name", [""])[0]
+            value = query.get("value", [""])[0]
+            if not name:
+                self.send_payload(HTTPStatus.BAD_REQUEST, b"missing cookie name\n")
+                return
+
+            headers = {"Set-Cookie": f"{name}={value}; Path=/"}
+            if target.path == "/cookie/redirect-set":
+                headers["Location"] = "/cookie/echo"
+                self.send_payload(HTTPStatus.FOUND, b"", extra_headers=headers)
+            elif target.path == "/cookie/slow-set":
+                self.send_stream(
+                    HTTPStatus.OK,
+                    b"cookie set slowly\n",
+                    chunk_size=4,
+                    initial_delay=0.2,
+                    chunk_delay=0.02,
+                    extra_headers=headers,
+                )
+            else:
+                self.send_payload(HTTPStatus.OK, b"cookie set\n", extra_headers=headers)
             return
 
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
