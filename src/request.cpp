@@ -67,17 +67,6 @@ Request& Request::remove_header(std::string_view name) {
 
 void Request::set_opt(const Header& header) { m_header = header; }
 
-const_voidp Request::get_opt(usize idx) const {
-    return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> const_voidp {
-        return &m_opts.get<I>();
-    });
-}
-voidp Request::get_opt(usize idx) {
-    return RequestOpts::runtime_select(idx, [this]<usize I, typename T>() -> voidp {
-        return &m_opts.get<I>();
-    });
-}
-
 void Request::set_opt(RequestOpt&& opt) {
     RSTD_MATCH(rstd::move(opt)) {
         RSTD_CASE(Timeout, value) {

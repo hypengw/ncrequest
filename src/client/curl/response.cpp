@@ -1,5 +1,4 @@
 module;
-#include "macro.hpp"
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;

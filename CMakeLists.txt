@@ -76,7 +76,6 @@ target_compile_features(ncrequest PUBLIC cxx_std_20)
 
 set(NCREQUEST_MODULE_FILES
     src/type.cppm
-    src/type_list.cppm
     src/error.cppm
     src/session_share.cppm
     src/request.cppm

@@ -1,5 +1,4 @@
 module;
-#include "macro.hpp"
 module ncrequest;
 import :session_share;
 import :session_share_backend;
@@ -29,12 +28,11 @@ public:
 };
 
 SessionShare::SessionShare(): d_ptr(make_arc<Private>()) {
-    C_D(SessionShare);
     curl_share_setopt(
-        d->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
-    curl_share_setopt(d->share, CURLSHoption::CURLSHOPT_USERDATA, d);
+        d_ptr->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
+    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
+    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_USERDATA, d_ptr.get());
 }
 SessionShare::~SessionShare() {}
 
@@ -44,9 +42,8 @@ auto detail::SessionShareAccess::curl_handle(const SessionShare& share) -> CURLS
 auto SessionShare::clone() const -> SessionShare { return *this; }
 
 void SessionShare::load(const std::filesystem::path& p) {
-    C_D(SessionShare);
     CurlEasy x;
-    x.setopt(CURLoption::CURLOPT_SHARE, d->share);
+    x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     // append filename
     x.setopt(CURLoption::CURLOPT_COOKIEFILE, p.c_str());
     // actually load
@@ -54,9 +51,8 @@ void SessionShare::load(const std::filesystem::path& p) {
 }
 
 void SessionShare::save(const std::filesystem::path& p) const {
-    C_D(const SessionShare);
     CurlEasy x;
-    x.setopt(CURLoption::CURLOPT_SHARE, d->share);
+    x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     x.setopt(CURLoption::CURLOPT_COOKIEJAR, p.c_str());
     // save when x destruct
 }

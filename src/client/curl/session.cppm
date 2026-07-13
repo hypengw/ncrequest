@@ -51,9 +51,7 @@ private:
     auto perform(Arc<ResponseBackend>&) -> coro<Result<rstd::empty>>;
     auto prepare_req(const Request&) const -> Request;
 
-    Box<Private>          m_d;
-    inline Private*       d_func() { return m_d.get(); }
-    inline const Private* d_func() const { return m_d.get(); }
+    Box<Private> m_d;
 };
 
 export using Options = CurlOptions;

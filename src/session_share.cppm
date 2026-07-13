@@ -22,9 +22,7 @@ private:
     class Private;
     friend class detail::SessionShareAccess;
 
-    Arc<Private>          d_ptr;
-    inline Private*       d_func() { return d_ptr.get(); }
-    inline const Private* d_func() const { return d_ptr.get(); }
+    Arc<Private> d_ptr;
 };
 } // namespace ncrequest
 

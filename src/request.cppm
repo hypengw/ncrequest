@@ -7,16 +7,10 @@ module;
         return *this;                 \
     }
 
-#define C_DECLARE_PUBLIC(Class, QName)                                              \
-    inline Class*       q_func() { return static_cast<Class*>(QName); }             \
-    inline const Class* q_func() const { return static_cast<const Class*>(QName); } \
-    friend class Class;
-
 export module ncrequest:request;
 export import :http;
 export import :session_share;
 export import ncrequest.type;
-export import ncrequest.type_list;
 
 namespace ncrequest
 {
@@ -72,11 +66,20 @@ export struct Share : rstd::DefaultInClass<Share, rstd::clone::Clone> {
 
 #undef REQ_OPT_PROP
 
-using opts = type_list<Timeout, Proxy, Tcp, SSL, Read, Share>;
-
 } // namespace req_opt
 
-export using RequestOpts = req_opt::opts;
+export using RequestOpts =
+    rstd::tuple<req_opt::Timeout, req_opt::Proxy, req_opt::Tcp, req_opt::SSL, req_opt::Read,
+                req_opt::Share>;
+
+export template<typename T>
+concept RequestOption =
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Timeout> ||
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Proxy> ||
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Tcp> ||
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::SSL> ||
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Read> ||
+    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Share>;
 
 #define NCREQUEST_REQUEST_OPT_VARIANTS(V)  \
     V(Timeout, (req_opt::Timeout value;))  \
@@ -99,7 +102,6 @@ namespace ncrequest
 
 export class Request : public rstd::DefaultInClass<Request, rstd::clone::Clone> {
 public:
-    class Private;
     Request() noexcept;
     Request(std::string_view url) noexcept;
     Request(Request&&) noexcept;
@@ -117,24 +119,21 @@ public:
     auto remove_header(std::string_view name) -> Request&;
     void set_opt(const Header&);
 
-    template<typename T>
+    template<RequestOption T>
     T& get_opt() {
-        constexpr auto idx = RequestOpts::index<T>();
-        return *(static_cast<T*>(get_opt(idx)));
+        return m_opts.template get<T>();
     }
 
-    template<typename T>
+    template<RequestOption T>
     const T& get_opt() const {
-        constexpr auto idx = RequestOpts::index<T>();
-        return *(static_cast<const T*>(get_opt(idx)));
+        return m_opts.template get<T>();
     }
 
     void set_opt(RequestOpt&&);
 
-    template<typename T>
-        requires(RequestOpts::template contains<rstd::mtp::decay<T>>())
+    template<RequestOption T>
     auto set_opt(T&& opt) -> Request& {
-        get_opt<rstd::mtp::decay<T>>() = rstd::forward<T>(opt);
+        m_opts.template get<rstd::mtp::decay<T>>() = rstd::forward<T>(opt);
         return *this;
     }
 
@@ -142,12 +141,9 @@ public:
     auto clone() const -> ncrequest::Request;
 
 private:
-    const_voidp get_opt(usize) const;
-    voidp       get_opt(usize);
-
-    URI                                  m_uri;
-    Header                               m_header;
-    RequestOpts::to<rstd::tuple> m_opts;
+    URI         m_uri;
+    Header      m_header;
+    RequestOpts m_opts;
 };
 
 } // namespace ncrequest

@@ -4,8 +4,6 @@ module;
 #include <mutex>
 #include <thread>
 
-#include "log.hpp"
-#include "macro.hpp"
 #include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
@@ -65,29 +63,25 @@ SessionBackend::SessionBackend(std::pmr::memory_resource* mem_pool, CurlOptions 
     : m_d(std::make_unique<Private>(*this, mem_pool, options)) {}
 
 void SessionBackend::start() {
-    C_D(SessionBackend);
-    d->start();
+    m_d->start();
 }
 
 SessionBackend::~SessionBackend() {
-    C_D(SessionBackend);
     about_to_stop();
-    if (d->m_thread.joinable()) {
-        d->m_thread.join();
+    if (m_d->m_thread.joinable()) {
+        m_d->m_thread.join();
     }
-    d->m_channel->set_wake_callback({});
+    m_d->m_channel->set_wake_callback({});
 }
 
 auto SessionBackend::allocator() -> std::pmr::polymorphic_allocator<byte> {
-    C_D(SessionBackend);
-    return { (d->m_memory) };
+    return { (m_d->m_memory) };
 }
 
 auto SessionBackend::prepare_req(const Request& req) const -> Request {
-    C_D(const SessionBackend);
     Request o { req.clone() };
-    if (d->m_proxy) o.set_opt(d->m_proxy.clone().unwrap());
-    if (d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
+    if (m_d->m_proxy) o.set_opt(m_d->m_proxy.clone().unwrap());
+    if (m_d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
     return o;
 }
 
@@ -186,35 +180,28 @@ void SessionBackend::Private::start() {
 }
 
 void SessionBackend::load_cookie(std::filesystem::path p) {
-    C_D(SessionBackend);
-    d->m_curl_multi->load_cookie(p);
+    m_d->m_curl_multi->load_cookie(p);
 }
 void SessionBackend::save_cookie(std::filesystem::path p) const {
-    C_D(const SessionBackend);
-    d->m_curl_multi->save_cookie(p);
+    m_d->m_curl_multi->save_cookie(p);
 }
 
 auto SessionBackend::cookies() -> std::vector<std::string> {
-    C_D(const SessionBackend);
-    return d->m_curl_multi->cookies();
+    return m_d->m_curl_multi->cookies();
 }
 void SessionBackend::set_proxy(const req_opt::Proxy& p) {
-    C_D(SessionBackend);
-    d->m_proxy = Some(p.clone());
+    m_d->m_proxy = Some(p.clone());
 }
 void SessionBackend::set_verify_certificate(bool v) {
-    C_D(SessionBackend);
-    d->m_ignore_certificate = ! v;
+    m_d->m_ignore_certificate = ! v;
 }
 
 SessionBackend::channel_type& SessionBackend::channel() {
-    C_D(SessionBackend);
-    return *(d->m_channel);
+    return *(m_d->m_channel);
 }
 
 auto SessionBackend::channel_rc() -> Arc<SessionBackend::channel_type> {
-    C_D(SessionBackend);
-    return d->m_channel;
+    return m_d->m_channel;
 }
 
 void SessionBackend::about_to_stop() {
@@ -224,21 +211,15 @@ void SessionBackend::about_to_stop() {
 void SessionBackend::Private::add_connect(const Arc<Connection>& con) {
     auto ec = m_curl_multi->add_handle(con->easy());
     if (ec) {
-        ERROR_LOG("{}", ec.message());
         con->finish(CURLcode::CURLE_FAILED_INIT);
         return;
     }
-    DEBUG_LOG("add {}", con->url());
     con->transfreing();
     m_connect_set.insert(con);
 }
 void SessionBackend::Private::remove_connect(const Arc<Connection>& con) {
-    DEBUG_LOG("end {}", con->url());
-    auto ec = m_curl_multi->remove_handle(con->easy());
+    (void)m_curl_multi->remove_handle(con->easy());
     m_connect_set.erase(con);
-    if (ec) {
-        ERROR_LOG("{}", ec.message());
-    }
 }
 
 void SessionBackend::Private::run() {
@@ -254,9 +235,7 @@ void SessionBackend::Private::run() {
         }
 
         int running_connect { 0 };
-        if (auto re = m_curl_multi->perform(running_connect); re) {
-            ERROR_LOG("{}", re.message());
-        };
+        (void)m_curl_multi->perform(running_connect);
 
         auto infos = m_curl_multi->query_info_msg();
         for (auto& m : infos) {
@@ -268,16 +247,9 @@ void SessionBackend::Private::run() {
         }
 
         if (running_connect > 0) {
-            if (auto re = m_curl_multi->poll(POLL_TIMEOUT); re) {
-                ERROR_LOG("{}", re.message());
-            }
-        }
-
-        if (m_connect_set.empty()) {
-            DEBUG_LOG("all connection finished");
+            (void)m_curl_multi->poll(POLL_TIMEOUT);
         }
     } while (! m_stopped);
-    DEBUG_LOG("session stopped");
 }
 
 void SessionBackend::Private::handle_message(const SessionMessage& msg) {
