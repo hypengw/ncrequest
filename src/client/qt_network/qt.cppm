@@ -4,6 +4,7 @@ module;
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QIODevice>
+#include <QHttpHeaders>
 #include <QList>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -35,6 +36,7 @@ using ::QByteArray;
 using ::QCoreApplication;
 using ::QDateTime;
 using ::QIODevice;
+using ::QHttpHeaders;
 using ::QList;
 using ::QMetaObject;
 using ::QNetworkAccessManager;

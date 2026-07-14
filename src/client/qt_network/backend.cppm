@@ -2,6 +2,7 @@ module;
 #include <atomic>
 #include <map>
 #include <memory>
+#include <rstd/enum.hpp>
 #include <string>
 #include <unordered_map>
 
@@ -61,47 +62,17 @@ auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor>
     return Some(rstd::async::AnyExecutor::from_executor(QtExecutor { target }));
 }
 
+#define NCREQUEST_QT_BODY_EVENT_VARIANTS(V)       \
+    V(Header, (http::MessageHead value;))         \
+    V(Chunk, (rstd::bytes::Bytes value;))         \
+    V(Finished, ())                               \
+    V(Failed, (Error value;))
+
 struct BodyEvent {
-    enum class Kind
-    {
-        Header,
-        Chunk,
-        Finished,
-        Error,
-    };
-
-    Kind                             kind { Kind::Finished };
-    rstd::Option<HttpHeader>         header;
-    rstd::Option<rstd::bytes::Bytes> chunk;
-    rstd::Option<Error>              error;
-
-    static auto make_header(HttpHeader header) -> BodyEvent {
-        auto out   = BodyEvent {};
-        out.kind   = Kind::Header;
-        out.header = Some(rstd::move(header));
-        return out;
-    }
-
-    static auto make_chunk(rstd::bytes::Bytes chunk) -> BodyEvent {
-        auto out  = BodyEvent {};
-        out.kind  = Kind::Chunk;
-        out.chunk = Some(rstd::move(chunk));
-        return out;
-    }
-
-    static auto make_finished() -> BodyEvent {
-        auto out = BodyEvent {};
-        out.kind = Kind::Finished;
-        return out;
-    }
-
-    static auto make_error(Error error) -> BodyEvent {
-        auto out  = BodyEvent {};
-        out.kind  = Kind::Error;
-        out.error = Some(rstd::move(error));
-        return out;
-    }
+    RSTD_ENUM_BODY(BodyEvent, NCREQUEST_QT_BODY_EVENT_VARIANTS)
 };
+
+#undef NCREQUEST_QT_BODY_EVENT_VARIANTS
 
 struct DirectReplyState {
     QPointer<QNetworkReply> reply;
@@ -109,7 +80,7 @@ struct DirectReplyState {
 
 struct OperationState {
     Request                                            request;
-    Operation                                          operation;
+    http::Operation                                    operation;
     Weak<QtNetworkDriver>                              driver;
     rstd::Option<rstd::async::AnyExecutor>             executor;
     std::shared_ptr<DirectReplyState>                  direct;
@@ -119,7 +90,7 @@ struct OperationState {
     std::atomic<bool>                                  finished { false };
     std::atomic<bool>                                  cancel_requested { false };
 
-    OperationState(Request request, Operation operation, Weak<QtNetworkDriver> driver,
+    OperationState(Request request, http::Operation operation, Weak<QtNetworkDriver> driver,
                    rstd::Option<rstd::async::AnyExecutor>             executor,
                    rstd::Option<req_opt::Proxy>                       proxy,
                    rstd::async::CompletionHandle<rstd::Option<Error>> ready,
@@ -139,8 +110,7 @@ struct OperationState {
     }
 
     void push_body_event(BodyEvent event) {
-        auto close =
-            event.kind == BodyEvent::Kind::Finished || event.kind == BodyEvent::Kind::Error;
+        auto close = event.is_Finished() || event.is_Failed();
         (void)body.push(rstd::move(event));
         if (close) body.close();
     }
@@ -156,10 +126,23 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
     QNetworkRequest request { QUrl(QString::fromUtf8(req.url().data(), req.url().size())) };
     request.setAttribute(QNetworkRequest::AutoDeleteReplyOnFinishAttribute, false);
 
-    for (auto const& [name, value] : req.header()) {
-        request.setRawHeader(QByteArray(name.data(), static_cast<qsizetype>(name.size())),
-                             QByteArray(value.data(), static_cast<qsizetype>(value.size())));
+    auto raw_headers = QList<std::pair<QByteArray, QByteArray>> {};
+    raw_headers.reserve(static_cast<qsizetype>(req.header().len()));
+    auto fields = req.header().iter();
+    for (auto field = fields.next(); field.is_some(); field = fields.next()) {
+        auto name  = (**field).name().as_ref();
+        auto value = (**field).value().as_bytes();
+        if (req.header().values(name).count() > 1) {
+            return Err(Error::Unsupported(
+                "Qt Network cannot preserve repeated request header fields"));
+        }
+        raw_headers.append({
+            QByteArray(reinterpret_cast<const char*>(name.data()),
+                       static_cast<qsizetype>(name.size())),
+            QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
+                       static_cast<qsizetype>(value.len())) });
     }
+    request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
     auto const& timeout = req.get_opt<req_opt::Timeout>();
     if (timeout.transfer_timeout > 0) {
@@ -215,10 +198,11 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
     manager->setProxy(qproxy);
 }
 
-auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, Operation operation,
+auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
+                  http::Operation operation,
                   rstd::Option<rstd::bytes::Bytes> body) -> QNetworkReply* {
     if (manager == nullptr) return nullptr;
-    if (operation != Operation::PostOperation) {
+    if (! operation.is_Post()) {
         return manager->get(rstd::move(request));
     }
 
@@ -288,24 +272,44 @@ private:
     }
 };
 
-auto read_header(QNetworkReply* reply) -> HttpHeader {
-    auto header = HttpHeader {};
-    if (reply == nullptr) return header;
+auto read_header(QNetworkReply* reply)
+    -> rstd::Result<rstd::Option<http::MessageHead>, http::HttpParseError> {
+    if (reply == nullptr) return rstd::Ok(rstd::None<http::MessageHead>());
 
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-    if (status.isValid()) {
-        header.start = Some<HttpHeader::Start>(
-            HttpHeader::Status { .version = "HTTP", .code = status.toInt() });
+    if (! status.isValid()) return rstd::Ok(rstd::None<http::MessageHead>());
+
+    auto status_code = http::StatusCode::make(static_cast<rstd::u16>(status.toInt()));
+    if (status_code.is_err()) return rstd::Err(rstd::move(status_code).unwrap_err());
+
+    auto headers = http::Header {};
+
+    for (auto const& pair : reply->headers().toListOfPairs()) {
+        auto name_text = rstd::ref<rstd::str>::from_raw_parts(
+            reinterpret_cast<const rstd::u8*>(pair.first.constData()),
+            static_cast<rstd::usize>(pair.first.size()));
+        auto name = http::HeaderName::parse(name_text);
+        if (name.is_err()) {
+            return rstd::Err(http::HttpParseError {
+                http::HttpParseErrorKind::InvalidHeaderLine(), name.unwrap_err().offset() });
+        }
+
+        auto value = http::HeaderValue::from_bytes(rstd::slice<rstd::u8>::from_raw_parts(
+            reinterpret_cast<const rstd::u8*>(pair.second.constData()),
+            static_cast<rstd::usize>(pair.second.size())));
+        if (value.is_err()) {
+            return rstd::Err(http::HttpParseError {
+                http::HttpParseErrorKind::InvalidHeaderLine(), value.unwrap_err().offset() });
+        }
+        headers.append(http::HeaderField { rstd::move(name).unwrap(),
+                                           rstd::move(value).unwrap() });
     }
 
-    for (auto const& pair : reply->rawHeaderPairs()) {
-        header.fields.push_back(HttpHeader::Field {
-            .name  = std::string(pair.first.constData(), static_cast<usize>(pair.first.size())),
-            .value = std::string(pair.second.constData(), static_cast<usize>(pair.second.size())),
-        });
-    }
-
-    return header;
+    auto start = http::StartLine::Response(http::StatusLine {
+        rstd::None<http::Version>(), rstd::move(status_code).unwrap(),
+        rstd::None<http::HeaderValue>() });
+    return rstd::Ok(rstd::Some(
+        http::MessageHead { rstd::move(start), rstd::move(headers) }));
 }
 
 auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
@@ -331,7 +335,20 @@ auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
 
 void publish_header(const Arc<OperationState>& state, QNetworkReply* reply) {
     if (state->finished.load()) return;
-    state->push_body_event(BodyEvent::make_header(read_header(reply)));
+    auto header = read_header(reply);
+    if (header.is_err()) {
+        auto error = rstd::move(header).unwrap_err();
+        auto protocol = error.kind().is_InvalidStartLine()
+                            ? ProtocolError::InvalidStatusLine
+                            : ProtocolError::InvalidHeaderLine;
+        state->push_body_event(
+            BodyEvent::Failed(Error::Protocol(protocol, protocol_error_message(protocol))));
+        return;
+    }
+    auto value = rstd::move(header).unwrap();
+    if (value.is_some()) {
+        state->push_body_event(BodyEvent::Header(rstd::move(value).unwrap()));
+    }
 }
 
 void publish_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
@@ -344,7 +361,7 @@ void publish_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
         auto bytes = rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::u8*>(chunk.constData()),
             static_cast<rstd::usize>(chunk.size())));
-        state->push_body_event(BodyEvent::make_chunk(rstd::move(bytes)));
+        state->push_body_event(BodyEvent::Chunk(rstd::move(bytes)));
     }
 }
 
@@ -357,9 +374,9 @@ void publish_finished(const Arc<OperationState>& state, QNetworkReply* reply) {
 
     auto error = transport_error(reply);
     if (error.is_some()) {
-        state->push_body_event(BodyEvent::make_error(rstd::move(error).unwrap()));
+        state->push_body_event(BodyEvent::Failed(rstd::move(error).unwrap()));
     } else {
-        state->push_body_event(BodyEvent::make_finished());
+        state->push_body_event(BodyEvent::Finished());
     }
 }
 
@@ -431,7 +448,7 @@ public:
             auto state = entry.state;
             if (! state->finished.exchange(true)) {
                 state->complete_ready(Some(Error::Canceled()));
-                state->push_body_event(BodyEvent::make_error(Error::Canceled()));
+                state->push_body_event(BodyEvent::Failed(Error::Canceled()));
             }
 
             auto* reply = entry.reply.data();
@@ -467,7 +484,7 @@ private:
             if (state->finished.load()) return;
             state->finished.store(true);
             state->push_body_event(
-                BodyEvent::make_error(Error::InvalidState("QNetworkReply was destroyed")));
+                BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
             m_replies.erase(state.get());
         });
     }
@@ -585,7 +602,7 @@ public:
         return make_arc<SessionBackend>(rstd::forward<Args>(args)...);
     }
 
-    auto start_request(const Request& req, Operation operation,
+    auto start_request(const Request& req, http::Operation operation,
                        rstd::Option<rstd::bytes::Bytes> body) -> coro<Result<ResponseBackend>>;
 
     auto get(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
@@ -597,7 +614,8 @@ public:
 
 private:
     auto prepare_req(const Request&) const -> Request;
-    auto start_request_direct(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
+    auto start_request_direct(const Request&, http::Operation,
+                              rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
 
 private:
@@ -621,7 +639,7 @@ public:
           m_operation(other.m_operation),
           m_state(rstd::move(other.m_state)),
           m_body(other.m_body.take()),
-          m_header(rstd::move(other.m_header)) {}
+          m_header(other.m_header.take()) {}
 
     auto operator=(ResponseBackend&& other) noexcept -> ResponseBackend& {
         if (this == &other) return *this;
@@ -631,19 +649,25 @@ public:
         m_operation = other.m_operation;
         m_state     = rstd::move(other.m_state);
         m_body      = other.m_body.take();
-        m_header    = rstd::move(other.m_header);
+        m_header    = other.m_header.take();
         return *this;
     }
 
-    auto header() const -> const HttpHeader& { return m_header; }
+    auto header() const -> const http::Header& {
+        return m_header.is_some() ? m_header->headers() : m_empty_header;
+    }
+    auto head() const -> rstd::Option<rstd::ref<http::MessageHead>> {
+        if (m_header.is_none()) return None<rstd::ref<http::MessageHead>>();
+        return Some(rstd::ref<http::MessageHead>::from_raw_parts(&*m_header));
+    }
+    auto trailers() const -> rstd::Option<rstd::ref<http::Header>> {
+        return None<rstd::ref<http::Header>>();
+    }
     auto code() const -> rstd::Option<i32> {
-        if (m_header.start.is_some()) {
-            if (auto* start = std::get_if<HttpHeader::Status>(&*m_header.start)) {
-                return Some<i32>(start->code);
-            }
-        }
-
-        return None<i32>();
+        if (m_header.is_none()) return None<i32>();
+        auto status = m_header->status_code();
+        if (status.is_none()) return None<i32>();
+        return Some<i32>(static_cast<i32>(*status));
     }
 
     auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
@@ -651,7 +675,7 @@ public:
 
     auto is_finished() const -> bool { return ! m_state || m_state->finished.load(); }
     auto request() const -> const Request& { return m_req; }
-    auto operation() const -> Operation { return m_operation; }
+    auto operation() const -> http::Operation { return m_operation; }
 
     void cancel() {
         if (m_state) m_state->cancel();
@@ -665,10 +689,11 @@ private:
           m_body(Some(rstd::move(body))) {}
 
     Request                                               m_req;
-    Operation                                             m_operation;
+    http::Operation                                       m_operation;
     Arc<OperationState>                                   m_state;
     rstd::Option<rstd::async::CompletionQueue<BodyEvent>> m_body;
-    HttpHeader                                            m_header;
+    rstd::Option<http::MessageHead>                       m_header;
+    http::Header                                          m_empty_header;
 };
 
 auto SessionBackend::prepare_req(const Request& req) const -> Request {
@@ -688,7 +713,7 @@ SessionBackend::~SessionBackend() {
     }
 }
 
-auto SessionBackend::start_request_direct(const Request& req, Operation operation,
+auto SessionBackend::start_request_direct(const Request& req, http::Operation operation,
                                           rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
     if (m_executor.is_none()) {
@@ -773,7 +798,7 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
         if (state->finished.load()) return;
         state->finished.store(true);
         state->push_body_event(
-            BodyEvent::make_error(Error::InvalidState("QNetworkReply was destroyed")));
+            BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
     });
     state->complete_ready();
 
@@ -790,7 +815,7 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
         Ok(ResponseBackend(rstd::move(state), rstd::move(body_pair.get<0>()))));
 }
 
-auto SessionBackend::start_request(const Request& req, Operation operation,
+auto SessionBackend::start_request(const Request& req, http::Operation operation,
                                    rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
     if (! m_driver) {
@@ -846,7 +871,7 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, Operation::GetOperation, None<rstd::bytes::Bytes>());
+    auto res = co_await start_request(req, http::Operation::Get(), None<rstd::bytes::Bytes>());
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
     }
@@ -859,7 +884,7 @@ auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend
 
 auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, Operation::PostOperation, Some(rstd::move(body)));
+    auto res = co_await start_request(req, http::Operation::Post(), Some(rstd::move(body)));
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
     }
@@ -891,25 +916,20 @@ auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
         }
 
         auto event = rstd::move(item).unwrap_unchecked();
-        switch (event.kind) {
-        case BodyEvent::Kind::Header: {
-            if (event.header.is_some()) {
-                m_header = rstd::move(event.header).unwrap_unchecked();
-            }
-            break;
+        if (event.is_Header()) {
+            m_header = Some(rstd::move(event).as_Header().value);
+            continue;
         }
-        case BodyEvent::Kind::Chunk: {
-            auto chunk = rstd::move(event.chunk).unwrap_unchecked();
+        if (event.is_Chunk()) {
+            auto chunk = rstd::move(event).as_Chunk().value;
             out.extend_from_slice(chunk.data(), chunk.size());
-            break;
+            continue;
         }
-        case BodyEvent::Kind::Finished: {
+        if (event.is_Finished()) {
             co_return Result<rstd::bytes::Bytes>(Ok(out.freeze()));
         }
-        case BodyEvent::Kind::Error: {
-            co_return Result<rstd::bytes::Bytes>(Err(rstd::move(event.error).unwrap_unchecked()));
-        }
-        }
+        co_return Result<rstd::bytes::Bytes>(
+            Err(rstd::move(event).as_Failed().value));
     }
 }
 

@@ -28,7 +28,7 @@ public:
 
     auto get_arc() { return shared_from_this(); }
 
-    auto start_request(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
+    auto start_request(const Request&, http::Operation, rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
 
     auto get(const Request&) -> coro<Result<Arc<ResponseBackend>>>;

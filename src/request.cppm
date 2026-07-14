@@ -60,7 +60,6 @@ export struct Share : rstd::DefaultInClass<Share, rstd::clone::Clone> {
         share = rstd::move(v);
         return *this;
     }
-    // trait
     auto clone() const -> Share;
 };
 
@@ -103,21 +102,26 @@ namespace ncrequest
 export class Request : public rstd::DefaultInClass<Request, rstd::clone::Clone> {
 public:
     Request() noexcept;
-    Request(std::string_view url) noexcept;
+    explicit Request(http::Url url) noexcept;
     Request(Request&&) noexcept;
     ~Request() noexcept;
     Request& operator=(Request&&) noexcept;
 
-    auto url() const -> std::string_view;
-    auto url_info() const -> const URI&;
-    auto set_url(std::string_view) -> Request&;
+    [[nodiscard]]
+    static auto from_url(rstd::ref<rstd::str>)
+        -> rstd::Result<Request, http::UrlError>;
 
-    auto header() const -> const Header&;
+    auto url() const -> std::string_view;
+    auto url_info() const -> const http::Url&;
+    auto try_set_url(rstd::ref<rstd::str>) -> rstd::Result<rstd::empty, http::UrlError>;
+
+    auto header() const -> const http::Header&;
     auto header(std::string_view name) const -> std::string;
-    auto update_header(const Header&) -> Request&;
-    auto set_header(std::string_view name, std::string_view value) -> Request&;
-    auto remove_header(std::string_view name) -> Request&;
-    void set_opt(const Header&);
+    auto update_header(const http::Header&) -> Request&;
+    auto try_set_header(rstd::ref<rstd::str> name, rstd::ref<rstd::str> value)
+        -> rstd::Result<rstd::empty, http::HeaderError>;
+    auto remove_header(rstd::ref<rstd::str> name) -> Request&;
+    void set_opt(const http::Header&);
 
     template<RequestOption T>
     T& get_opt() {
@@ -137,23 +141,16 @@ public:
         return *this;
     }
 
-    // trait
     auto clone() const -> ncrequest::Request;
 
 private:
-    URI         m_uri;
-    Header      m_header;
+    http::Url    m_url;
+    http::Header m_header;
     RequestOpts m_opts;
 };
 
 } // namespace ncrequest
 
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::Request>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::Request> {};
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Share>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Share> {};
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::req_opt::Proxy>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::req_opt::Proxy> {};
+static_assert(rstd::Impled<ncrequest::Request, rstd::clone::Clone>);
+static_assert(rstd::Impled<ncrequest::req_opt::Share, rstd::clone::Clone>);
+static_assert(rstd::Impled<ncrequest::req_opt::Proxy, rstd::clone::Clone>);

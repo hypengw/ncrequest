@@ -4,7 +4,7 @@ import :error;
 import rstd.core;
 
 using max_align_t = std::max_align_t;
-using namespace rstd;
+using namespace rstd::prelude;
 
 namespace
 {

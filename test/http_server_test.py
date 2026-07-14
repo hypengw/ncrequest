@@ -110,6 +110,49 @@ class Handler(BaseHTTPRequestHandler):
             self.send_payload(HTTPStatus.NO_CONTENT, b"")
             return
 
+        if target.path == "/redirect":
+            self.send_payload(
+                HTTPStatus.FOUND,
+                b"",
+                extra_headers={"Location": "/text", "X-Redirect-Only": "first"},
+            )
+            return
+
+        if target.path == "/headers/request-repeat":
+            values = self.headers.get_all("X-Ncrequest-Repeat") or []
+            self.send_payload(HTTPStatus.OK, ("|".join(values) + "\n").encode("ascii"))
+            return
+
+        if target.path == "/headers/response-repeat":
+            body = b"repeated response headers\n"
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.send_header("X-Ncrequest-Test", "local-http")
+            self.send_header("X-Ncrequest-Repeat", "one")
+            self.send_header("X-Ncrequest-Repeat", "two")
+            self.send_header("Set-Cookie", "first=one; Path=/")
+            self.send_header("Set-Cookie", "second=two; HttpOnly")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            return
+
+        if target.path == "/headers/trailer":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Trailer", "X-Ncrequest-Trailer")
+            self.send_header("Connection", "close")
+            self.send_header("X-Ncrequest-Test", "local-http")
+            self.end_headers()
+            self.wfile.write(
+                b"4\r\nbody\r\n0\r\nX-Ncrequest-Trailer: completed\r\n\r\n"
+            )
+            self.wfile.flush()
+            return
+
         if target.path == "/missing":
             self.send_payload(HTTPStatus.NOT_FOUND, b"missing\n")
             return

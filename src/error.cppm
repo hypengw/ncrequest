@@ -26,6 +26,7 @@ export enum class ErrorKind
     Client,
     Io,
     Protocol,
+    Unsupported,
     Canceled,
     InvalidState,
 };
@@ -46,6 +47,7 @@ export struct ClientError {
     V(Client, (ClientError error;))                    \
     V(Io, (rstd::io::error::Error error;))             \
     V(Protocol, (ProtocolError kind; const char* msg;)) \
+    V(Unsupported, (const char* msg;))                  \
     V(Canceled, ())                                    \
     V(InvalidState, (const char* msg;))
 
@@ -58,6 +60,7 @@ export struct Error {
         case Tag::Client: return ErrorKind::Client;
         case Tag::Io: return ErrorKind::Io;
         case Tag::Protocol: return ErrorKind::Protocol;
+        case Tag::Unsupported: return ErrorKind::Unsupported;
         case Tag::Canceled: return ErrorKind::Canceled;
         case Tag::InvalidState: return ErrorKind::InvalidState;
         }
@@ -99,6 +102,11 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncreque
             auto& payload = e.as_Protocol();
             auto* msg = payload.msg != nullptr ? payload.msg
                                                : ncrequest::protocol_error_message(payload.kind);
+            return f.write_raw((u8 const*)msg, rstd::strlen(msg));
+        }
+        case ncrequest::Error::Tag::Unsupported: {
+            auto* msg = e.as_Unsupported().msg;
+            if (msg == nullptr) msg = "unsupported ncrequest capability";
             return f.write_raw((u8 const*)msg, rstd::strlen(msg));
         }
         case ncrequest::Error::Tag::Canceled: {

@@ -11,7 +11,8 @@ endif()
 
 add_executable(ncrequest_test http.cpp main.cpp)
 
-target_link_libraries(ncrequest_test PRIVATE ncrequest::ncrequest GTest::gtest_main)
+target_link_libraries(ncrequest_test PRIVATE ncrequest::ncrequest
+                                      ncrequest_http_parser GTest::gtest_main)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   target_sources(ncrequest_test PRIVATE websocket.cpp)

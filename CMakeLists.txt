@@ -36,18 +36,6 @@ set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
 set(WIN_DEFS "$<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX;NOGDI>")
 add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
 
-# pegtl
-if(NOT TARGET taocpp::pegtl)
-  FetchContent_Declare(
-    pegtl
-    GIT_REPOSITORY https://github.com/taocpp/PEGTL.git
-    GIT_TAG 3.2.8
-    GIT_SHALLOW 1
-    GIT_PROGRESS 1
-    SYSTEM EXCLUDE_FROM_ALL FIND_PACKAGE_ARGS 3.2.7 QUIET GLOBAL)
-  FetchContent_MakeAvailable(pegtl)
-endif()
-
 if(NOT TARGET rstd::rstd)
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/rstd")
@@ -56,7 +44,7 @@ else()
   FetchContent_Declare(
     rstd
     GIT_REPOSITORY https://github.com/hypengw/rstd.git
-    GIT_TAG 4fad0ba75d4bd9b99999d170953ce6d2b088accc 
+    GIT_TAG 8f4db3733a972388e3be1caf36f12a5b6d53e879
     GIT_SHALLOW 0
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(rstd)
@@ -72,6 +60,22 @@ endif()
 add_library(ncrequest STATIC)
 add_library(ncrequest::ncrequest ALIAS ncrequest)
 
+add_library(ncrequest_http_parser OBJECT)
+target_compile_features(ncrequest_http_parser PUBLIC cxx_std_20)
+target_sources(
+  ncrequest_http_parser
+  PUBLIC FILE_SET
+         modules
+         TYPE
+         CXX_MODULES
+         FILES
+         src/http/parser/cursor.cppm
+         src/http/parser/ascii.cppm
+         src/http/parser/uri.cppm
+         src/http/parser/http1.cppm
+         src/http/parser/mod.cppm)
+target_link_libraries(ncrequest_http_parser PUBLIC rstd::rstd)
+
 target_compile_features(ncrequest PUBLIC cxx_std_20)
 
 set(NCREQUEST_MODULE_FILES
@@ -83,6 +87,12 @@ set(NCREQUEST_MODULE_FILES
     src/client/websocket_backend.cppm
     src/response.cppm
     src/session.cppm
+    src/http/error.cppm
+    src/http/url.cppm
+    src/http/header.cppm
+    src/http/query.cppm
+    src/http/cookie.cppm
+    src/http/message.cppm
     src/http.cppm
     src/websocket.cppm
     src/coro/base.cppm
@@ -121,11 +131,12 @@ target_sources(
 
 target_sources(
   ncrequest
-  PRIVATE src/peg/uri.hpp
-          src/peg/http.hpp
-          src/http.cpp
-          src/request.cpp
-          src/type.cpp)
+  PRIVATE src/http/url.cpp
+          src/http/header.cpp
+          src/http/query.cpp
+          src/http/cookie.cpp
+          src/http/message.cpp
+          src/request.cpp)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   target_sources(
@@ -158,8 +169,8 @@ endif()
 
 target_link_libraries(
   ncrequest
-  PUBLIC rstd::rstd rstd.cppstd
-  PRIVATE taocpp::pegtl)
+  PRIVATE ncrequest_http_parser
+  PUBLIC rstd::rstd rstd.cppstd)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")
   target_link_libraries(ncrequest PUBLIC Qt6::Core Qt6::Network Qt6::WebSockets)

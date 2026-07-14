@@ -8,14 +8,6 @@ using namespace curl;
 
 namespace ncrequest
 {
-export constexpr CURLINFO to_curl_info(Attribute A) noexcept {
-    switch (A) {
-        using enum Attribute;
-    case HttpCode: return CURLINFO::CURLINFO_RESPONSE_CODE;
-    default: return CURLINFO::CURLINFO_RESPONSE_CODE;
-    }
-}
-
 namespace detail
 {
 template<CURLoption OPT>
@@ -53,12 +45,12 @@ public:
     }
 
     template<typename T>
-    inline auto get_info(CURLINFO info) noexcept -> std::variant<T, CURLcode> {
+    inline auto get_info(CURLINFO info) noexcept -> rstd::Result<T, CURLcode> {
         T inst;
         if (auto res = curl_easy_getinfo(handle(), info, &inst)) {
-            return res;
+            return rstd::Err(res);
         }
-        return inst;
+        return rstd::Ok(rstd::move(inst));
     }
 
     template<CURLoption OPT>
@@ -78,11 +70,20 @@ public:
 
     CURLcode perform() noexcept { return curl_easy_perform(easy); }
 
-    void set_header(const Header& headers) {
+    template<typename Headers>
+    void set_header(const Headers& headers) {
         reset_header();
-        for (auto& [k, v] : headers) {
-            std::string header = std::format("{}: {}", k, v);
-            m_headers             = curl_slist_append(m_headers, header.c_str());
+        auto fields = headers.iter();
+        for (auto field = fields.next(); field.is_some(); field = fields.next()) {
+            auto name  = (**field).name().as_ref();
+            auto value = (**field).value().as_bytes();
+
+            std::string header;
+            header.reserve(name.size() + value.len() + 2);
+            header.append(reinterpret_cast<const char*>(name.data()), name.size());
+            header.append(": ");
+            header.append(reinterpret_cast<const char*>(value.as_raw_ptr()), value.len());
+            m_headers = curl_slist_append(m_headers, header.c_str());
         }
         if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);
     }

@@ -109,13 +109,14 @@ public:
 
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         auto list_ = x.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
-        if (auto plist = std::get_if<curl_slist*>(&list_)) {
-            auto list = *plist;
+        if (list_.is_ok()) {
+            auto list = rstd::move(list_).unwrap();
+            auto head = list;
             while (list) {
                 out.emplace_back(list->data);
                 list = list->next;
             }
-            curl_slist_free_all(*plist);
+            curl_slist_free_all(head);
         }
         return out;
     }

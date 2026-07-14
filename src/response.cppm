@@ -1,6 +1,5 @@
 module;
 #include <string>
-#include <variant>
 
 export module ncrequest:response;
 
@@ -28,14 +27,20 @@ public:
 
     explicit Response(Backend&& backend): Backend(rstd::move(backend)) {}
 
-    auto code() const -> rstd::Option<i32> {
-        auto& start = this->header().start;
-        if (start) {
-            if (auto* status = std::get_if<HttpHeader::Status>(&*start)) {
-                return Some<i32>(status->code);
+    auto code() const -> rstd::Option<i32> { return Backend::code(); }
+
+    auto set_cookies() const
+        -> rstd::Result<rstd::vec::Vec<http::SetCookie>, http::CookieError> {
+        auto cookies = rstd::vec::Vec<http::SetCookie>::make();
+        auto values  = this->header().values("set-cookie");
+        for (auto value = values.next(); value.is_some(); value = values.next()) {
+            auto parsed = http::SetCookie::parse_bytes((**value).as_bytes());
+            if (parsed.is_err()) {
+                return rstd::Err(rstd::move(parsed).unwrap_err());
             }
+            cookies.push(rstd::move(parsed).unwrap());
         }
-        return None<i32>();
+        return rstd::Ok(rstd::move(cookies));
     }
 
     auto text() -> coro<Result<std::string>> {

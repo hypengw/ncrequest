@@ -19,18 +19,9 @@ public:
     static constexpr usize ReadSize { 1024 * 16 };
 
 public:
-    template<Attribute A, typename T = attr_type<A>>
-    auto attribute(void) const -> rstd::Option<T> {
-        auto a = attribute(A);
-        if (a.index() == 0) {
-            return std::nullopt;
-        }
-        return std::get<T>(a);
-    }
-
-    auto attribute(Attribute) const -> attr_value;
-
-    auto header() const -> const HttpHeader&;
+    auto header() const -> const http::Header&;
+    auto head() const -> rstd::Option<rstd::ref<http::MessageHead>>;
+    auto trailers() const -> rstd::Option<rstd::ref<http::Header>>;
     auto code() const -> rstd::Option<i32>;
 
     auto text() -> coro<Result<std::string>>;
@@ -57,17 +48,16 @@ public:
         co_return written;
     }
 
-    static auto make_response(const Request&, Operation, Arc<SessionBackend>) -> Arc<ResponseBackend>;
-    ResponseBackend(const Request&, Operation, Arc<SessionBackend>) noexcept;
+    static auto make_response(const Request&, http::Operation, Arc<SessionBackend>)
+        -> Arc<ResponseBackend>;
+    ResponseBackend(const Request&, http::Operation, Arc<SessionBackend>) noexcept;
     ResponseBackend(ResponseBackend&&) noexcept;
     ~ResponseBackend() noexcept;
     ResponseBackend& operator=(ResponseBackend&&) noexcept;
 
     auto is_finished() const -> bool;
     auto request() const -> const Request&;
-    auto operation() const -> Operation;
-
-    auto cookie_jar() const -> const CookieJar&;
+    auto operation() const -> http::Operation;
 
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
@@ -88,7 +78,7 @@ private:
 
 class ResponseBackend::Inner {
 public:
-    Inner(ResponseBackend*, const Request&, Operation, Arc<SessionBackend>);
+    Inner(ResponseBackend*, const Request&, http::Operation, Arc<SessionBackend>);
     friend class ResponseBackend;
 
     void set_share(rstd::Option<SessionShare> share) { m_share = rstd::move(share); }
@@ -97,7 +87,7 @@ private:
     ResponseBackend* m_q;
     Request          m_req;
 
-    Operation m_operation;
+    http::Operation m_operation;
     bool      m_finished;
 
     rstd::bytes::Bytes         m_send_buffer;

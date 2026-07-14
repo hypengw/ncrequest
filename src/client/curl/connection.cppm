@@ -231,8 +231,11 @@ public:
     auto& easy() const { return *m_easy; }
     auto& channel() { return m_session_channel; }
 
-    auto& header() const { return m_header; }
-    auto& cookie_jar() const { return m_cookie_jar; }
+    auto& header() const { return *m_header; }
+    auto trailers() const -> Option<ref<http::Header>> {
+        if (m_trailers.is_none()) return None<ref<http::Header>>();
+        return Some(ref<http::Header>::from_raw_parts(&*m_trailers));
+    }
     auto& url() const { return m_url; }
     void  set_url(std::string_view v) { m_url = v; }
     void  set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
@@ -402,21 +405,38 @@ private:
         std::string_view header { ptr, size * nmemb };
         auto             lock = std::lock_guard { self->m_mutex };
 
-        self->m_header_raw.append(header);
-        if (! self->m_header.start) {
-            self->m_header.start = HttpHeader::parse_start_line(header);
-        } else {
-            auto field = HttpHeader::parse_field_line(header);
-            if (! field.name.empty()) {
-                self->m_header.fields.push_back(field);
-                if (helper::starts_with_i(field.name, "set-cookie")) {
-                    self->m_cookie_jar.raw_cookie.append(header).push_back('\n');
-                }
+        if (self->m_body_started) {
+            self->m_trailer_started = true;
+            auto parsed = self->m_trailer_parser.push(rstd::slice<rstd::u8>::from_raw_parts(
+                reinterpret_cast<const rstd::u8*>(header.data()), header.size()));
+            if (parsed.is_err()) {
+                self->m_header_error = Some(rstd::move(parsed).unwrap_err());
+                return 0;
             }
+            auto event = rstd::move(parsed).unwrap();
+            if (event.is_Complete()) {
+                self->m_trailers = Some(rstd::move(event).as_Complete().fields);
+            }
+            return header.size();
         }
-        if (self->m_header.start && header == "\r\n") {
-            self->m_header_done = true;
+        if (self->m_header_done) self->m_header_done = false;
+
+        auto parsed = self->m_header_parser.push(rstd::slice<rstd::u8>::from_raw_parts(
+            reinterpret_cast<const rstd::u8*>(header.data()), header.size()));
+        if (parsed.is_err()) {
+            self->m_header_error = Some(rstd::move(parsed).unwrap_err());
+            self->m_header_done  = true;
             self->try_header_waiter_locked();
+            return 0;
+        }
+
+        auto event = rstd::move(parsed).unwrap();
+        if (event.is_Complete()) {
+            auto completed = rstd::move(event).as_Complete();
+            self->m_header = Some(rstd::move(completed.head));
+            self->m_header_done = true;
+
+            self->m_header_parser = http::Http1HeadParser {};
         }
         return header.size();
     }
@@ -425,6 +445,8 @@ private:
         auto total_size = size * nmemb;
         auto lock       = std::lock_guard { self->m_mutex };
 
+        self->m_body_started = true;
+        self->try_header_waiter_locked();
         if (self->m_recv_buf.is_full()) {
             self->m_recv_paused.store(true);
             return CURL_WRITEFUNC_PAUSE;
@@ -455,6 +477,20 @@ private:
 
     void finish(CURLcode ec) {
         auto lock   = std::lock_guard { m_mutex };
+        if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
+            auto parsed = m_trailer_parser.push(rstd::str_::as_bytes("\r\n"));
+            if (parsed.is_err()) {
+                m_header_error = Some(rstd::move(parsed).unwrap_err());
+            } else {
+                auto event = rstd::move(parsed).unwrap();
+                if (event.is_Complete()) {
+                    m_trailers = Some(rstd::move(event).as_Complete().fields);
+                } else {
+                    auto incomplete = m_trailer_parser.finish();
+                    m_header_error = Some(rstd::move(incomplete).unwrap_err());
+                }
+            }
+        }
         m_finish_ec = ec;
         m_state     = State::Finished;
         try_read_waiter_locked();
@@ -478,9 +514,25 @@ private:
     }
 
     auto finish_error_locked() const -> rstd::Option<Error> {
+        if (m_header_error.is_some()) {
+            auto const& kind = m_header_error->kind();
+            auto protocol = ProtocolError::InvalidHeaderLine;
+            if (kind.is_InvalidStartLine()) {
+                protocol = ProtocolError::InvalidStatusLine;
+            } else if (kind.is_HeaderTooLarge()) {
+                protocol = ProtocolError::HeaderTooLarge;
+            } else if (kind.is_UnexpectedEof()) {
+                protocol = ProtocolError::UnexpectedEof;
+            }
+            return Some(Error::Protocol(protocol, protocol_error_message(protocol)));
+        }
         if (m_state == State::Canceled) return Some(Error::Canceled());
         if (m_finish_ec != CURLcode::CURLE_OK) {
             return Some(rstd::into<Error>(static_cast<CURLcode>(m_finish_ec)));
+        }
+        if (m_state == State::Finished && ! m_header_done) {
+            auto protocol = ProtocolError::UnexpectedEof;
+            return Some(Error::Protocol(protocol, protocol_error_message(protocol)));
         }
         return None<Error>();
     }
@@ -546,7 +598,8 @@ private:
 
     void try_header_waiter_locked() {
         if (m_header_waiter.is_none()) return;
-        if (! m_header_done && m_state != State::Canceled && m_state != State::Finished) {
+        if (m_state != State::Canceled && m_state != State::Finished &&
+            (! m_header_done || ! m_body_started)) {
             return;
         }
 
@@ -567,11 +620,14 @@ private:
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
-    std::string m_header_raw;
-    HttpHeader  m_header;
-    bool        m_header_done { false };
-    CookieJar   m_cookie_jar;
-
+    http::Http1HeadParser        m_header_parser;
+    http::Http1FieldSectionParser m_trailer_parser;
+    Option<http::MessageHead>    m_header;
+    Option<http::Header>         m_trailers;
+    Option<http::HttpParseError> m_header_error;
+    bool                         m_header_done { false };
+    bool                         m_body_started { false };
+    bool                         m_trailer_started { false };
     Buffer<allocator_type> m_recv_buf;
 
     req_opt::Read::Callback m_send_callback;

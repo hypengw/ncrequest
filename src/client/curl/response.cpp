@@ -12,7 +12,9 @@ namespace
 {
 
 void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
-    easy.setopt(CURLoption::CURLOPT_URL, req.url().data());
+    auto url_view = req.url();
+    auto url      = std::string { url_view.data(), url_view.size() };
+    easy.setopt(CURLoption::CURLOPT_URL, url.c_str());
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
 
@@ -47,18 +49,9 @@ void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Reque
     easy.set_header(req.header());
 }
 
-template<Attribute A, CURLINFO Info = to_curl_info(A)>
-attr_value attr_from_easy(CurlEasy& easy) {
-    auto res = easy.template get_info<attr_type<A>>(Info);
-    return std::visit(helper::overloaded { [](auto a) {
-                          return attr_value(a);
-                      } },
-                      res);
-}
-
 } // namespace
 
-ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, Operation oper,
+ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, http::Operation oper,
                               Arc<SessionBackend> ses)
     : m_q(res),
       m_req(req.clone()),
@@ -67,17 +60,20 @@ ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, Operatio
       m_connect(make_arc<Connection>(ses->channel_rc(), ses->allocator())),
       m_allocator(ses->allocator()) {}
 
-ResponseBackend::ResponseBackend(const Request& req, Operation oper, Arc<SessionBackend> ses) noexcept
+ResponseBackend::ResponseBackend(const Request& req, http::Operation oper,
+                                 Arc<SessionBackend> ses) noexcept
     : m_inner(make_arc<Inner>(this, req, oper, ses)) {
     auto  d    = m_inner.get();
     auto& easy = connection().easy();
-    switch (oper) {
-    case Operation::GetOperation: break;
-    case Operation::PostOperation:
+    switch (oper.tag()) {
+    case http::Operation::Tag::Get: break;
+    case http::Operation::Tag::Post:
         easy.setopt(CURLoption::CURLOPT_POST, 1);
         easy.setopt(CURLoption::CURLOPT_POSTFIELDS, nullptr);
         easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, 0);
         break;
+    case http::Operation::Tag::Delete:
+    case http::Operation::Tag::Head:
     default: break;
     }
     apply_easy_request(d, easy, req);
@@ -113,8 +109,8 @@ auto ResponseBackend::allocator() const -> const std::pmr::polymorphic_allocator
     return m_inner->m_allocator;
 }
 
-Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, Operation oper,
-                                                    Arc<SessionBackend> ses) {
+Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, http::Operation oper,
+                                                     Arc<SessionBackend> ses) {
     return std::make_shared<ResponseBackend>(req, oper, ses);
 }
 
@@ -134,9 +130,9 @@ void ResponseBackend::add_send_buffer(rstd::bytes::Bytes buf) { m_inner->m_send_
 void ResponseBackend::prepare_perform() {
     auto& easy = connection().easy();
 
-    switch (m_inner->m_operation) {
-    case Operation::GetOperation: break;
-    case Operation::PostOperation: {
+    switch (m_inner->m_operation.tag()) {
+    case http::Operation::Tag::Get: break;
+    case http::Operation::Tag::Post: {
         auto& p = m_inner->m_req.get_opt<req_opt::Read>();
         if (p.callback) {
             easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, p.size ? p.size : -1);
@@ -147,41 +143,35 @@ void ResponseBackend::prepare_perform() {
         }
         break;
     }
+    case http::Operation::Tag::Delete:
+    case http::Operation::Tag::Head:
     default: break;
     }
 
     connection().set_url(m_inner->m_req.url());
 }
 
-Operation ResponseBackend::operation() const { return m_inner->m_operation; }
+auto ResponseBackend::operation() const -> http::Operation { return m_inner->m_operation; }
 
 bool ResponseBackend::is_finished() const {
     if (! m_inner) return true;
     return connection().is_finished();
 }
 
-attr_value ResponseBackend::attribute(Attribute A) const {
-    auto& easy = connection().easy();
-    switch (A) {
-        using enum Attribute;
-    case HttpCode: return attr_from_easy<HttpCode>(easy); break;
-    default: break;
-    }
-    return {};
+auto ResponseBackend::header() const -> const http::Header& {
+    return connection().header().headers();
 }
-
-auto ResponseBackend::header() const -> const HttpHeader& { return connection().header(); }
+auto ResponseBackend::head() const -> rstd::Option<rstd::ref<http::MessageHead>> {
+    return Some(rstd::ref<http::MessageHead>::from_raw_parts(&connection().header()));
+}
+auto ResponseBackend::trailers() const -> rstd::Option<rstd::ref<http::Header>> {
+    return connection().trailers();
+}
 auto ResponseBackend::code() const -> rstd::Option<i32> {
-    auto& start = this->header().start;
-    if (start) {
-        if (auto status = std::get_if<HttpHeader::Status>(&*start)) {
-            return Some((i32)(status->code));
-        }
-    }
-    return None();
+    auto status = connection().header().status_code();
+    if (status.is_none()) return None();
+    return Some(static_cast<i32>(*status));
 }
-
-auto ResponseBackend::cookie_jar() const -> const CookieJar& { return connection().cookie_jar(); }
 
 auto ResponseBackend::connection() -> Connection& { return *(m_inner->m_connect); }
 auto ResponseBackend::connection() const -> const Connection& { return *(m_inner->m_connect); }

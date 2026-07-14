@@ -2,6 +2,8 @@ module;
 #include <rstd/enum.hpp>
 module ncrequest;
 import :request;
+import cppstd;
+import rstd.cppstd;
 
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 import ncrequest.curl;
@@ -25,47 +27,65 @@ Request::Request() noexcept
                req_opt::SSL { .verify_certificate = true },
                req_opt::Read {},
                req_opt::Share {} } {}
-Request::Request(std::string_view url) noexcept: Request() { set_url(url); }
+Request::Request(http::Url url) noexcept: Request() { m_url = rstd::move(url); }
 Request::~Request() noexcept {}
 Request::Request(Request&&) noexcept            = default;
 Request& Request::operator=(Request&&) noexcept = default;
 
-std::string_view Request::url() const { return m_uri.uri; }
+auto Request::from_url(rstd::ref<rstd::str> input)
+    -> rstd::Result<Request, http::UrlError> {
+    auto parsed = http::Url::parse_http(input);
+    if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
+    return rstd::Ok(Request { rstd::move(parsed).unwrap() });
+}
 
-const URI& Request::url_info() const { return m_uri; }
+std::string_view Request::url() const {
+    return rstd::cppstd::as_string_view(m_url.as_ref());
+}
 
-Request& Request::set_url(std::string_view uri) {
-    m_uri = URI::from(uri);
-    return *this;
+auto Request::url_info() const -> const http::Url& { return m_url; }
+
+auto Request::try_set_url(rstd::ref<rstd::str> input)
+    -> rstd::Result<rstd::empty, http::UrlError> {
+    auto parsed = http::Url::parse_http(input);
+    if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
+    m_url = rstd::move(parsed).unwrap();
+    return rstd::Ok(rstd::empty {});
 }
 
 std::string Request::header(std::string_view name) const {
-    if (m_header.contains(name)) {
-        return m_header.at(std::string(name));
+    auto value = m_header.get(name);
+    if (value.is_none()) return {};
+    auto bytes = (**value).as_bytes();
+    return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len() };
+}
+
+auto Request::header() const -> const http::Header& { return m_header; }
+
+auto Request::update_header(const http::Header& h) -> Request& {
+    auto removals = h.iter();
+    for (auto field = removals.next(); field.is_some(); field = removals.next()) {
+        (void)m_header.remove((**field).name().as_ref());
     }
-    return std::string();
-}
 
-const Header& Request::header() const { return m_header; }
-
-auto Request::update_header(const Header& h) -> Request& {
-    for (auto& el : h) {
-        m_header.insert_or_assign(el.first, el.second);
+    auto additions = h.iter();
+    for (auto field = additions.next(); field.is_some(); field = additions.next()) {
+        m_header.append((**field).clone());
     }
     return *this;
 }
 
-Request& Request::set_header(std::string_view name, std::string_view value) {
-    m_header.insert_or_assign(std::string(name), value);
+auto Request::try_set_header(rstd::ref<rstd::str> name, rstd::ref<rstd::str> value)
+    -> rstd::Result<rstd::empty, http::HeaderError> {
+    return m_header.set(name, value);
+}
+
+Request& Request::remove_header(rstd::ref<rstd::str> name) {
+    (void)m_header.remove(name);
     return *this;
 }
 
-Request& Request::remove_header(std::string_view name) {
-    m_header.erase(std::string(name));
-    return *this;
-}
-
-void Request::set_opt(const Header& header) { m_header = header; }
+void Request::set_opt(const http::Header& header) { m_header = header.clone(); }
 
 void Request::set_opt(RequestOpt&& opt) {
     RSTD_MATCH(rstd::move(opt)) {
@@ -93,8 +113,8 @@ void Request::set_opt(RequestOpt&& opt) {
 auto Request::clone() const -> ncrequest::Request {
     auto  req    = ncrequest::Request {};
     auto& self   = *this;
-    req.m_uri    = self.m_uri;
-    req.m_header = self.m_header;
+    req.m_url    = self.m_url.clone();
+    req.m_header = self.m_header.clone();
     req.m_opts   = as<rstd::clone::Clone>(self.m_opts).clone();
     return req;
 }
