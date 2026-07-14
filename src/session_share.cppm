@@ -13,6 +13,11 @@ export class SessionShare : public rstd::DefaultInClass<SessionShare, rstd::clon
 public:
     SessionShare();
     ~SessionShare();
+    SessionShare(SessionShare&&) noexcept;
+    auto operator=(SessionShare&&) noexcept -> SessionShare&;
+
+    SessionShare(const SessionShare&) = delete;
+    auto operator=(const SessionShare&) -> SessionShare& = delete;
 
     void load(const std::filesystem::path& p);
     void save(const std::filesystem::path& p) const;
@@ -22,10 +27,10 @@ private:
     class Private;
     friend class detail::SessionShareAccess;
 
+    explicit SessionShare(Arc<Private> state);
+
     Arc<Private> d_ptr;
 };
-} // namespace ncrequest
 
-export template<>
-struct rstd::Impl<rstd::clone::Clone, ncrequest::SessionShare>
-    : rstd::LinkClassMethod<rstd::clone::Clone, ncrequest::SessionShare> {};
+static_assert(rstd::Impled<SessionShare, rstd::clone::Clone>);
+} // namespace ncrequest

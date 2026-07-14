@@ -27,19 +27,25 @@ public:
     std::mutex share_mutex;
 };
 
-SessionShare::SessionShare(): d_ptr(make_arc<Private>()) {
+SessionShare::SessionShare(Arc<Private> state): d_ptr(rstd::move(state)) {}
+SessionShare::SessionShare(SessionShare&&) noexcept = default;
+auto SessionShare::operator=(SessionShare&&) noexcept -> SessionShare& = default;
+
+SessionShare::SessionShare(): d_ptr(Arc<Private>::make()) {
     curl_share_setopt(
         d_ptr->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
     curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
     curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
-    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_USERDATA, d_ptr.get());
+    curl_share_setopt(d_ptr->share,
+                      CURLSHoption::CURLSHOPT_USERDATA,
+                      d_ptr.as_ptr().as_raw_ptr());
 }
 SessionShare::~SessionShare() {}
 
 auto detail::SessionShareAccess::curl_handle(const SessionShare& share) -> CURLSH* {
     return share.d_ptr->share;
 }
-auto SessionShare::clone() const -> SessionShare { return *this; }
+auto SessionShare::clone() const -> SessionShare { return SessionShare { d_ptr.clone() }; }
 
 void SessionShare::load(const std::filesystem::path& p) {
     CurlEasy x;

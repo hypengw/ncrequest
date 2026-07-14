@@ -1,9 +1,9 @@
 module;
-#include <chrono>
+#include <filesystem>
+#include <rstd/enum.hpp>
 
 export module ncrequest.curl:multi;
 export import :easy;
-export import :error;
 export import ncrequest.type;
 
 using namespace curl;
@@ -20,6 +20,18 @@ export struct CurlOptions {
     bool enable_http_multiplex { false };
 };
 
+#define NCREQUEST_CURL_MULTI_ERROR_VARIANTS(V) \
+    V(Easy, (CURLcode code;))                  \
+    V(Multi, (CURLMcode code;))
+
+export struct CurlMultiError {
+    RSTD_ENUM_BODY(CurlMultiError, NCREQUEST_CURL_MULTI_ERROR_VARIANTS)
+};
+
+#undef NCREQUEST_CURL_MULTI_ERROR_VARIANTS
+
+export using CurlMultiResult = rstd::Result<empty, CurlMultiError>;
+
 export class CurlMulti : public NoCopy {
 public:
     struct InfoMsg {
@@ -31,7 +43,8 @@ public:
     CurlMulti(CurlOptions options = {}) noexcept
         : m_multi(curl_multi_init()),
           m_share(curl_share_init()),
-          m_options(options) {
+          m_options(options),
+          m_share_mutex(rstd::sys::sync::mutex::Mutex::make()) {
         // curl_multi_setopt(m_multi, CURLMOPT_SOCKETFUNCTION, CurlMulti::curl_socket_func);
         // curl_multi_setopt(m_multi, CURLMOPT_SOCKETDATA, this);
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERFUNCTION, CurlMulti::curl_timer_func);
@@ -50,51 +63,58 @@ public:
         curl_share_cleanup(m_share);
     }
 
-    std::error_code add_handle(CurlEasy& easy) {
-        std::error_code cm {};
-        cm = apply_easy_options(easy);
-        if (cm) return cm;
+    auto add_handle(CurlEasy& easy) -> CurlMultiResult {
+        auto applied = apply_easy_options(easy);
+        if (applied.is_err()) return applied;
         if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
-            cm = easy.setopt<CURLoption::CURLOPT_SHARE>(m_share);
+            auto code = easy.setopt<CURLoption::CURLOPT_SHARE>(m_share);
+            if (code != CURLcode::CURLE_OK) {
+                return rstd::Err(CurlMultiError::Easy(code));
+            }
         }
-        if (cm) return cm;
-        cm = curl_multi_add_handle(m_multi, easy.handle());
-        return cm;
+        auto code = curl_multi_add_handle(m_multi, easy.handle());
+        if (code != CURLMcode::CURLM_OK) {
+            return rstd::Err(CurlMultiError::Multi(code));
+        }
+        return rstd::Ok(empty {});
     }
 
-    std::error_code set_options(CurlOptions options) {
+    auto set_options(CurlOptions options) -> CurlMultiResult {
         auto old = m_options;
         m_options = options;
-        auto ec = apply_multi_options();
-        if (ec) {
+        auto applied = apply_multi_options();
+        if (applied.is_err()) {
             m_options = old;
-            return ec;
+            return applied;
         }
-        return {};
+        return rstd::Ok(empty {});
     }
 
     auto options() const noexcept -> const CurlOptions& { return m_options; }
 
-    std::error_code remove_handle(CurlEasy& easy) {
-        return curl_multi_remove_handle(m_multi, easy.handle());
+    auto remove_handle(CurlEasy& easy) -> CurlMultiResult {
+        return multi_result(curl_multi_remove_handle(m_multi, easy.handle()));
     }
-    std::error_code remove_handle(CURL* easy) { return curl_multi_remove_handle(m_multi, easy); }
-
-    std::error_code wakeup() { return curl_multi_wakeup(m_multi); }
-
-    std::error_code perform(int& still_running) {
-        return curl_multi_perform(m_multi, &still_running);
+    auto remove_handle(CURL* easy) -> CurlMultiResult {
+        return multi_result(curl_multi_remove_handle(m_multi, easy));
     }
 
-    std::error_code poll(std::chrono::milliseconds timeout) {
-        return curl_multi_poll(m_multi, nullptr, 0, (int)timeout.count(), nullptr);
+    auto wakeup() -> CurlMultiResult { return multi_result(curl_multi_wakeup(m_multi)); }
+
+    auto perform(int& still_running) -> CurlMultiResult {
+        return multi_result(curl_multi_perform(m_multi, &still_running));
     }
 
-    std::vector<InfoMsg> query_info_msg() {
-        std::vector<InfoMsg> out;
+    auto poll(rstd::time::Duration timeout) -> CurlMultiResult {
+        return multi_result(
+            curl_multi_poll(m_multi, nullptr, 0, static_cast<int>(timeout.as_millis()), nullptr));
+    }
+
+    auto query_info_msg() -> rstd::vec::Vec<InfoMsg> {
+        auto out = rstd::vec::Vec<InfoMsg>::make();
         int                     message_left { 0 };
         while (CURLMsg* msg = curl_multi_info_read(m_multi, &message_left)) {
-            out.push_back(InfoMsg {
+            out.push(InfoMsg {
                 .msg         = msg->msg,
                 .easy_handle = msg->easy_handle,
                 .result      = msg->data.result,
@@ -103,8 +123,8 @@ public:
         return out;
     }
 
-    auto cookies() const -> std::vector<std::string> {
-        std::vector<std::string> out;
+    auto cookies() const -> rstd::vec::Vec<rstd::string::String> {
+        auto out = rstd::vec::Vec<rstd::string::String>::make();
         CurlEasy                       x;
 
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
@@ -113,7 +133,7 @@ public:
             auto list = rstd::move(list_).unwrap();
             auto head = list;
             while (list) {
-                out.emplace_back(list->data);
+                out.push(rstd::string::String::make(list->data));
                 list = list->next;
             }
             curl_slist_free_all(head);
@@ -138,49 +158,54 @@ public:
     }
 
 private:
-    std::error_code apply_multi_options() {
+    auto apply_multi_options() -> CurlMultiResult {
         if (m_options.max_idle_connections > 0) {
             if (auto ec = curl_multi_setopt(
                     m_multi, CURLMoption::CURLMOPT_MAXCONNECTS, m_options.max_idle_connections)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.max_host_connections > 0) {
             if (auto ec = curl_multi_setopt(m_multi,
                                             CURLMoption::CURLMOPT_MAX_HOST_CONNECTIONS,
                                             m_options.max_host_connections)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.max_total_connections > 0) {
             if (auto ec = curl_multi_setopt(m_multi,
                                             CURLMoption::CURLMOPT_MAX_TOTAL_CONNECTIONS,
                                             m_options.max_total_connections)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.enable_http_multiplex) {
             if (auto ec = curl_multi_setopt(m_multi, CURLMoption::CURLMOPT_PIPELINING, 2L)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Multi(ec));
             }
         }
-        return {};
+        return rstd::Ok(empty {});
     }
 
-    std::error_code apply_easy_options(CurlEasy& easy) {
+    auto apply_easy_options(CurlEasy& easy) -> CurlMultiResult {
         if (m_options.receive_buffer_size > 0) {
             if (auto ec = easy.setopt(CURLoption::CURLOPT_BUFFERSIZE,
                                       m_options.receive_buffer_size)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Easy(ec));
             }
         }
         if (m_options.upload_buffer_size > 0) {
             if (auto ec = easy.setopt(CURLoption::CURLOPT_UPLOAD_BUFFERSIZE,
                                       m_options.upload_buffer_size)) {
-                return ec;
+                return rstd::Err(CurlMultiError::Easy(ec));
             }
         }
-        return {};
+        return rstd::Ok(empty {});
+    }
+
+    static auto multi_result(CURLMcode code) -> CurlMultiResult {
+        if (code == CURLMcode::CURLM_OK) return rstd::Ok(empty {});
+        return rstd::Err(CurlMultiError::Multi(code));
     }
 
     static void static_share_lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
@@ -202,6 +227,6 @@ private:
     CURLSH* m_share;
     CurlOptions m_options;
 
-    std::mutex m_share_mutex;
+    rstd::sys::sync::mutex::Mutex m_share_mutex;
 };
 } // namespace ncrequest

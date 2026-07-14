@@ -160,7 +160,7 @@ void remove_file(const std::filesystem::path& path) {
     std::filesystem::remove(path, ignored);
 }
 
-auto response_code(ncrequest::Arc<ncrequest::Response> rsp) -> int {
+auto response_code(const ncrequest::Arc<ncrequest::Response>& rsp) -> int {
     auto code = rsp->code();
     if (code.is_some()) return code.unwrap();
     return 0;
@@ -187,7 +187,7 @@ auto fetch_text_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::R
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
 
     auto text = co_await response->text();
@@ -253,7 +253,7 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
                               const ncrequest::SessionShare& share)
     -> ncrequest::coro<FetchResult> {
     auto result   = FetchResult {};
-    auto response = ncrequest::Arc<ncrequest::Response> {};
+    auto response = rstd::Option<ncrequest::Arc<ncrequest::Response>> {};
     {
         auto request = request_with_share(rstd::move(url), share);
         auto started = co_await session->get(request);
@@ -261,17 +261,17 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
             result.error = "session returned error";
             co_return result;
         }
-        response            = rstd::move(started).unwrap();
+        response            = rstd::Some(rstd::move(started).unwrap());
         result.got_response = true;
     }
 
-    auto text = co_await response->text();
+    auto text = co_await (*response)->text();
     if (text.is_err()) {
         result.error = "response text read failed";
         co_return result;
     }
-    result.code            = response_code(response);
-    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.code            = response_code(*response);
+    result.has_test_header = (*response)->header().has_field("x-ncrequest-test");
     result.body            = rstd::move(text).unwrap();
     result.got_body        = true;
     co_return result;
@@ -285,13 +285,13 @@ auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base
     auto isolated = ncrequest::SessionShare {};
 
     result.default_set = co_await fetch_text(
-        session, local_http_url(base, "/cookie/set?name=default_cookie&value=default"));
+        session.clone(), local_http_url(base, "/cookie/set?name=default_cookie&value=default"));
     auto shared_task = rstd::async::spawn_local(fetch_text_request(
-        session,
+        session.clone(),
         request_with_share(
             local_http_url(base, "/cookie/set?name=shared_cookie&value=shared"), shared)));
     auto isolated_task = rstd::async::spawn_local(fetch_text_request(
-        session,
+        session.clone(),
         request_with_share(
             local_http_url(base, "/cookie/set?name=isolated_cookie&value=isolated"), isolated)));
     auto share_sets =
@@ -299,43 +299,50 @@ auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base
     result.share_set    = rstd::move(share_sets.get<0>()).unwrap();
     result.isolated_set = rstd::move(share_sets.get<1>()).unwrap();
     result.default_echo =
-        co_await fetch_text(session, local_http_url(base, "/cookie/echo"));
+        co_await fetch_text(session.clone(), local_http_url(base, "/cookie/echo"));
     result.share_echo = co_await fetch_text_request(
-        session, request_with_share(local_http_url(base, "/cookie/echo"), shared));
+        session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), shared));
     result.isolated_echo = co_await fetch_text_request(
-        session, request_with_share(local_http_url(base, "/cookie/echo"), isolated));
+        rstd::move(session),
+        request_with_share(local_http_url(base, "/cookie/echo"), isolated));
 
     auto second_session = ncrequest::Session::make();
     auto cloned         = shared.clone();
     result.cloned_echo  = co_await fetch_text_request(
-        second_session, request_with_share(local_http_url(base, "/cookie/echo"), cloned));
+        second_session.clone(),
+        request_with_share(local_http_url(base, "/cookie/echo"), cloned));
     result.redirect_echo = co_await fetch_text_request(
-        second_session,
+        second_session.clone(),
         request_with_share(local_http_url(
                                base,
                                "/cookie/redirect-set?name=redirect_cookie&value=redirected"),
                            cloned));
     result.temporary_request = co_await fetch_after_request_drop(
-        second_session,
+        second_session.clone(),
         local_http_url(base, "/cookie/slow-set?name=lifetime_cookie&value=alive"),
         cloned);
     result.canceled_request = co_await cancel_request(
-        second_session, request_with_share(local_http_url(base, "/slow-stream"), cloned));
+        second_session.clone(),
+        request_with_share(local_http_url(base, "/slow-stream"), cloned));
     result.timed_out_request = co_await timeout_request(
-        second_session, request_with_share(local_http_url(base, "/slow-first-byte"), cloned));
+        second_session.clone(),
+        request_with_share(local_http_url(base, "/slow-first-byte"), cloned));
     result.recovered_echo = co_await fetch_text_request(
-        second_session, request_with_share(local_http_url(base, "/cookie/echo"), cloned));
+        second_session.clone(),
+        request_with_share(local_http_url(base, "/cookie/echo"), cloned));
 
     auto fixture = ncrequest::SessionShare {};
     fixture.load(fixture_file);
     result.fixture_echo = co_await fetch_text_request(
-        second_session, request_with_share(local_http_url(base, "/cookie/echo"), fixture));
+        second_session.clone(),
+        request_with_share(local_http_url(base, "/cookie/echo"), fixture));
 
     cloned.save(cookie_file);
     auto persisted = ncrequest::SessionShare {};
     persisted.load(cookie_file);
     result.persisted_echo = co_await fetch_text_request(
-        second_session, request_with_share(local_http_url(base, "/cookie/echo"), persisted));
+        rstd::move(second_session),
+        request_with_share(local_http_url(base, "/cookie/echo"), persisted));
     co_return result;
 }
 
@@ -349,7 +356,7 @@ auto fetch_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url)
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
 
     auto bytes = co_await response->bytes();
@@ -375,7 +382,7 @@ auto post_text(ncrequest::Arc<ncrequest::Session> session, std::string url, std:
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
 
     auto text = co_await response->text();
@@ -401,7 +408,7 @@ auto post_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url, std
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
 
     auto bytes = co_await response->bytes();
@@ -436,7 +443,7 @@ auto timeout_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Requ
     }
     result.got_response = true;
 
-    auto text = co_await rsp.unwrap()->text();
+    auto text = co_await rstd::move(rsp).unwrap()->text();
     if (text.is_err()) {
         auto error = rstd::move(text).unwrap_err();
         record_error(result, error);
@@ -463,7 +470,7 @@ auto cancel_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Reque
     }
     result.got_response = true;
 
-    auto response = rsp.unwrap();
+    auto response = rstd::move(rsp).unwrap();
     response->cancel();
 
     auto bytes = co_await response->bytes();
@@ -493,7 +500,7 @@ auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
     response->pause_recv(true);
     co_await rstd::async::sleep(rstd::time::Duration::from_millis(350));
@@ -539,7 +546,7 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
         co_return result;
     }
 
-    auto response       = rsp.unwrap();
+    auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
 
     auto bytes = co_await response->bytes();
@@ -560,7 +567,7 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
 template<typename Start>
 auto run_http(Start&& start) {
     auto session = ncrequest::Session::make();
-    return rstd::async::block_on(start(session));
+    return rstd::async::block_on(start(rstd::move(session)));
 }
 
 auto rstd_wait_yield() -> ncrequest::coro<int> {
@@ -1470,7 +1477,7 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
                            "127.0.0.1\tFALSE\t/\tFALSE\t1\texpired_cookie\texpired\n"
                            "malformed\n"));
     auto result = run_http([base, cookie_file, fixture_file](auto session) {
-        return exercise_share(session, base, cookie_file, fixture_file);
+        return exercise_share(rstd::move(session), base, cookie_file, fixture_file);
     });
     auto persisted = read_file(cookie_file);
     remove_file(cookie_file);
@@ -1542,7 +1549,7 @@ TEST(http, LocalHttpGetText) {
     }
 
     auto result = run_http([url = local_http_url(base, "/text")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1558,7 +1565,7 @@ TEST(http, LocalHttpRedirectUsesFinalMessageHead) {
     }
 
     auto result = run_http([url = local_http_url(base, "/redirect")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1580,7 +1587,7 @@ TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
         (void)headers.add("X-Ncrequest-Repeat", "one");
         (void)headers.add("X-Ncrequest-Repeat", "two");
         request.update_header(headers);
-        return fetch_text_request(session, rstd::move(request));
+        return fetch_text_request(rstd::move(session), rstd::move(request));
     });
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
     ASSERT_TRUE(request_result.got_error) << request_result.error;
@@ -1592,7 +1599,7 @@ TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
 
     auto response_result = run_http([url = local_http_url(base, "/headers/response-repeat")](
                                         auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(response_result.got_body) << response_result.error;
     EXPECT_EQ(response_result.repeated_header_values, "one|two");
@@ -1607,7 +1614,7 @@ TEST(http, LocalHttpKeepsTrailersSeparateFromInitialHeaders) {
     }
 
     auto result = run_http([url = local_http_url(base, "/headers/trailer")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_body) << result.error;
     EXPECT_EQ(result.body, "body");
@@ -1626,7 +1633,7 @@ TEST(http, LocalHttpLargeBody) {
     }
 
     auto result = run_http([url = local_http_url(base, "/large")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1642,7 +1649,7 @@ TEST(http, LocalHttpNoContent) {
     }
 
     auto result = run_http([url = local_http_url(base, "/empty")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1658,7 +1665,7 @@ TEST(http, LocalHttpNotFoundBody) {
     }
 
     auto result = run_http([url = local_http_url(base, "/missing")](auto session) {
-        return fetch_text(session, url);
+        return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1675,7 +1682,7 @@ TEST(http, LocalHttpPostEcho) {
 
     auto payload = std::string { "ncrequest post payload\nwith a second line\n" };
     auto result  = run_http([url = local_http_url(base, "/echo"), payload](auto session) {
-        return post_text(session, url, payload);
+        return post_text(rstd::move(session), url, payload);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1691,7 +1698,7 @@ TEST(http, LocalHttpDownloadFile) {
     }
 
     auto result = run_http([url = local_http_url(base, "/download.bin")](auto session) {
-        return fetch_bytes(session, url);
+        return fetch_bytes(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1721,7 +1728,7 @@ TEST(http, LocalHttpUploadFile) {
     ASSERT_TRUE(stored.has_value());
 
     auto result = run_http([url = local_http_url(base, "/upload"), body = *stored](auto session) {
-        return post_bytes(session, url, body);
+        return post_bytes(rstd::move(session), url, body);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1737,7 +1744,7 @@ TEST(http, LocalHttpTimeout) {
     }
 
     auto result = run_http([url = local_http_url(base, "/slow-first-byte")](auto session) {
-        return fetch_timeout(session, url);
+        return fetch_timeout(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_error) << result.error;
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
@@ -1758,7 +1765,7 @@ TEST(http, LocalHttpCancel) {
     }
 
     auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
-        return fetch_then_cancel(session, url);
+        return fetch_then_cancel(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_error) << result.error;
@@ -1775,7 +1782,7 @@ TEST(http, LocalHttpCurlPauseRecv) {
     }
 
     auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
-        return curl_pause_recv(session, url);
+        return curl_pause_recv(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1797,7 +1804,7 @@ TEST(http, LocalHttpCurlStreamingUpload) {
 
     auto payload = upload_body();
     auto result  = run_http([url = local_http_url(base, "/upload"), payload](auto session) {
-        return curl_streaming_upload(session, url, payload);
+        return curl_streaming_upload(rstd::move(session), url, payload);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;

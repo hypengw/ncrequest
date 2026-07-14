@@ -9,6 +9,7 @@ module;
 
 export module ncrequest:request;
 export import :http;
+export import :error;
 export import :session_share;
 export import ncrequest.type;
 
@@ -94,7 +95,7 @@ export struct RequestOpt {
 
 #undef NCREQUEST_REQUEST_OPT_VARIANTS
 
-export auto global_init(std::pmr::memory_resource* resource = nullptr) -> std::error_code;
+export auto global_init(std::pmr::memory_resource* resource = nullptr) -> Result<rstd::empty>;
 } // namespace ncrequest
 namespace ncrequest
 {

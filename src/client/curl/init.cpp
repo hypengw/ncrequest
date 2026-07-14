@@ -1,6 +1,5 @@
 module ncrequest.curl;
 import :init;
-import :error;
 import rstd.core;
 
 using max_align_t = std::max_align_t;
@@ -46,16 +45,20 @@ void* curl_calloc_fn(usize nmemb, usize size) {
 }
 } // namespace
 
-auto ncrequest::curl_init(std::pmr::memory_resource* resource) -> std::error_code {
+auto ncrequest::curl_init(std::pmr::memory_resource* resource)
+    -> rstd::Result<rstd::empty, curl::CURLcode> {
+    auto code = curl::CURLcode::CURLE_OK;
     if (resource == nullptr) {
-        return ::make_error_code(curl_global_init(CURL_GLOBAL_ALL));
+        code = curl_global_init(CURL_GLOBAL_ALL);
     } else {
         g_resource = resource;
-        return ::make_error_code(curl_global_init_mem(CURL_GLOBAL_ALL,
-                                                      curl_malloc_fn,
-                                                      curl_free_fn,
-                                                      curl_realloc_fn,
-                                                      curl_strdup_fn,
-                                                      curl_calloc_fn));
+        code = curl_global_init_mem(CURL_GLOBAL_ALL,
+                                    curl_malloc_fn,
+                                    curl_free_fn,
+                                    curl_realloc_fn,
+                                    curl_strdup_fn,
+                                    curl_calloc_fn);
     }
+    if (code != curl::CURLcode::CURLE_OK) return rstd::Err(code);
+    return rstd::Ok(rstd::empty {});
 }

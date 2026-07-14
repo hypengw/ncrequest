@@ -2,7 +2,6 @@
 #include <chrono>
 #include <future>
 #include <gtest/gtest.h>
-#include <span>
 #include <string>
 #include <thread>
 
@@ -61,10 +60,10 @@ TEST(websocket, LocalEchoText) {
     });
 
     client.set_on_message_callback(
-        [&message_promise, &got_message](std::span<const rstd::byte> data, bool) {
+        [&message_promise, &got_message](rstd::slice<rstd::byte> data, bool) {
             if (got_message.exchange(true)) return;
 
-            std::string out(reinterpret_cast<const char*>(data.data()), data.size());
+            std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()), data.len());
             message_promise.set_value(std::move(out));
         });
     client.set_on_error_callback([&error_promise, &got_error](rstd::ref<rstd::str> data) {
@@ -74,9 +73,9 @@ TEST(websocket, LocalEchoText) {
         error_promise.set_value(std::move(out));
     });
 
-    auto connected = client.connect(url);
-    ASSERT_TRUE(wait_future(connected, std::chrono::seconds(5)));
-    ASSERT_TRUE(connected.get());
+    auto connected = rstd::async::block_on(client.connect(url));
+    ASSERT_TRUE(connected.is_ok());
+    ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
     client.send("curl websocket payload");

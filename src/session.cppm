@@ -27,7 +27,7 @@ public:
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<Session> {
-        auto session = make_arc<Session>(rstd::forward<Args>(args)...);
+        auto session = Arc<Session>::make(rstd::forward<Args>(args)...);
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
         static_cast<Backend&>(*session).start();
 #endif
@@ -54,7 +54,7 @@ private:
         if (res.is_err()) {
             co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
         }
-        co_return Result<Arc<Response>>(Ok(make_arc<Response>(rstd::move(res).unwrap())));
+        co_return Result<Arc<Response>>(Ok(Arc<Response>::make(rstd::move(res).unwrap())));
     }
 };
 

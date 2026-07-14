@@ -1,7 +1,4 @@
 module;
-#include <condition_variable>
-#include <deque>
-#include <mutex>
 #include <rstd/enum.hpp>
 
 export module ncrequest:client_curl_connection;
@@ -11,6 +8,7 @@ export import ncrequest.coro;
 export import :http;
 export import :request;
 export import :error;
+export import :client_callback;
 
 using namespace ::curl;
 using rstd::sync::atomic::Atomic;
@@ -18,6 +16,23 @@ using rstd::sync::atomic::Ordering;
 
 namespace ncrequest::client::curl
 {
+
+class RawMutexGuard {
+    rstd::sys::sync::mutex::Mutex& m_mutex;
+
+public:
+    explicit RawMutexGuard(rstd::sys::sync::mutex::Mutex& mutex): m_mutex(mutex) {
+        m_mutex.lock();
+    }
+
+    ~RawMutexGuard() { m_mutex.unlock(); }
+
+    RawMutexGuard(const RawMutexGuard&)                    = delete;
+    auto operator=(const RawMutexGuard&) -> RawMutexGuard& = delete;
+    RawMutexGuard(RawMutexGuard&&)                         = delete;
+    auto operator=(RawMutexGuard&&) -> RawMutexGuard&      = delete;
+};
+
 export class SessionBackend;
 
 template<typename T>
@@ -57,19 +72,21 @@ export using SessionMessage = session_message::Message;
 
 export class SessionChannel : public NoCopy {
 public:
-    using WakeCallback = std::function<void()>;
+    using WakeCallback = client::Callback<void()>;
+
+    SessionChannel(): m_fields(Fields {}) {}
 
     void set_wake_callback(WakeCallback callback) {
-        auto lock = std::lock_guard { m_mutex };
-        m_wake    = rstd::move(callback);
+        auto fields = m_fields.lock().unwrap();
+        fields->wake = rstd::move(callback);
     }
 
     auto try_send(SessionMessage msg) -> bool {
         WakeCallback wake;
         {
-            auto lock = std::lock_guard { m_mutex };
-            m_messages.emplace_back(rstd::move(msg));
-            wake = m_wake;
+            auto fields = m_fields.lock().unwrap();
+            fields->messages.push(rstd::move(msg));
+            wake = fields->wake.clone();
         }
         m_cv.notify_one();
         if (wake) wake();
@@ -77,32 +94,34 @@ public:
     }
 
     auto try_receive(SessionMessage& out) -> bool {
-        auto lock = std::lock_guard { m_mutex };
-        if (m_messages.empty()) return false;
+        auto fields = m_fields.lock().unwrap();
+        if (fields->messages.is_empty()) return false;
 
-        out = rstd::move(m_messages.front());
-        m_messages.pop_front();
+        out = fields->messages.remove(0);
         return true;
     }
 
     auto receive() -> SessionMessage {
-        auto lock = std::unique_lock { m_mutex };
-        m_cv.wait(lock, [this] {
-            return ! m_messages.empty();
+        auto fields = m_fields.lock().unwrap();
+        m_cv.wait_while(fields, [](const Fields& value) {
+            return value.messages.is_empty();
         });
-        auto out = rstd::move(m_messages.front());
-        m_messages.pop_front();
-        return out;
+        return fields->messages.remove(0);
     }
 
 private:
-    std::mutex                 m_mutex;
-    std::condition_variable    m_cv;
-    std::deque<SessionMessage> m_messages;
-    WakeCallback               m_wake;
+    struct Fields {
+        rstd::vec::Vec<SessionMessage> messages;
+        WakeCallback                   wake;
+
+        Fields(): messages(rstd::vec::Vec<SessionMessage>::make()) {}
+    };
+
+    rstd::sync::Mutex<Fields> m_fields;
+    rstd::sync::Condvar       m_cv;
 };
 
-export class Connection : public std::enable_shared_from_this<Connection> {
+export class Connection {
     friend class SessionBackend;
 
 public:
@@ -204,15 +223,24 @@ public:
         Allocator             m_alloc;
     };
 
+    static auto make(Arc<SessionChannel> session_channel, allocator_type allocator)
+        -> Arc<Connection> {
+        auto connection = Arc<Connection>::make(rstd::move(session_channel), allocator);
+        connection->m_self = connection.downgrade();
+        return connection;
+    }
+
     Connection(Arc<SessionChannel> session_channel, allocator_type allocator)
         : m_finish_ec(CURLcode::CURLE_OK),
           m_state(State::NotStarted),
           m_recv_paused(false),
           m_send_paused(false),
-          m_easy(std::make_unique<CurlEasy>()),
+          m_easy(Box<CurlEasy>::make()),
           m_session_channel(rstd::move(session_channel)),
           m_recv_buf(RECV_LIMIT, allocator),
-          m_send_buf(SEND_LIMIT, allocator) {
+          m_send_buf(SEND_LIMIT, allocator),
+          m_mutex(rstd::sys::sync::mutex::Mutex::make()),
+          m_self(Weak<Connection>::make()) {
         auto& easy = *m_easy;
         easy.setopt(CURLoption::CURLOPT_WRITEFUNCTION, Connection::write_callback);
         easy.setopt(CURLoption::CURLOPT_WRITEDATA, this);
@@ -225,7 +253,11 @@ public:
         easy.setopt(CURLoption::CURLOPT_PRIVATE, this);
     }
 
-    auto get_arc() { return shared_from_this(); }
+    auto get_arc() -> Arc<Connection> {
+        auto self = m_self.upgrade();
+        if (! self) rstd::panic { "Connection is not bound to its Arc owner" };
+        return self;
+    }
 
     auto& easy() { return *m_easy; }
     auto& easy() const { return *m_easy; }
@@ -236,12 +268,10 @@ public:
         if (m_trailers.is_none()) return None<ref<http::Header>>();
         return Some(ref<http::Header>::from_raw_parts(&*m_trailers));
     }
-    auto& url() const { return m_url; }
-    void  set_url(std::string_view v) { m_url = v; }
     void  set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
 
     auto is_finished() const -> bool {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         return m_state == State::Finished || m_state == State::Canceled;
     }
 
@@ -254,7 +284,7 @@ public:
     void about_to_cancel() {
         auto state = State::NotStarted;
         {
-            auto lock = std::lock_guard { m_mutex };
+            auto lock = RawMutexGuard { m_mutex };
             state     = m_state;
         }
         if (state == State::Canceled || state == State::Finished) return;
@@ -270,15 +300,15 @@ public:
         }
         auto pair     = rstd::move(made).unwrap_unchecked();
         auto receiver = rstd::move(pair.get<0>());
-        auto state    = make_arc<CompletionProducer<IoResult>>(rstd::move(pair.get<1>()));
+        auto state = Arc<CompletionProducer<IoResult>>::make(rstd::move(pair.get<1>()));
 
         struct CancelOnDrop {
             Arc<Connection>                   connection;
             Arc<CompletionProducer<IoResult>> state;
             ~CancelOnDrop() { connection->cancel_read_some(state); }
         };
-        auto cancel = CancelOnDrop { get_arc(), state };
-        start_read_some(buffer, state);
+        auto cancel = CancelOnDrop { get_arc(), state.clone() };
+        start_read_some(buffer, rstd::move(state));
         auto result = co_await rstd::move(receiver);
         if (result.is_err()) {
             co_return IoResult::fail(Error::Canceled());
@@ -293,15 +323,15 @@ public:
         }
         auto pair     = rstd::move(made).unwrap_unchecked();
         auto receiver = rstd::move(pair.get<0>());
-        auto state    = make_arc<CompletionProducer<IoResult>>(rstd::move(pair.get<1>()));
+        auto state = Arc<CompletionProducer<IoResult>>::make(rstd::move(pair.get<1>()));
 
         struct CancelOnDrop {
             Arc<Connection>                   connection;
             Arc<CompletionProducer<IoResult>> state;
             ~CancelOnDrop() { connection->cancel_write_some(state); }
         };
-        auto cancel = CancelOnDrop { get_arc(), state };
-        start_write_some(buffer, state);
+        auto cancel = CancelOnDrop { get_arc(), state.clone() };
+        start_write_some(buffer, rstd::move(state));
         auto result = co_await rstd::move(receiver);
         if (result.is_err()) {
             co_return IoResult::fail(Error::Canceled());
@@ -317,15 +347,15 @@ public:
         }
         auto pair     = rstd::move(made).unwrap_unchecked();
         auto receiver = rstd::move(pair.get<0>());
-        auto state    = make_arc<CompletionProducer<Output>>(rstd::move(pair.get<1>()));
+        auto state = Arc<CompletionProducer<Output>>::make(rstd::move(pair.get<1>()));
 
         struct CancelOnDrop {
             Arc<Connection>                 connection;
             Arc<CompletionProducer<Output>> state;
             ~CancelOnDrop() { connection->cancel_wait_header(state); }
         };
-        auto cancel = CancelOnDrop { get_arc(), state };
-        start_wait_header(state);
+        auto cancel = CancelOnDrop { get_arc(), state.clone() };
+        start_wait_header(rstd::move(state));
         auto result = co_await rstd::move(receiver);
         if (result.is_err()) {
             co_return Some(Error::Canceled());
@@ -348,7 +378,7 @@ private:
     };
 
     void start_read_some(rstd::bytes::BytesMut& buffer, RstdIoState state) {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         if (state->is_closed()) return;
         if (m_read_waiter.is_some()) {
             state->complete(IoResult::fail(Error::InvalidState("curl read already pending")));
@@ -359,7 +389,7 @@ private:
     }
 
     void start_write_some(rstd::bytes::Bytes& buffer, RstdIoState state) {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         if (state->is_closed()) return;
         if (m_write_waiter.is_some()) {
             state->complete(IoResult::fail(Error::InvalidState("curl write already pending")));
@@ -370,7 +400,7 @@ private:
     }
 
     void start_wait_header(RstdHeaderState state) {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         if (state->is_closed()) return;
         if (m_header_waiter.is_some()) {
             state->complete(Some(Error::InvalidState("curl header wait already pending")));
@@ -381,34 +411,33 @@ private:
     }
 
     void cancel_read_some(const RstdIoState& state) {
-        auto lock = std::lock_guard { m_mutex };
-        if (m_read_waiter.is_some() && m_read_waiter->state == state) {
+        auto lock = RawMutexGuard { m_mutex };
+        if (m_read_waiter.is_some() && RstdIoState::ptr_eq(m_read_waiter->state, state)) {
             m_read_waiter = None();
         }
     }
 
     void cancel_write_some(const RstdIoState& state) {
-        auto lock = std::lock_guard { m_mutex };
-        if (m_write_waiter.is_some() && m_write_waiter->state == state) {
+        auto lock = RawMutexGuard { m_mutex };
+        if (m_write_waiter.is_some() && RstdIoState::ptr_eq(m_write_waiter->state, state)) {
             m_write_waiter = None();
         }
     }
 
     void cancel_wait_header(const RstdHeaderState& state) {
-        auto lock = std::lock_guard { m_mutex };
-        if (m_header_waiter.is_some() && *m_header_waiter == state) {
+        auto lock = RawMutexGuard { m_mutex };
+        if (m_header_waiter.is_some() && RstdHeaderState::ptr_eq(*m_header_waiter, state)) {
             m_header_waiter = None();
         }
     }
 
     static usize header_callback(char* ptr, usize size, usize nmemb, Connection* self) {
-        std::string_view header { ptr, size * nmemb };
-        auto             lock = std::lock_guard { self->m_mutex };
+        auto header = slice<u8>::from_raw_parts(reinterpret_cast<const u8*>(ptr), size * nmemb);
+        auto lock   = RawMutexGuard { self->m_mutex };
 
         if (self->m_body_started) {
             self->m_trailer_started = true;
-            auto parsed = self->m_trailer_parser.push(rstd::slice<rstd::u8>::from_raw_parts(
-                reinterpret_cast<const rstd::u8*>(header.data()), header.size()));
+            auto parsed = self->m_trailer_parser.push(header);
             if (parsed.is_err()) {
                 self->m_header_error = Some(rstd::move(parsed).unwrap_err());
                 return 0;
@@ -417,12 +446,11 @@ private:
             if (event.is_Complete()) {
                 self->m_trailers = Some(rstd::move(event).as_Complete().fields);
             }
-            return header.size();
+            return header.len();
         }
         if (self->m_header_done) self->m_header_done = false;
 
-        auto parsed = self->m_header_parser.push(rstd::slice<rstd::u8>::from_raw_parts(
-            reinterpret_cast<const rstd::u8*>(header.data()), header.size()));
+        auto parsed = self->m_header_parser.push(header);
         if (parsed.is_err()) {
             self->m_header_error = Some(rstd::move(parsed).unwrap_err());
             self->m_header_done  = true;
@@ -438,12 +466,12 @@ private:
 
             self->m_header_parser = http::Http1HeadParser {};
         }
-        return header.size();
+        return header.len();
     }
 
     static usize write_callback(char* ptr, usize size, usize nmemb, Connection* self) {
         auto total_size = size * nmemb;
-        auto lock       = std::lock_guard { self->m_mutex };
+        auto lock       = RawMutexGuard { self->m_mutex };
 
         self->m_body_started = true;
         self->try_header_waiter_locked();
@@ -464,7 +492,7 @@ private:
             return self->m_send_callback((byte*)ptr, total_size);
         }
 
-        auto lock = std::lock_guard { self->m_mutex };
+        auto lock = RawMutexGuard { self->m_mutex };
         if (self->m_send_buf.empty()) {
             self->m_send_paused.store(true);
             return CURL_READFUNC_PAUSE;
@@ -476,7 +504,7 @@ private:
     }
 
     void finish(CURLcode ec) {
-        auto lock   = std::lock_guard { m_mutex };
+        auto lock   = RawMutexGuard { m_mutex };
         if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
             auto parsed = m_trailer_parser.push(rstd::str_::as_bytes("\r\n"));
             if (parsed.is_err()) {
@@ -499,7 +527,7 @@ private:
     }
 
     void cancel() {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         if (m_state != State::Finished && m_state != State::Canceled) {
             m_state = State::Canceled;
         }
@@ -509,7 +537,7 @@ private:
     }
 
     void transfreing() {
-        auto lock = std::lock_guard { m_mutex };
+        auto lock = RawMutexGuard { m_mutex };
         if (m_state == State::NotStarted) m_state = State::Transfering;
     }
 
@@ -610,8 +638,6 @@ private:
         state->complete(finish_error_locked());
     }
 
-    std::string m_url;
-
     CURLcode     m_finish_ec;
     State        m_state;
     Atomic<bool> m_recv_paused;
@@ -637,7 +663,8 @@ private:
     Option<RstdReadWaiter>  m_read_waiter;
     Option<RstdWriteWaiter> m_write_waiter;
 
-    mutable std::mutex m_mutex;
+    mutable rstd::sys::sync::mutex::Mutex m_mutex;
+    Weak<Connection>                       m_self;
 };
 
 } // namespace ncrequest::client::curl

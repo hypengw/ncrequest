@@ -1,7 +1,6 @@
 module;
 export module ncrequest.curl:easy;
 export import ncrequest.type;
-export import cppstd;
 export import :curl;
 
 using namespace curl;
@@ -78,12 +77,14 @@ public:
             auto name  = (**field).name().as_ref();
             auto value = (**field).value().as_bytes();
 
-            std::string header;
-            header.reserve(name.size() + value.len() + 2);
-            header.append(reinterpret_cast<const char*>(name.data()), name.size());
-            header.append(": ");
-            header.append(reinterpret_cast<const char*>(value.as_raw_ptr()), value.len());
-            m_headers = curl_slist_append(m_headers, header.c_str());
+            auto bytes = rstd::vec::Vec<u8>::with_capacity(name.size() + value.len() + 2);
+            bytes.extend_from_slice(slice<u8>::from_raw_parts(name.data(), name.size()));
+            bytes.extend_from_slice(rstd::str_::as_bytes(": "));
+            bytes.extend_from_slice(value);
+            auto header = rstd::ffi::CString::from_vec_unchecked(rstd::move(bytes));
+            m_headers = curl_slist_append(
+                m_headers,
+                reinterpret_cast<const char*>(header.to_bytes_with_nul().as_raw_ptr()));
         }
         if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);
     }

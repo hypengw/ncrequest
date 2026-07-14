@@ -11,12 +11,16 @@ import ncrequest.curl;
 
 using namespace ncrequest;
 
-auto ncrequest::global_init(std::pmr::memory_resource* resource) -> std::error_code {
+auto ncrequest::global_init(std::pmr::memory_resource* resource) -> Result<rstd::empty> {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
-    return ncrequest::curl_init(resource);
+    auto initialized = ncrequest::curl_init(resource);
+    if (initialized.is_err()) {
+        return Err(rstd::into<Error>(rstd::move(initialized).unwrap_err()));
+    }
+    return Ok(rstd::empty {});
 #else
     (void)resource;
-    return {};
+    return Ok(rstd::empty {});
 #endif
 }
 

@@ -1,14 +1,10 @@
 module;
-#include <functional>
-#include <future>
 #include <memory_resource>
-#include <span>
-#include <string>
-#include <string_view>
 
 export module ncrequest:client_curl_websocket;
 export import ncrequest.type;
 export import ncrequest.curl;
+export import :client_callback;
 import rstd;
 
 namespace ncrequest::client::curl
@@ -17,10 +13,10 @@ namespace ncrequest::client::curl
 export class WebSocketBackend {
 public:
     constexpr static u64 MaxBufferSize { 16 * 1024 }; // 16KB
-    using ConnectedCallback    = std::function<void()>;
-    using DisconnectedCallback = std::function<void()>;
-    using MessageCallback      = std::function<void(std::span<const rstd::byte>, bool last)>;
-    using ErrorCallback        = std::function<void(rstd::ref<rstd::str>)>;
+    using ConnectedCallback    = client::Callback<void()>;
+    using DisconnectedCallback = client::Callback<void()>;
+    using MessageCallback      = client::Callback<void(slice<byte>, bool last)>;
+    using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketBackend(
         rstd::Option<u64>          max_buffer_size = None(),
@@ -29,19 +25,17 @@ public:
     WebSocketBackend(const WebSocketBackend&)            = delete;
     WebSocketBackend& operator=(const WebSocketBackend&) = delete;
 
-    auto connect(const std::string& url) -> std::future<bool>;
+    auto connect(ref<str> url) -> rstd::async::Completion<bool>;
     void disconnect();
     bool is_connected() const;
 
-    void send(std::string_view message);
-    void send(std::span<const rstd::byte> message);
+    void send(ref<str> message);
+    void send(slice<byte> message);
 
     void set_on_connected_callback(ConnectedCallback callback);
     void set_on_disconnected_callback(DisconnectedCallback callback);
     void set_on_message_callback(MessageCallback callback);
     void set_on_error_callback(ErrorCallback callback);
-
-    auto on_message_callback() -> const MessageCallback&;
 
 private:
     class Impl;

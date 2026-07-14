@@ -12,9 +12,11 @@ namespace
 {
 
 void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
-    auto url_view = req.url();
-    auto url      = std::string { url_view.data(), url_view.size() };
-    easy.setopt(CURLoption::CURLOPT_URL, url.c_str());
+    auto url_bytes = rstd::vec::Vec<u8>::make();
+    url_bytes.extend_from_slice(rstd::str_::as_bytes(ref<str>(req.url())));
+    auto url = rstd::ffi::CString::from_vec_unchecked(rstd::move(url_bytes));
+    easy.setopt(CURLoption::CURLOPT_URL,
+                reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
 
@@ -52,18 +54,18 @@ void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Reque
 } // namespace
 
 ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, http::Operation oper,
-                              Arc<SessionBackend> ses)
+                              SessionBackend& ses)
     : m_q(res),
       m_req(req.clone()),
       m_operation(oper),
       m_finished(false),
-      m_connect(make_arc<Connection>(ses->channel_rc(), ses->allocator())),
-      m_allocator(ses->allocator()) {}
+      m_connect(Connection::make(ses.channel_rc(), ses.allocator())),
+      m_allocator(ses.allocator()) {}
 
 ResponseBackend::ResponseBackend(const Request& req, http::Operation oper,
-                                 Arc<SessionBackend> ses) noexcept
-    : m_inner(make_arc<Inner>(this, req, oper, ses)) {
-    auto  d    = m_inner.get();
+                                 SessionBackend& ses) noexcept
+    : m_inner(Arc<Inner>::make(this, req, oper, ses)) {
+    auto* d    = m_inner.as_ptr().as_raw_ptr();
     auto& easy = connection().easy();
     switch (oper.tag()) {
     case http::Operation::Tag::Get: break;
@@ -110,8 +112,8 @@ auto ResponseBackend::allocator() const -> const std::pmr::polymorphic_allocator
 }
 
 Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, http::Operation oper,
-                                                     Arc<SessionBackend> ses) {
-    return std::make_shared<ResponseBackend>(req, oper, ses);
+                                                     SessionBackend& ses) {
+    return Arc<ResponseBackend>::make(req, oper, ses);
 }
 
 const Request& ResponseBackend::request() const { return m_inner->m_req; }
@@ -148,7 +150,6 @@ void ResponseBackend::prepare_perform() {
     default: break;
     }
 
-    connection().set_url(m_inner->m_req.url());
 }
 
 auto ResponseBackend::operation() const -> http::Operation { return m_inner->m_operation; }
@@ -204,19 +205,6 @@ auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
     }
 
     co_return Result<rstd::bytes::Bytes>(Ok(out.freeze()));
-}
-
-auto ResponseBackend::text() -> coro<Result<std::string>> {
-    auto data_result = co_await bytes();
-    if (data_result.is_err()) {
-        auto err = rstd::move(data_result).unwrap_err();
-        co_return Result<std::string>(Err(rstd::move(err)));
-    }
-
-    auto        data = rstd::move(data_result).unwrap();
-    std::string out;
-    out.assign(reinterpret_cast<const char*>(data.data()), data.size());
-    co_return Result<std::string>(Ok(rstd::move(out)));
 }
 
 } // namespace ncrequest::client::curl

@@ -1,15 +1,10 @@
 module;
-#include <functional>
-#include <future>
-#include <memory>
 #include <memory_resource>
-#include <span>
-#include <string>
-#include <string_view>
 
 export module ncrequest:client_qt_network_websocket;
 export import :qt;
 export import ncrequest.type;
+export import :client_callback;
 
 namespace ncrequest::client::qt_network
 {
@@ -19,19 +14,20 @@ using namespace ncrequest::qt;
 export class WebSocketBackend : public NoCopy {
 public:
     constexpr static u64 MaxBufferSize { 16 * 1024 };
-    using ConnectedCallback    = std::function<void()>;
-    using DisconnectedCallback = std::function<void()>;
-    using MessageCallback      = std::function<void(std::span<const rstd::byte>, bool last)>;
-    using ErrorCallback        = std::function<void(rstd::ref<rstd::str>)>;
+    using ConnectedCallback    = client::Callback<void()>;
+    using DisconnectedCallback = client::Callback<void()>;
+    using MessageCallback      = client::Callback<void(slice<byte>, bool last)>;
+    using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketBackend(
         QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
         std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource())
-        : m_owned_socket(parent == nullptr ? std::make_unique<QWebSocket>(
-                                                 QString {}, QWebSocketProtocol::VersionLatest)
-                                           : nullptr),
+        : m_owned_socket(
+              parent == nullptr
+                  ? Some(Box<QWebSocket>::make(QString {}, QWebSocketProtocol::VersionLatest))
+                  : None<Box<QWebSocket>>()),
           m_socket(parent == nullptr
-                       ? m_owned_socket.get()
+                       ? (*m_owned_socket).get()
                        : new QWebSocket(QString {}, QWebSocketProtocol::VersionLatest, parent)),
           m_connected(false),
           m_connecting(false),
@@ -48,39 +44,42 @@ public:
     WebSocketBackend(const WebSocketBackend&)            = delete;
     WebSocketBackend& operator=(const WebSocketBackend&) = delete;
 
-    auto connect(const std::string& url) -> std::future<bool> {
-        auto  promise = make_arc<std::promise<bool>>();
-        auto  future  = promise->get_future();
-        auto* socket  = m_socket.data();
+    auto connect(ref<str> url) -> rstd::async::Completion<bool> {
+        auto made       = rstd::async::Completion<bool>::make();
+        auto pair       = rstd::move(made).unwrap();
+        auto completion = rstd::move(pair.get<0>());
+        auto handle     = rstd::move(pair.get<1>());
+        auto* socket    = m_socket.data();
 
         if (QCoreApplication::instance() == nullptr) {
-            promise->set_value(false);
+            (void)handle.complete(false);
             emit_error(QString::fromUtf8("Qt WebSockets backend requires a QCoreApplication"));
-            return future;
+            return completion;
         }
         if (socket == nullptr) {
-            promise->set_value(false);
+            (void)handle.complete(false);
             emit_error(QString::fromUtf8("QWebSocket is not available"));
-            return future;
+            return completion;
         }
         if (socket->thread() != QThread::currentThread()) {
-            promise->set_value(false);
+            (void)handle.complete(false);
             emit_error(QString::fromUtf8("QWebSocket must be used from its owner thread"));
-            return future;
+            return completion;
         }
         if (m_connected) {
-            promise->set_value(true);
-            return future;
+            (void)handle.complete(true);
+            return completion;
         }
         if (m_connecting) {
-            promise->set_value(false);
-            return future;
+            (void)handle.complete(false);
+            return completion;
         }
 
         m_connecting      = true;
-        m_connect_promise = promise;
-        socket->open(QUrl(QString::fromUtf8(url.data(), static_cast<qsizetype>(url.size()))));
-        return future;
+        m_connect_promise = Some(rstd::move(handle));
+        socket->open(QUrl(QString::fromUtf8(reinterpret_cast<const char*>(url.data()),
+                                           static_cast<qsizetype>(url.size()))));
+        return completion;
     }
 
     void disconnect() {
@@ -92,16 +91,17 @@ public:
 
     bool is_connected() const { return m_connected && m_socket != nullptr; }
 
-    void send(std::string_view message) {
-        send(std::span<const rstd::byte> { reinterpret_cast<const rstd::byte*>(message.data()),
-                                           message.size() });
+    void send(ref<str> message) {
+        send(slice<byte>::from_raw_parts(
+            reinterpret_cast<const byte*>(message.data()), message.size()));
     }
 
-    void send(std::span<const rstd::byte> message) {
+    void send(slice<byte> message) {
         auto* socket = m_socket.data();
         if (! m_connected || socket == nullptr) return;
-        socket->sendBinaryMessage(QByteArray(reinterpret_cast<const char*>(message.data()),
-                                             static_cast<qsizetype>(message.size())));
+        socket->sendBinaryMessage(
+            QByteArray(reinterpret_cast<const char*>(message.as_raw_ptr()),
+                       static_cast<qsizetype>(message.len())));
     }
 
     void set_on_connected_callback(ConnectedCallback callback) {
@@ -115,8 +115,6 @@ public:
     void set_on_message_callback(MessageCallback callback) { m_on_message = rstd::move(callback); }
 
     void set_on_error_callback(ErrorCallback callback) { m_on_error = rstd::move(callback); }
-
-    auto on_message_callback() -> const MessageCallback& { return m_on_message; }
 
 private:
     void bind_socket() {
@@ -143,18 +141,18 @@ private:
             socket, &QWebSocket::textMessageReceived, socket, [this](const QString& message) {
                 if (! m_on_message) return;
                 auto bytes = message.toUtf8();
-                m_on_message(std::span<const rstd::byte> { reinterpret_cast<const rstd::byte*>(
-                                                               bytes.constData()),
-                                                           static_cast<usize>(bytes.size()) },
+                m_on_message(slice<byte>::from_raw_parts(
+                                 reinterpret_cast<const byte*>(bytes.constData()),
+                                 static_cast<usize>(bytes.size())),
                              true);
             }));
 
         m_connections.append(QObject::connect(
             socket, &QWebSocket::binaryMessageReceived, socket, [this](const QByteArray& message) {
                 if (! m_on_message) return;
-                m_on_message(std::span<const rstd::byte> { reinterpret_cast<const rstd::byte*>(
-                                                               message.constData()),
-                                                           static_cast<usize>(message.size()) },
+                m_on_message(slice<byte>::from_raw_parts(
+                                 reinterpret_cast<const byte*>(message.constData()),
+                                 static_cast<usize>(message.size())),
                              true);
             }));
 
@@ -177,15 +175,16 @@ private:
     }
 
     void complete_connect(bool success) {
-        auto promise = rstd::move(m_connect_promise);
-        if (promise == nullptr) return;
-        promise->set_value(success);
+        auto promise = m_connect_promise.take();
+        if (promise.is_none()) return;
+        (void)(*promise).complete(success);
     }
 
     void emit_error(const QString& message) {
         if (! m_on_error) return;
-        auto text = message.toStdString();
-        m_on_error(text);
+        auto text = message.toUtf8();
+        m_on_error(ref<str>::from_raw_parts(
+            reinterpret_cast<const u8*>(text.constData()), static_cast<usize>(text.size())));
     }
 
     void disconnect_signals() {
@@ -195,13 +194,13 @@ private:
         m_connections.clear();
     }
 
-    std::unique_ptr<QWebSocket>    m_owned_socket;
+    Option<Box<QWebSocket>>        m_owned_socket;
     QPointer<QWebSocket>           m_socket;
     QList<QMetaObject::Connection> m_connections;
     bool                           m_connected;
     bool                           m_connecting;
 
-    Arc<std::promise<bool>> m_connect_promise;
+    Option<rstd::async::CompletionHandle<bool>> m_connect_promise;
     ConnectedCallback       m_on_connected;
     DisconnectedCallback    m_on_disconnected;
     MessageCallback         m_on_message;

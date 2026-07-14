@@ -83,6 +83,7 @@ set(NCREQUEST_MODULE_FILES
     src/error.cppm
     src/session_share.cppm
     src/request.cppm
+    src/client/callback.cppm
     src/client/http_backend.cppm
     src/client/websocket_backend.cppm
     src/response.cppm
@@ -102,7 +103,6 @@ set(NCREQUEST_MODULE_FILES
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   list(APPEND NCREQUEST_MODULE_FILES
        src/client/curl/session_share.cppm
-       src/client/curl/curl_error.cppm
        src/client/curl/curl_easy.cppm
        src/client/curl/curl_multi.cppm
        src/client/curl/curl.cppm

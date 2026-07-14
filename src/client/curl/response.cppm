@@ -24,7 +24,6 @@ public:
     auto trailers() const -> rstd::Option<rstd::ref<http::Header>>;
     auto code() const -> rstd::Option<i32>;
 
-    auto text() -> coro<Result<std::string>>;
     auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
 
     template<typename SyncWriteStream>
@@ -48,9 +47,9 @@ public:
         co_return written;
     }
 
-    static auto make_response(const Request&, http::Operation, Arc<SessionBackend>)
+    static auto make_response(const Request&, http::Operation, SessionBackend&)
         -> Arc<ResponseBackend>;
-    ResponseBackend(const Request&, http::Operation, Arc<SessionBackend>) noexcept;
+    ResponseBackend(const Request&, http::Operation, SessionBackend&) noexcept;
     ResponseBackend(ResponseBackend&&) noexcept;
     ~ResponseBackend() noexcept;
     ResponseBackend& operator=(ResponseBackend&&) noexcept;
@@ -78,7 +77,7 @@ private:
 
 class ResponseBackend::Inner {
 public:
-    Inner(ResponseBackend*, const Request&, http::Operation, Arc<SessionBackend>);
+    Inner(ResponseBackend*, const Request&, http::Operation, SessionBackend&);
     friend class ResponseBackend;
 
     void set_share(rstd::Option<SessionShare> share) { m_share = rstd::move(share); }

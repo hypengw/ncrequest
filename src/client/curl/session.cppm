@@ -7,7 +7,7 @@ export import ncrequest.type;
 namespace ncrequest::client::curl
 {
 
-export class SessionBackend : public std::enable_shared_from_this<SessionBackend>, NoCopy {
+export class SessionBackend : public NoCopy {
 public:
     using channel_type = SessionChannel;
 
@@ -19,14 +19,12 @@ public:
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {
-        auto session = make_arc<SessionBackend>(rstd::forward<Args>(args)...);
+        auto session = Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
         session->start();
         return session;
     }
 
     void start();
-
-    auto get_arc() { return shared_from_this(); }
 
     auto start_request(const Request&, http::Operation, rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
@@ -35,7 +33,7 @@ public:
     auto post(const Request&) -> coro<Result<Arc<ResponseBackend>>>;
     auto post(const Request&, rstd::bytes::Bytes) -> coro<Result<Arc<ResponseBackend>>>;
 
-    auto cookies() -> std::vector<std::string>;
+    auto cookies() -> rstd::vec::Vec<rstd::string::String>;
     void load_cookie(std::filesystem::path);
     void save_cookie(std::filesystem::path) const;
     void set_proxy(const req_opt::Proxy&);

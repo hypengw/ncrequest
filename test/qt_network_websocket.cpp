@@ -1,7 +1,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <future>
-#include <span>
+#include <optional>
 #include <utility>
 #include <gtest/gtest.h>
 #include <QCoreApplication>
@@ -32,6 +32,26 @@ auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> b
     return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 }
 
+auto wait_completion(rstd::async::Completion<bool> completion) {
+    using Output = rstd::async::Completion<bool>::Output;
+
+    QEventLoop            loop;
+    std::optional<Output> output;
+    auto worker = std::thread([&loop, &output, completion = rstd::move(completion)]() mutable {
+        output.emplace(rstd::async::block_on(rstd::move(completion)));
+        (void)QMetaObject::invokeMethod(
+            &loop,
+            [&loop] {
+                loop.quit();
+            },
+            Qt::QueuedConnection);
+    });
+
+    loop.exec();
+    worker.join();
+    return rstd::move(*output);
+}
+
 } // namespace
 
 TEST(qt_network_websocket, ConstructDisconnected) {
@@ -56,14 +76,14 @@ TEST(qt_network_websocket, LocalEchoText) {
     client.set_on_disconnected_callback([&disconnected_promise] {
         disconnected_promise.set_value();
     });
-    client.set_on_message_callback([&message_promise](std::span<const rstd::byte> data, bool) {
-        std::string out(reinterpret_cast<const char*>(data.data()), data.size());
+    client.set_on_message_callback([&message_promise](rstd::slice<rstd::byte> data, bool) {
+        std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()), data.len());
         message_promise.set_value(std::move(out));
     });
 
-    auto connected = client.connect(url);
-    ASSERT_TRUE(wait_future(connected, std::chrono::seconds(5)));
-    ASSERT_TRUE(connected.get());
+    auto connected = wait_completion(client.connect(url));
+    ASSERT_TRUE(connected.is_ok());
+    ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
     client.send("qt websocket payload");
