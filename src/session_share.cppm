@@ -1,6 +1,7 @@
 export module ncrequest:session_share;
 export import ncrequest.type;
-export import cppstd;
+
+using rstd::path::Path;
 
 namespace ncrequest
 {
@@ -19,8 +20,8 @@ public:
     SessionShare(const SessionShare&) = delete;
     auto operator=(const SessionShare&) -> SessionShare& = delete;
 
-    void load(const std::filesystem::path& p);
-    void save(const std::filesystem::path& p) const;
+    void load(ref<Path> path);
+    void save(ref<Path> path) const;
     auto clone() const -> SessionShare;
 
 private:

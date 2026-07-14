@@ -7,6 +7,8 @@ export import ncrequest.type;
 namespace ncrequest::client::curl
 {
 
+using rstd::path::Path;
+
 export class SessionBackend : public NoCopy {
 public:
     using channel_type = SessionChannel;
@@ -34,8 +36,8 @@ public:
     auto post(const Request&, rstd::bytes::Bytes) -> coro<Result<Arc<ResponseBackend>>>;
 
     auto cookies() -> rstd::vec::Vec<rstd::string::String>;
-    void load_cookie(std::filesystem::path);
-    void save_cookie(std::filesystem::path) const;
+    void load_cookie(ref<Path> path);
+    void save_cookie(ref<Path> path) const;
     void set_proxy(const req_opt::Proxy&);
     void set_verify_certificate(bool);
 

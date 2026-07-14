@@ -32,10 +32,10 @@ class SessionBackend::Private {
     friend class SessionBackend;
 
 public:
-    Private(SessionBackend&, std::pmr::memory_resource* mem_pool, CurlOptions options) noexcept;
+    Private(std::pmr::memory_resource* mem_pool, CurlOptions options) noexcept;
     ~Private();
 
-    void start();
+    void ensure_worker();
     void join_worker();
     void run();
     void handle_message(const SessionMessage&);
@@ -58,10 +58,10 @@ private:
 };
 
 SessionBackend::SessionBackend(std::pmr::memory_resource* mem_pool, CurlOptions options)
-    : m_d(Box<Private>::make(*this, mem_pool, options)) {}
+    : m_d(Box<Private>::make(mem_pool, options)) {}
 
 void SessionBackend::start() {
-    m_d->start();
+    m_d->ensure_worker();
 }
 
 SessionBackend::~SessionBackend() {
@@ -147,7 +147,7 @@ auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
 }
 
-SessionBackend::Private::Private(SessionBackend&, std::pmr::memory_resource* mem_pool,
+SessionBackend::Private::Private(std::pmr::memory_resource* mem_pool,
                                  CurlOptions options) noexcept
     : m_curl_multi(Box<CurlMulti>::make(options)),
       m_channel(Arc<channel_type>::make()),
@@ -165,7 +165,7 @@ SessionBackend::Private::~Private() {
     join_worker();
 }
 
-void SessionBackend::Private::start() {
+void SessionBackend::Private::ensure_worker() {
     auto thread = m_thread.lock().unwrap();
     if (thread->is_some()) return;
 
@@ -187,11 +187,11 @@ void SessionBackend::Private::join_worker() {
     }
 }
 
-void SessionBackend::load_cookie(std::filesystem::path p) {
-    m_d->m_curl_multi->load_cookie(p);
+void SessionBackend::load_cookie(ref<rstd::path::Path> path) {
+    m_d->m_curl_multi->load_cookie(path);
 }
-void SessionBackend::save_cookie(std::filesystem::path p) const {
-    m_d->m_curl_multi->save_cookie(p);
+void SessionBackend::save_cookie(ref<rstd::path::Path> path) const {
+    m_d->m_curl_multi->save_cookie(path);
 }
 
 auto SessionBackend::cookies() -> rstd::vec::Vec<rstd::string::String> {

@@ -47,19 +47,29 @@ auto detail::SessionShareAccess::curl_handle(const SessionShare& share) -> CURLS
 }
 auto SessionShare::clone() const -> SessionShare { return SessionShare { d_ptr.clone() }; }
 
-void SessionShare::load(const std::filesystem::path& p) {
+void SessionShare::load(ref<rstd::path::Path> path) {
+    auto filename = path.to_cstring();
+    if (filename.is_err()) return;
+    auto owned_filename = rstd::move(filename).unwrap();
+
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     // append filename
-    x.setopt(CURLoption::CURLOPT_COOKIEFILE, p.c_str());
+    x.setopt(CURLoption::CURLOPT_COOKIEFILE,
+             reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
     // actually load
     x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
 }
 
-void SessionShare::save(const std::filesystem::path& p) const {
+void SessionShare::save(ref<rstd::path::Path> path) const {
+    auto filename = path.to_cstring();
+    if (filename.is_err()) return;
+    auto owned_filename = rstd::move(filename).unwrap();
+
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
-    x.setopt(CURLoption::CURLOPT_COOKIEJAR, p.c_str());
+    x.setopt(CURLoption::CURLOPT_COOKIEJAR,
+             reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
     // save when x destruct
 }
 

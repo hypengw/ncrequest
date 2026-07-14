@@ -28,9 +28,7 @@ public:
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<Session> {
         auto session = Arc<Session>::make(rstd::forward<Args>(args)...);
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
-        static_cast<Backend&>(*session).start();
-#endif
+        start_backend(static_cast<Backend&>(*session));
         return session;
     }
 
@@ -47,6 +45,13 @@ public:
     }
 
 private:
+    template<typename T>
+    static void start_backend(T& backend) {
+        if constexpr (requires(T& value) { value.start(); }) {
+            backend.start();
+        }
+    }
+
     auto send(const Request& req, http::Operation operation,
               rstd::Option<rstd::bytes::Bytes> body)
         -> coro<Result<Arc<Response>>> {

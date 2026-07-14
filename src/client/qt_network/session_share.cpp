@@ -121,11 +121,6 @@ auto is_expired(const QNetworkCookie& cookie, const QDateTime& now) -> bool {
     return expiry.isValid() && expiry <= now;
 }
 
-auto rstd_path(const std::filesystem::path& path) -> rstd::path::PathBuf {
-    auto text = path.string();
-    return rstd::path::PathBuf::from(ref<str>(text));
-}
-
 void append_text(rstd::vec::Vec<u8>& output, ref<str> text) {
     output.extend_from_slice(rstd::str_::as_bytes(text));
 }
@@ -189,8 +184,8 @@ SessionShare::~SessionShare() = default;
 
 auto SessionShare::clone() const -> SessionShare { return SessionShare { d_ptr.clone() }; }
 
-void SessionShare::load(const std::filesystem::path& path) {
-    auto input = rstd::fs::read(rstd_path(path).as_path());
+void SessionShare::load(ref<rstd::path::Path> path) {
+    auto input = rstd::fs::read(path);
     if (input.is_err()) return;
 
     auto loaded = QList<QNetworkCookie> {};
@@ -216,7 +211,7 @@ void SessionShare::load(const std::filesystem::path& path) {
     for (auto const& cookie : loaded) merge_cookie(*cookies, cookie);
 }
 
-void SessionShare::save(const std::filesystem::path& path) const {
+void SessionShare::save(ref<rstd::path::Path> path) const {
     auto cookies = QList<QNetworkCookie> {};
     {
         auto stored = d_ptr->cookies.lock().unwrap();
@@ -253,7 +248,7 @@ void SessionShare::save(const std::filesystem::path& path) const {
         append_bytes(output, value);
         append_text(output, "\n");
     }
-    (void)rstd::fs::write(rstd_path(path).as_path(), output.as_slice());
+    (void)rstd::fs::write(path, output.as_slice());
 }
 
 auto detail::SessionShareAccess::token(const SessionShare& share) -> const void* {

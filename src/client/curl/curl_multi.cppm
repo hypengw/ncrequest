@@ -1,5 +1,4 @@
 module;
-#include <filesystem>
 #include <rstd/enum.hpp>
 
 export module ncrequest.curl:multi;
@@ -10,6 +9,8 @@ using namespace curl;
 
 namespace ncrequest
 {
+
+using rstd::path::Path;
 
 export struct CurlOptions {
     long max_idle_connections { 0 };
@@ -141,19 +142,29 @@ public:
         return out;
     }
 
-    void load_cookie(std::filesystem::path p) {
+    void load_cookie(ref<Path> path) {
+        auto filename = path.to_cstring();
+        if (filename.is_err()) return;
+        auto owned_filename = rstd::move(filename).unwrap();
+
         CurlEasy x;
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         // append filename
-        x.setopt(CURLoption::CURLOPT_COOKIEFILE, p.c_str());
+        x.setopt(CURLoption::CURLOPT_COOKIEFILE,
+                 reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
         // actually load
         x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
     }
 
-    void save_cookie(std::filesystem::path p) const {
+    void save_cookie(ref<Path> path) const {
+        auto filename = path.to_cstring();
+        if (filename.is_err()) return;
+        auto owned_filename = rstd::move(filename).unwrap();
+
         CurlEasy x;
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
-        x.setopt(CURLoption::CURLOPT_COOKIEJAR, p.c_str());
+        x.setopt(CURLoption::CURLOPT_COOKIEJAR,
+                 reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
         // save when x destruct
     }
 

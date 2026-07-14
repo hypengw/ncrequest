@@ -1,5 +1,4 @@
 module;
-#include <memory>
 #include <rstd/enum.hpp>
 #include <utility>
 
@@ -24,7 +23,7 @@ export struct Options {};
 export class ResponseBackend;
 class QtNetworkDriver;
 
-// Qt copies queued and signal functors, so callback-owned state needs copyable shared ownership.
+// Qt copies queued and signal functors, so CloneTuple adapts explicit Arc cloning to that boundary.
 class QtExecutor {
     QPointer<QObject> m_target;
 
@@ -34,11 +33,11 @@ public:
     auto post_job(rstd::async::ExecutorJob job) -> bool {
         auto* target = m_target.data();
         if (target == nullptr) return false;
-        auto owned = std::make_shared<rstd::async::ExecutorJob>(rstd::move(job));
+        auto owned = Arc<rstd::async::ExecutorJob>::make(rstd::move(job));
         return QMetaObject::invokeMethod(
             target,
-            [owned = rstd::move(owned)]() mutable {
-                owned->run();
+            [capture = make_clone_tuple(rstd::move(owned))]() mutable {
+                capture.get<0>()->run();
             },
             Qt::QueuedConnection);
     }
@@ -62,10 +61,10 @@ auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor>
     return Some(rstd::async::AnyExecutor::from_executor(QtExecutor { target }));
 }
 
-#define NCREQUEST_QT_BODY_EVENT_VARIANTS(V)       \
-    V(Header, (http::MessageHead value;))         \
-    V(Chunk, (rstd::bytes::Bytes value;))         \
-    V(Finished, ())                               \
+#define NCREQUEST_QT_BODY_EVENT_VARIANTS(V) \
+    V(Header, (http::MessageHead value;))   \
+    V(Chunk, (rstd::bytes::Bytes value;))   \
+    V(Finished, ())                         \
     V(Failed, (Error value;))
 
 struct BodyEvent {
@@ -81,17 +80,16 @@ struct DirectReplyState {
 struct OperationState {
     Request                                            request;
     http::Operation                                    operation;
-    std::weak_ptr<QtNetworkDriver>                     driver;
+    Weak<QtNetworkDriver>                              driver;
     rstd::Option<rstd::async::AnyExecutor>             executor;
-    std::shared_ptr<DirectReplyState>                  direct;
+    Option<Arc<DirectReplyState>>                      direct;
     rstd::Option<req_opt::Proxy>                       proxy;
     rstd::async::CompletionHandle<rstd::Option<Error>> ready;
     rstd::async::CompletionQueueHandle<BodyEvent>      body;
     Atomic<bool>                                       finished { false };
     Atomic<bool>                                       cancel_requested { false };
 
-    OperationState(Request request, http::Operation operation,
-                   std::weak_ptr<QtNetworkDriver> driver,
+    OperationState(Request request, http::Operation operation, Weak<QtNetworkDriver> driver,
                    rstd::Option<rstd::async::AnyExecutor>             executor,
                    rstd::Option<req_opt::Proxy>                       proxy,
                    rstd::async::CompletionHandle<rstd::Option<Error>> ready,
@@ -134,14 +132,13 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
         auto name  = (**field).name().as_ref();
         auto value = (**field).value().as_bytes();
         if (req.header().values(name).count() > 1) {
-            return Err(Error::Unsupported(
-                "Qt Network cannot preserve repeated request header fields"));
+            return Err(
+                Error::Unsupported("Qt Network cannot preserve repeated request header fields"));
         }
-        raw_headers.append({
-            QByteArray(reinterpret_cast<const char*>(name.data()),
-                       static_cast<qsizetype>(name.size())),
-            QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
-                       static_cast<qsizetype>(value.len())) });
+        raw_headers.append({ QByteArray(reinterpret_cast<const char*>(name.data()),
+                                        static_cast<qsizetype>(name.size())),
+                             QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
+                                        static_cast<qsizetype>(value.len())) });
     }
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
@@ -200,8 +197,8 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
 }
 
 auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
-                  http::Operation operation,
-                  rstd::Option<rstd::bytes::Bytes> body) -> QNetworkReply* {
+                  http::Operation operation, rstd::Option<rstd::bytes::Bytes> body)
+    -> QNetworkReply* {
     if (manager == nullptr) return nullptr;
     if (! operation.is_Post()) {
         return manager->get(rstd::move(request));
@@ -215,7 +212,7 @@ auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
     if (body.is_some()) {
         auto bytes = rstd::move(body).unwrap();
         payload    = QByteArray(reinterpret_cast<const char*>(bytes.data()),
-                             static_cast<qsizetype>(bytes.size()));
+                                static_cast<qsizetype>(bytes.size()));
     }
     return manager->post(request, payload);
 }
@@ -223,9 +220,9 @@ auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
 class QtNetworkManagerRouter : public QObject {
     using ShareKey = const void*;
 
-    QPointer<QNetworkAccessManager> m_default_manager;
+    QPointer<QNetworkAccessManager>                    m_default_manager;
     HashMap<ShareKey, QPointer<QNetworkAccessManager>> m_share_managers;
-    bool m_allow_share;
+    bool                                               m_allow_share;
 
 public:
     QtNetworkManagerRouter(QNetworkAccessManager* default_manager, bool allow_share,
@@ -246,7 +243,7 @@ public:
                 "request Share is not supported with an external QNetworkAccessManager"));
         }
 
-        auto key = detail::SessionShareAccess::token(*share);
+        auto key      = detail::SessionShareAccess::token(*share);
         auto existing = m_share_managers.get(key);
         if (existing.is_some()) {
             if (auto* manager = (**existing).data()) return Ok(manager);
@@ -292,26 +289,24 @@ auto read_header(QNetworkReply* reply)
             static_cast<rstd::usize>(pair.first.size()));
         auto name = http::HeaderName::parse(name_text);
         if (name.is_err()) {
-            return rstd::Err(http::HttpParseError {
-                http::HttpParseErrorKind::InvalidHeaderLine(), name.unwrap_err().offset() });
+            return rstd::Err(http::HttpParseError { http::HttpParseErrorKind::InvalidHeaderLine(),
+                                                    name.unwrap_err().offset() });
         }
 
         auto value = http::HeaderValue::from_bytes(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::u8*>(pair.second.constData()),
             static_cast<rstd::usize>(pair.second.size())));
         if (value.is_err()) {
-            return rstd::Err(http::HttpParseError {
-                http::HttpParseErrorKind::InvalidHeaderLine(), value.unwrap_err().offset() });
+            return rstd::Err(http::HttpParseError { http::HttpParseErrorKind::InvalidHeaderLine(),
+                                                    value.unwrap_err().offset() });
         }
-        headers.append(http::HeaderField { rstd::move(name).unwrap(),
-                                           rstd::move(value).unwrap() });
+        headers.append(http::HeaderField { rstd::move(name).unwrap(), rstd::move(value).unwrap() });
     }
 
-    auto start = http::StartLine::Response(http::StatusLine {
-        rstd::None<http::Version>(), rstd::move(status_code).unwrap(),
-        rstd::None<http::HeaderValue>() });
-    return rstd::Ok(rstd::Some(
-        http::MessageHead { rstd::move(start), rstd::move(headers) }));
+    auto start = http::StartLine::Response(http::StatusLine { rstd::None<http::Version>(),
+                                                              rstd::move(status_code).unwrap(),
+                                                              rstd::None<http::HeaderValue>() });
+    return rstd::Ok(rstd::Some(http::MessageHead { rstd::move(start), rstd::move(headers) }));
 }
 
 auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
@@ -335,14 +330,13 @@ auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
     }));
 }
 
-void publish_header(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+void publish_header(const Arc<OperationState>& state, QNetworkReply* reply) {
     if (state->finished.load()) return;
     auto header = read_header(reply);
     if (header.is_err()) {
-        auto error = rstd::move(header).unwrap_err();
-        auto protocol = error.kind().is_InvalidStartLine()
-                            ? ProtocolError::InvalidStatusLine
-                            : ProtocolError::InvalidHeaderLine;
+        auto error    = rstd::move(header).unwrap_err();
+        auto protocol = error.kind().is_InvalidStartLine() ? ProtocolError::InvalidStatusLine
+                                                           : ProtocolError::InvalidHeaderLine;
         state->push_body_event(
             BodyEvent::Failed(Error::Protocol(protocol, protocol_error_message(protocol))));
         return;
@@ -353,7 +347,7 @@ void publish_header(const std::shared_ptr<OperationState>& state, QNetworkReply*
     }
 }
 
-void publish_chunks(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+void publish_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
     if (state->finished.load() || reply == nullptr) return;
 
     while (reply->bytesAvailable() > 0) {
@@ -367,7 +361,7 @@ void publish_chunks(const std::shared_ptr<OperationState>& state, QNetworkReply*
     }
 }
 
-void publish_finished(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+void publish_finished(const Arc<OperationState>& state, QNetworkReply* reply) {
     if (state->finished.load()) return;
 
     publish_header(state, reply);
@@ -385,11 +379,11 @@ void publish_finished(const std::shared_ptr<OperationState>& state, QNetworkRepl
 class QtNetworkWorker : public QObject {
     struct ReplyEntry {
         QPointer<QNetworkReply> reply;
-        std::shared_ptr<OperationState> state;
+        Arc<OperationState>     state;
     };
 
-    QNetworkAccessManager*                          m_manager { nullptr };
-    QtNetworkManagerRouter*                         m_router { nullptr };
+    QNetworkAccessManager*               m_manager { nullptr };
+    QtNetworkManagerRouter*              m_router { nullptr };
     HashMap<OperationState*, ReplyEntry> m_replies;
 
 public:
@@ -404,8 +398,7 @@ public:
         }
     }
 
-    void start(std::shared_ptr<OperationState> state,
-               rstd::Option<rstd::bytes::Bytes> body) {
+    void start(Arc<OperationState> state, rstd::Option<rstd::bytes::Bytes> body) {
         ensure_manager();
 
         auto manager_result = m_router->manager_for(state->request);
@@ -423,16 +416,16 @@ public:
             return;
         }
 
-        auto* reply = send_request(
-            manager, rstd::move(request).unwrap(), state->operation, rstd::move(body));
+        auto* reply =
+            send_request(manager, rstd::move(request).unwrap(), state->operation, rstd::move(body));
 
         if (reply == nullptr) {
             fail_start(rstd::move(state), Error::InvalidState("Qt did not create a reply"));
             return;
         }
 
-        (void)m_replies.insert(
-            state.get(), ReplyEntry { QPointer<QNetworkReply>(reply), state });
+        (void)m_replies.insert(state.as_ptr(),
+                               ReplyEntry { QPointer<QNetworkReply>(reply), state.clone() });
         connect_reply(state, reply);
         state->complete_ready();
     }
@@ -451,7 +444,7 @@ public:
         auto entries = m_replies.iter_mut();
         for (auto next = entries.next(); next.is_some(); next = entries.next()) {
             auto entry = next->template get<1>();
-            auto state = entry->state;
+            auto state = entry->state.clone();
             if (! state->finished.exchange(true)) {
                 state->complete_ready(Some(Error::Canceled()));
                 state->push_body_event(BodyEvent::Failed(Error::Canceled()));
@@ -467,49 +460,63 @@ public:
     }
 
 private:
-    void fail_start(std::shared_ptr<OperationState> state, Error error) {
+    void fail_start(Arc<OperationState> state, Error error) {
         state->finished.store(true);
         state->complete_ready(Some(rstd::move(error)));
         state->close_body();
     }
 
-    void connect_reply(std::shared_ptr<OperationState> state, QNetworkReply* reply) {
-        QObject::connect(reply, &QNetworkReply::metaDataChanged, reply, [this, state, reply] {
-            emit_header(state, reply);
-        });
-        QObject::connect(reply, &QNetworkReply::readyRead, reply, [this, state, reply] {
-            emit_chunks(state, reply);
-        });
-        QObject::connect(reply, &QIODevice::readChannelFinished, reply, [this, state, reply] {
-            emit_chunks(state, reply);
-        });
-        QObject::connect(reply, &QNetworkReply::finished, reply, [this, state, reply] {
-            finish_reply(state, reply);
-        });
-        QObject::connect(reply, &QObject::destroyed, this, [this, state] {
-            if (state->finished.load()) return;
-            state->finished.store(true);
-            state->push_body_event(
-                BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
-            (void)m_replies.remove(state.get());
-        });
+    void connect_reply(const Arc<OperationState>& state, QNetworkReply* reply) {
+        QObject::connect(reply,
+                         &QNetworkReply::metaDataChanged,
+                         reply,
+                         [this, capture = make_clone_tuple(state.clone()), reply] {
+                             emit_header(capture.get<0>(), reply);
+                         });
+        QObject::connect(reply,
+                         &QNetworkReply::readyRead,
+                         reply,
+                         [this, capture = make_clone_tuple(state.clone()), reply] {
+                             emit_chunks(capture.get<0>(), reply);
+                         });
+        QObject::connect(reply,
+                         &QIODevice::readChannelFinished,
+                         reply,
+                         [this, capture = make_clone_tuple(state.clone()), reply] {
+                             emit_chunks(capture.get<0>(), reply);
+                         });
+        QObject::connect(reply,
+                         &QNetworkReply::finished,
+                         reply,
+                         [this, capture = make_clone_tuple(state.clone()), reply] {
+                             finish_reply(capture.get<0>(), reply);
+                         });
+        QObject::connect(
+            reply, &QObject::destroyed, this, [this, capture = make_clone_tuple(state.clone())] {
+                auto& operation = capture.get<0>();
+                if (operation->finished.load()) return;
+                operation->finished.store(true);
+                operation->push_body_event(
+                    BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
+                (void)m_replies.remove(operation.as_ptr());
+            });
     }
 
-    void emit_header(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+    void emit_header(const Arc<OperationState>& state, QNetworkReply* reply) {
         publish_header(state, reply);
     }
 
-    void emit_chunks(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+    void emit_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
         publish_chunks(state, reply);
     }
 
-    void finish_reply(const std::shared_ptr<OperationState>& state, QNetworkReply* reply) {
+    void finish_reply(const Arc<OperationState>& state, QNetworkReply* reply) {
         publish_finished(state, reply);
-        (void)m_replies.remove(state.get());
+        (void)m_replies.remove(state.as_ptr());
     }
 };
 
-class QtNetworkDriver : public std::enable_shared_from_this<QtNetworkDriver>, public NoCopy {
+class QtNetworkDriver : public NoCopy {
     QThread          m_thread;
     QtNetworkWorker* m_worker { nullptr };
 
@@ -534,17 +541,17 @@ public:
         }
     }
 
-    auto start(std::shared_ptr<OperationState> state,
-               rstd::Option<rstd::bytes::Bytes> body) -> bool {
+    auto start(const Arc<OperationState>& state, rstd::Option<rstd::bytes::Bytes> body) -> bool {
         if (m_worker == nullptr || ! m_thread.isRunning()) {
             return false;
         }
 
-        auto body_state = std::make_shared<rstd::Option<rstd::bytes::Bytes>>(rstd::move(body));
+        auto body_state = Arc<rstd::Option<rstd::bytes::Bytes>>::make(rstd::move(body));
         return QMetaObject::invokeMethod(
             m_worker,
-            [worker = m_worker, state = rstd::move(state), body_state]() mutable {
-                worker->start(rstd::move(state), rstd::move(*body_state));
+            [worker  = m_worker,
+             capture = make_clone_tuple(state.clone(), rstd::move(body_state))]() mutable {
+                worker->start(rstd::move(capture.get<0>()), rstd::move(*capture.get<1>()));
             },
             Qt::QueuedConnection);
     }
@@ -566,13 +573,13 @@ public:
 void OperationState::cancel() {
     if (cancel_requested.exchange(true)) return;
 
-    if (auto locked = driver.lock()) {
+    if (auto locked = driver.upgrade()) {
         locked->cancel(this);
         return;
     }
 
-    if (executor.is_some() && direct) {
-        auto state = direct;
+    if (executor.is_some() && direct.is_some()) {
+        auto state = direct->clone();
         (void)executor->post([state = rstd::move(state)] {
             auto* reply = state->reply.data();
             if (reply != nullptr && ! reply->isFinished()) {
@@ -584,10 +591,11 @@ void OperationState::cancel() {
 
 export class SessionBackend : public NoCopy {
 public:
-    SessionBackend(): m_driver(std::make_shared<QtNetworkDriver>()) {}
+    SessionBackend(): m_driver(Some(Arc<QtNetworkDriver>::make())) {}
 
     explicit SessionBackend(QObject* parent)
-        : m_driver(parent == nullptr ? std::make_shared<QtNetworkDriver>() : nullptr),
+        : m_driver(parent == nullptr ? Some(Arc<QtNetworkDriver>::make())
+                                     : None<Arc<QtNetworkDriver>>()),
           m_manager(parent == nullptr ? nullptr : new QNetworkAccessManager(parent)),
           m_executor(make_qt_executor(m_manager.data())) {
         if (m_manager != nullptr) {
@@ -621,12 +629,11 @@ public:
 
 private:
     auto prepare_req(const Request&) const -> Request;
-    auto start_request_direct(const Request&, http::Operation,
-                              rstd::Option<rstd::bytes::Bytes>)
+    auto start_request_direct(const Request&, http::Operation, rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
 
 private:
-    std::shared_ptr<QtNetworkDriver>       m_driver;
+    Option<Arc<QtNetworkDriver>>           m_driver;
     QPointer<QNetworkAccessManager>        m_manager;
     QPointer<QtNetworkManagerRouter>       m_router;
     rstd::Option<rstd::async::AnyExecutor> m_executor;
@@ -687,8 +694,7 @@ public:
     }
 
 private:
-    ResponseBackend(std::shared_ptr<OperationState> state,
-                    rstd::async::CompletionQueue<BodyEvent> body)
+    ResponseBackend(Arc<OperationState> state, rstd::async::CompletionQueue<BodyEvent> body)
         : m_req(state->request.clone()),
           m_operation(state->operation),
           m_state(rstd::move(state)),
@@ -696,7 +702,7 @@ private:
 
     Request                                               m_req;
     http::Operation                                       m_operation;
-    std::shared_ptr<OperationState>                       m_state;
+    Arc<OperationState>                                   m_state;
     rstd::Option<rstd::async::CompletionQueue<BodyEvent>> m_body;
     rstd::Option<http::MessageHead>                       m_header;
     http::Header                                          m_empty_header;
@@ -744,10 +750,11 @@ auto SessionBackend::start_request_direct(const Request& req, http::Operation op
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt executor rejected request")));
     }
 
-    auto prepared = prepare_req(req);
-    auto* router  = m_router.data();
+    auto  prepared = prepare_req(req);
+    auto* router   = m_router.data();
     if (router == nullptr) {
-        co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt manager router is unavailable")));
+        co_return Result<ResponseBackend>(
+            Err(Error::InvalidState("Qt manager router is unavailable")));
     }
 
     auto manager_result = router->manager_for(prepared);
@@ -771,41 +778,52 @@ auto SessionBackend::start_request_direct(const Request& req, http::Operation op
         apply_proxy(manager, *proxy);
     }
 
-    auto state = std::make_shared<OperationState>(rstd::move(prepared),
-                                                  operation,
-                                                  std::weak_ptr<QtNetworkDriver> {},
-                                                  Some(m_executor->clone()),
-                                                  rstd::move(proxy),
-                                                  rstd::move(ready_pair.get<1>()),
-                                                  rstd::move(body_pair.get<1>()));
+    auto state = Arc<OperationState>::make(rstd::move(prepared),
+                                           operation,
+                                           Weak<QtNetworkDriver>::make(),
+                                           Some(m_executor->clone()),
+                                           rstd::move(proxy),
+                                           rstd::move(ready_pair.get<1>()),
+                                           rstd::move(body_pair.get<1>()));
 
-    auto* reply =
-        send_request(manager, rstd::move(request).unwrap(), operation, rstd::move(body));
+    auto* reply = send_request(manager, rstd::move(request).unwrap(), operation, rstd::move(body));
 
     if (reply == nullptr) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt did not create a reply")));
     }
 
-    state->direct = std::make_shared<DirectReplyState>(DirectReplyState { reply });
-    QObject::connect(reply, &QNetworkReply::metaDataChanged, reply, [state, reply] {
-        publish_header(state, reply);
-    });
-    QObject::connect(reply, &QNetworkReply::readyRead, reply, [state, reply] {
-        publish_chunks(state, reply);
-    });
-    QObject::connect(reply, &QIODevice::readChannelFinished, reply, [state, reply] {
-        publish_chunks(state, reply);
-    });
-    QObject::connect(reply, &QNetworkReply::finished, reply, [state, reply] {
-        publish_finished(state, reply);
-        reply->deleteLater();
-    });
-    QObject::connect(reply, &QObject::destroyed, manager, [state] {
-        if (state->finished.load()) return;
-        state->finished.store(true);
-        state->push_body_event(
-            BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
-    });
+    state->direct = Some(Arc<DirectReplyState>::make(DirectReplyState { reply }));
+    QObject::connect(reply,
+                     &QNetworkReply::metaDataChanged,
+                     reply,
+                     [capture = make_clone_tuple(state.clone()), reply] {
+                         publish_header(capture.get<0>(), reply);
+                     });
+    QObject::connect(reply,
+                     &QNetworkReply::readyRead,
+                     reply,
+                     [capture = make_clone_tuple(state.clone()), reply] {
+                         publish_chunks(capture.get<0>(), reply);
+                     });
+    QObject::connect(reply,
+                     &QIODevice::readChannelFinished,
+                     reply,
+                     [capture = make_clone_tuple(state.clone()), reply] {
+                         publish_chunks(capture.get<0>(), reply);
+                     });
+    QObject::connect(
+        reply, &QNetworkReply::finished, reply, [capture = make_clone_tuple(state.clone()), reply] {
+            publish_finished(capture.get<0>(), reply);
+            reply->deleteLater();
+        });
+    QObject::connect(
+        reply, &QObject::destroyed, manager, [capture = make_clone_tuple(state.clone())] {
+            auto& operation = capture.get<0>();
+            if (operation->finished.load()) return;
+            operation->finished.store(true);
+            operation->push_body_event(
+                BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
+        });
     state->complete_ready();
 
     auto ready = co_await rstd::move(ready_pair.get<0>());
@@ -824,7 +842,7 @@ auto SessionBackend::start_request_direct(const Request& req, http::Operation op
 auto SessionBackend::start_request(const Request& req, http::Operation operation,
                                    rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
-    if (! m_driver) {
+    if (m_driver.is_none()) {
         co_return co_await start_request_direct(req, operation, rstd::move(body));
     }
 
@@ -849,15 +867,15 @@ auto SessionBackend::start_request(const Request& req, http::Operation operation
     }
     auto body_pair = rstd::move(body_completion).unwrap_unchecked();
 
-    auto state = std::make_shared<OperationState>(rstd::move(prepared),
-                                                  operation,
-                                                  std::weak_ptr<QtNetworkDriver>(m_driver),
-                                                  None<rstd::async::AnyExecutor>(),
-                                                  rstd::move(proxy),
-                                                  rstd::move(ready_pair.get<1>()),
-                                                  rstd::move(body_pair.get<1>()));
+    auto state = Arc<OperationState>::make(rstd::move(prepared),
+                                           operation,
+                                           m_driver->downgrade(),
+                                           None<rstd::async::AnyExecutor>(),
+                                           rstd::move(proxy),
+                                           rstd::move(ready_pair.get<1>()),
+                                           rstd::move(body_pair.get<1>()));
 
-    if (! m_driver->start(state, rstd::move(body))) {
+    if (! (*m_driver)->start(state, rstd::move(body))) {
         state->close_body();
         co_return Result<ResponseBackend>(
             Err(Error::InvalidState("Qt network driver is not running")));
@@ -936,8 +954,7 @@ auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
         if (event.is_Finished()) {
             co_return Result<rstd::bytes::Bytes>(Ok(out.freeze()));
         }
-        co_return Result<rstd::bytes::Bytes>(
-            Err(rstd::move(event).as_Failed().value));
+        co_return Result<rstd::bytes::Bytes>(Err(rstd::move(event).as_Failed().value));
     }
 }
 

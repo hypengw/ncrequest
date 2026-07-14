@@ -2,9 +2,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <rstd/enum.hpp>
 #include <string>
@@ -22,6 +19,9 @@ namespace
 
 using ncrequest::byte;
 using ncrequest::usize;
+using rstd::path::Path;
+using rstd::path::PathBuf;
+using namespace rstd::prelude;
 
 struct FetchResult {
     bool        got_response { false };
@@ -136,28 +136,30 @@ auto string_from_bytes(const rstd::bytes::Bytes& bytes) -> std::string {
     return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.size() };
 }
 
-auto unique_temp_path(std::string_view name) -> std::filesystem::path {
+auto unique_temp_path(std::string_view name) -> PathBuf {
     auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    return std::filesystem::temp_directory_path() /
-           (std::string("ncrequest-") + std::string(name) + "-" + std::to_string(ticks));
+    auto path = rstd::env::temp_dir();
+    auto filename =
+        std::string("ncrequest-") + std::string(name) + "-" + std::to_string(ticks);
+    path.push(ref<Path>(ref<str>(filename)));
+    return path;
 }
 
-auto write_file(const std::filesystem::path& path, const std::string& body) -> bool {
-    std::ofstream out { path, std::ios::binary };
-    if (! out) return false;
-    out.write(body.data(), static_cast<std::streamsize>(body.size()));
-    return static_cast<bool>(out);
+auto write_file(ref<Path> path, const std::string& body) -> bool {
+    auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const u8*>(body.data()), body.size());
+    return rstd::fs::write(path, bytes).is_ok();
 }
 
-auto read_file(const std::filesystem::path& path) -> std::optional<std::string> {
-    std::ifstream in { path, std::ios::binary };
-    if (! in) return std::nullopt;
-    return std::string { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+auto read_file(ref<Path> path) -> std::optional<std::string> {
+    auto input = rstd::fs::read(path);
+    if (input.is_err()) return std::nullopt;
+    auto bytes = rstd::move(input).unwrap();
+    if (bytes.is_empty()) return std::string {};
+    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.len() };
 }
 
-void remove_file(const std::filesystem::path& path) {
-    std::error_code ignored;
-    std::filesystem::remove(path, ignored);
+void remove_file(ref<Path> path) {
+    (void)rstd::fs::remove_file(path);
 }
 
 auto response_code(const ncrequest::Arc<ncrequest::Response>& rsp) -> int {
@@ -278,8 +280,8 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
 }
 
 auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base,
-                    std::filesystem::path cookie_file,
-                    std::filesystem::path fixture_file) -> ncrequest::coro<ShareResult> {
+                    PathBuf cookie_file, PathBuf fixture_file)
+    -> ncrequest::coro<ShareResult> {
     auto result   = ShareResult {};
     auto shared   = ncrequest::SessionShare {};
     auto isolated = ncrequest::SessionShare {};
@@ -332,14 +334,14 @@ auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base
         request_with_share(local_http_url(base, "/cookie/echo"), cloned));
 
     auto fixture = ncrequest::SessionShare {};
-    fixture.load(fixture_file);
+    fixture.load(fixture_file.as_path());
     result.fixture_echo = co_await fetch_text_request(
         second_session.clone(),
         request_with_share(local_http_url(base, "/cookie/echo"), fixture));
 
-    cloned.save(cookie_file);
+    cloned.save(cookie_file.as_path());
     auto persisted = ncrequest::SessionShare {};
-    persisted.load(cookie_file);
+    persisted.load(cookie_file.as_path());
     result.persisted_echo = co_await fetch_text_request(
         rstd::move(second_session),
         request_with_share(local_http_url(base, "/cookie/echo"), persisted));
@@ -1476,9 +1478,14 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
                            "http_only_cookie\thttp-only\n"
                            "127.0.0.1\tFALSE\t/\tFALSE\t1\texpired_cookie\texpired\n"
                            "malformed\n"));
-    auto result = run_http([base, cookie_file, fixture_file](auto session) {
-        return exercise_share(rstd::move(session), base, cookie_file, fixture_file);
-    });
+    auto result = run_http(
+        [base, cookie_path = cookie_file.clone(), fixture_path = fixture_file.clone()](
+            auto session) mutable {
+            return exercise_share(rstd::move(session),
+                                  base,
+                                  rstd::move(cookie_path),
+                                  rstd::move(fixture_path));
+        });
     auto persisted = read_file(cookie_file);
     remove_file(cookie_file);
     remove_file(fixture_file);
