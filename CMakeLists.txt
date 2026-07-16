@@ -26,15 +26,15 @@ if(PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_EXTENSIONS OFF)
   add_compile_options(
     "$<$<COMPILE_LANGUAGE:CXX>:-fno-direct-access-external-data>")
+  set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
+  set(WIN_DEFS "$<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX;NOGDI>")
+  add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(GNUInstallDirs)
 include(FetchContent)
 
-set(WARN_OPTS -Wall -Wextra -Wpedantic -Werror=mismatched-tags)
-set(WIN_DEFS "$<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN;NOMINMAX;NOGDI>")
-add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:${WARN_OPTS}>")
 
 if(NOT TARGET rstd::rstd)
 
