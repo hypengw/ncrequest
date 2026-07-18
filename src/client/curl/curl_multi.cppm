@@ -45,7 +45,7 @@ public:
         : m_multi(curl_multi_init()),
           m_share(curl_share_init()),
           m_options(options),
-          m_share_mutex(rstd::sys::sync::mutex::Mutex::make()) {
+          m_share_mutex(empty {}) {
         // curl_multi_setopt(m_multi, CURLMOPT_SOCKETFUNCTION, CurlMulti::curl_socket_func);
         // curl_multi_setopt(m_multi, CURLMOPT_SOCKETDATA, this);
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERFUNCTION, CurlMulti::curl_timer_func);
@@ -222,14 +222,14 @@ private:
     static void static_share_lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
         auto info = static_cast<CurlMulti*>(clientp);
         if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
-            info->m_share_mutex.lock();
+            info->m_share_guard = rstd::Some(info->m_share_mutex.lock().unwrap());
         }
     }
 
     static void static_share_unlock(CURL*, curl_lock_data data, void* clientp) {
         auto info = static_cast<CurlMulti*>(clientp);
         if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
-            info->m_share_mutex.unlock();
+            (void)info->m_share_guard.take();
         }
     }
 
@@ -238,6 +238,7 @@ private:
     CURLSH* m_share;
     CurlOptions m_options;
 
-    rstd::sys::sync::mutex::Mutex m_share_mutex;
+    rstd::sync::Mutex<empty>                    m_share_mutex;
+    rstd::Option<rstd::sync::MutexGuard<empty>> m_share_guard;
 };
 } // namespace ncrequest

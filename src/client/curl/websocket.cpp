@@ -451,7 +451,7 @@ private:
         }
 
         auto registration =
-            rstd::async::Registration::register_fd(static_cast<rstd::sys::fd::RawFd>(sockfd));
+            rstd::async::Registration::register_fd(static_cast<rstd::os::fd::RawFd>(sockfd));
         if (registration.is_err()) {
             emit_io_error(rstd::move(registration).unwrap_err_unchecked());
             close_connection(false, true);

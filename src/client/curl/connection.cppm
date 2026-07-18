@@ -18,14 +18,11 @@ namespace ncrequest::client::curl
 {
 
 class RawMutexGuard {
-    rstd::sys::sync::mutex::Mutex& m_mutex;
+    rstd::sync::MutexGuard<empty> m_guard;
 
 public:
-    explicit RawMutexGuard(rstd::sys::sync::mutex::Mutex& mutex): m_mutex(mutex) {
-        m_mutex.lock();
-    }
-
-    ~RawMutexGuard() { m_mutex.unlock(); }
+    explicit RawMutexGuard(rstd::sync::Mutex<empty> const& mutex)
+        : m_guard(mutex.lock().unwrap()) {}
 
     RawMutexGuard(const RawMutexGuard&)                    = delete;
     auto operator=(const RawMutexGuard&) -> RawMutexGuard& = delete;
@@ -239,7 +236,7 @@ public:
           m_session_channel(rstd::move(session_channel)),
           m_recv_buf(RECV_LIMIT, allocator),
           m_send_buf(SEND_LIMIT, allocator),
-          m_mutex(rstd::sys::sync::mutex::Mutex::make()),
+          m_mutex(empty {}),
           m_self(Weak<Connection>::make()) {
         auto& easy = *m_easy;
         easy.setopt(CURLoption::CURLOPT_WRITEFUNCTION, Connection::write_callback);
@@ -663,8 +660,8 @@ private:
     Option<RstdReadWaiter>  m_read_waiter;
     Option<RstdWriteWaiter> m_write_waiter;
 
-    mutable rstd::sys::sync::mutex::Mutex m_mutex;
-    Weak<Connection>                       m_self;
+    mutable rstd::sync::Mutex<empty> m_mutex;
+    Weak<Connection>                 m_self;
 };
 
 } // namespace ncrequest::client::curl
