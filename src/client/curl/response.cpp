@@ -1,9 +1,11 @@
 module;
+#include <curl/curl.h>
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;
 import :session_share_backend;
 import ncrequest.coro;
+import rstd.cppstd;
 
 namespace ncrequest::client::curl
 {
@@ -13,26 +15,32 @@ namespace
 
 void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
     auto url_bytes = rstd::vec::Vec<u8>::make();
-    url_bytes.extend_from_slice(rstd::str_::as_bytes(ref<str>(req.url())));
+    auto url_view  = req.url();
+    url_bytes.extend_from_bytes(rstd::str_::as_bytes(rstd::cppstd::as_str(url_view)));
     auto url = rstd::ffi::CString::from_vec_unchecked(rstd::move(url_bytes));
     easy.setopt(CURLoption::CURLOPT_URL,
                 reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
 
-        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_LIMIT, timeout.low_speed);
-        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_TIME, timeout.transfer_timeout);
-        easy.setopt(CURLoption::CURLOPT_CONNECTTIMEOUT, timeout.connect_timeout);
+        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_LIMIT,
+                    static_cast<long>(timeout.low_speed.to_primitive()));
+        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_TIME,
+                    static_cast<long>(timeout.transfer_timeout.to_primitive()));
+        easy.setopt(CURLoption::CURLOPT_CONNECTTIMEOUT,
+                    static_cast<long>(timeout.connect_timeout.to_primitive()));
     }
     {
         auto& tcp = req.get_opt<req_opt::Tcp>();
         easy.setopt(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive);
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPIDLE, tcp.keepidle);
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPINTVL, tcp.keepintvl);
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPIDLE,
+                    static_cast<long>(tcp.keepidle.to_primitive()));
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPINTVL,
+                    static_cast<long>(tcp.keepintvl.to_primitive()));
     }
     {
         auto& p = req.get_opt<req_opt::Proxy>();
-        easy.setopt(CURLoption::CURLOPT_PROXYTYPE, p.type);
+        easy.setopt(CURLoption::CURLOPT_PROXYTYPE, static_cast<long>(p.type));
         easy.setopt(CURLoption::CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
     }
     {
@@ -72,7 +80,7 @@ ResponseBackend::ResponseBackend(const Request& req, http::Operation oper,
     case http::Operation::Tag::Post:
         easy.setopt(CURLoption::CURLOPT_POST, 1);
         easy.setopt(CURLoption::CURLOPT_POSTFIELDS, nullptr);
-        easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, 0);
+        easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(0));
         break;
     case http::Operation::Tag::Delete:
     case http::Operation::Tag::Head:
@@ -112,22 +120,26 @@ auto ResponseBackend::allocator() const -> const std::pmr::polymorphic_allocator
 }
 
 Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, http::Operation oper,
-                                                     SessionBackend& ses) {
+                                                    SessionBackend& ses) {
     return Arc<ResponseBackend>::make(req, oper, ses);
 }
 
 const Request& ResponseBackend::request() const { return m_inner->m_req; }
 
 bool ResponseBackend::pause_send(bool pause) {
-    connection().send_action(pause ? Connection::Action::PauseSend : Connection::Action::UnPauseSend);
+    connection().send_action(pause ? Connection::Action::PauseSend
+                                   : Connection::Action::UnPauseSend);
     return true;
 }
 bool ResponseBackend::pause_recv(bool pause) {
-    connection().send_action(pause ? Connection::Action::PauseRecv : Connection::Action::UnPauseRecv);
+    connection().send_action(pause ? Connection::Action::PauseRecv
+                                   : Connection::Action::UnPauseRecv);
     return true;
 }
 
-void ResponseBackend::add_send_buffer(rstd::bytes::Bytes buf) { m_inner->m_send_buffer = rstd::move(buf); }
+void ResponseBackend::add_send_buffer(rstd::bytes::Bytes buf) {
+    m_inner->m_send_buffer = rstd::move(buf);
+}
 
 void ResponseBackend::prepare_perform() {
     auto& easy = connection().easy();
@@ -137,11 +149,14 @@ void ResponseBackend::prepare_perform() {
     case http::Operation::Tag::Post: {
         auto& p = m_inner->m_req.get_opt<req_opt::Read>();
         if (p.callback) {
-            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, p.size ? p.size : -1);
+            auto size = p.size == usize() ? static_cast<curl_off_t>(-1)
+                                          : static_cast<curl_off_t>(p.size.to_primitive());
+            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, size);
         } else {
             auto& send_buffer = m_inner->m_send_buffer;
             easy.setopt(CURLoption::CURLOPT_POSTFIELDS, send_buffer.data());
-            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, send_buffer.size());
+            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE,
+                        static_cast<curl_off_t>(send_buffer.size().to_primitive()));
         }
         break;
     }
@@ -149,7 +164,6 @@ void ResponseBackend::prepare_perform() {
     case http::Operation::Tag::Head:
     default: break;
     }
-
 }
 
 auto ResponseBackend::operation() const -> http::Operation { return m_inner->m_operation; }
@@ -171,7 +185,7 @@ auto ResponseBackend::trailers() const -> rstd::Option<rstd::ref<http::Header>> 
 auto ResponseBackend::code() const -> rstd::Option<i32> {
     auto status = connection().header().status_code();
     if (status.is_none()) return None();
-    return Some(static_cast<i32>(*status));
+    return Some(rstd::as_cast<i32>(*status));
 }
 
 auto ResponseBackend::connection() -> Connection& { return *(m_inner->m_connect); }
@@ -190,13 +204,12 @@ auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
         chunk.clear();
         auto read = co_await connection().read_some(chunk);
         if (read.error.is_some()) {
-            co_return Result<rstd::bytes::Bytes>(
-                Err(rstd::move(read.error).unwrap_unchecked()));
+            co_return Result<rstd::bytes::Bytes>(Err(rstd::move(read.error).unwrap_unchecked()));
         }
         if (read.eof) {
             break;
         }
-        if (read.size == 0) {
+        if (read.size == usize()) {
             co_await rstd::async::yield_now();
             continue;
         }

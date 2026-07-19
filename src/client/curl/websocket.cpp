@@ -31,10 +31,10 @@ class WebSocketBackend::Impl {
 
     struct StopCommand {};
 
-#define NCREQUEST_CURL_WS_COMMAND_VARIANTS(V)       \
-    V(Connect, (ConnectCommand value;))             \
-    V(Send, (SendCommand value;))                   \
-    V(Disconnect, (DisconnectCommand value;))       \
+#define NCREQUEST_CURL_WS_COMMAND_VARIANTS(V) \
+    V(Connect, (ConnectCommand value;))       \
+    V(Send, (SendCommand value;))             \
+    V(Disconnect, (DisconnectCommand value;)) \
     V(Stop, ())
 
     struct Command {
@@ -58,9 +58,9 @@ class WebSocketBackend::Impl {
 
     class CommandQueue {
         struct Fields {
-            rstd::vec::Vec<Command>       commands;
+            rstd::vec::Vec<Command>         commands;
             rstd::Option<rstd::task::Waker> waker;
-            bool                         closed { false };
+            bool                            closed { false };
 
             Fields(): commands(rstd::vec::Vec<Command>::make()) {}
         };
@@ -102,14 +102,14 @@ class WebSocketBackend::Impl {
         }
 
         void clear_waker() {
-            auto fields  = m_fields.lock().unwrap();
+            auto fields   = m_fields.lock().unwrap();
             fields->waker = rstd::None();
         }
 
         auto poll_receive(rstd::task::Context& cx) -> rstd::task::Poll<Output> {
             auto fields = m_fields.lock().unwrap();
             if (! fields->commands.is_empty()) {
-                auto command = fields->commands.remove(0);
+                auto command = fields->commands.remove(usize());
                 return rstd::task::Poll<Output>::Ready(rstd::Some(rstd::move(command)));
             }
 
@@ -129,8 +129,7 @@ class WebSocketBackend::Impl {
     public:
         using Output = LoopEvent;
 
-        NextEventFuture(Impl& owner,
-                        rstd::Option<Arc<rstd::async::Registration>> registration,
+        NextEventFuture(Impl& owner, rstd::Option<Arc<rstd::async::Registration>> registration,
                         bool wait_write)
             : m_owner(&owner), m_registration(rstd::move(registration)), m_wait_write(wait_write) {}
 
@@ -141,8 +140,8 @@ class WebSocketBackend::Impl {
             : m_owner(rstd::exchange(other.m_owner, nullptr)),
               m_registration(rstd::move(other.m_registration)),
               m_wait_write(other.m_wait_write),
-              m_read_waiter_id(rstd::exchange(other.m_read_waiter_id, 0)),
-              m_write_waiter_id(rstd::exchange(other.m_write_waiter_id, 0)) {}
+              m_read_waiter_id(rstd::exchange(other.m_read_waiter_id, usize())),
+              m_write_waiter_id(rstd::exchange(other.m_write_waiter_id, usize())) {}
 
         auto operator=(NextEventFuture&& other) noexcept -> NextEventFuture& {
             if (this != &other) {
@@ -150,8 +149,8 @@ class WebSocketBackend::Impl {
                 m_owner           = rstd::exchange(other.m_owner, nullptr);
                 m_registration    = rstd::move(other.m_registration);
                 m_wait_write      = other.m_wait_write;
-                m_read_waiter_id  = rstd::exchange(other.m_read_waiter_id, 0);
-                m_write_waiter_id = rstd::exchange(other.m_write_waiter_id, 0);
+                m_read_waiter_id  = rstd::exchange(other.m_read_waiter_id, usize());
+                m_write_waiter_id = rstd::exchange(other.m_write_waiter_id, usize());
             }
             return *this;
         }
@@ -177,11 +176,12 @@ class WebSocketBackend::Impl {
                 return rstd::task::Poll<LoopEvent>::Pending();
             }
 
-            auto read = (*future.m_registration)->poll_readiness(
-                cx, rstd::async::Interest::readable(), future.m_read_waiter_id);
+            auto read = (*future.m_registration)
+                            ->poll_readiness(
+                                cx, rstd::async::Interest::readable(), future.m_read_waiter_id);
             if (read.is_ready()) {
                 future.m_owner->m_commands.clear_waker();
-                future.m_read_waiter_id = 0;
+                future.m_read_waiter_id = usize();
                 future.clear_write_waker();
 
                 auto value = rstd::move(read).take();
@@ -193,12 +193,14 @@ class WebSocketBackend::Impl {
             }
 
             if (future.m_wait_write) {
-                auto write = (*future.m_registration)->poll_readiness(
-                    cx, rstd::async::Interest::writable(), future.m_write_waiter_id);
+                auto write = (*future.m_registration)
+                                 ->poll_readiness(cx,
+                                                  rstd::async::Interest::writable(),
+                                                  future.m_write_waiter_id);
                 if (write.is_ready()) {
                     future.m_owner->m_commands.clear_waker();
                     future.clear_read_waker();
-                    future.m_write_waiter_id = 0;
+                    future.m_write_waiter_id = usize();
 
                     auto value = rstd::move(write).take();
                     if (value.is_err()) {
@@ -227,26 +229,25 @@ class WebSocketBackend::Impl {
         }
 
         void clear_read_waker() {
-            if (m_registration && m_read_waiter_id != 0) {
-                (*m_registration)
-                    ->clear_waker(rstd::async::Interest::readable(), m_read_waiter_id);
-                m_read_waiter_id = 0;
+            if (m_registration && m_read_waiter_id != usize()) {
+                (*m_registration)->clear_waker(rstd::async::Interest::readable(), m_read_waiter_id);
+                m_read_waiter_id = usize();
             }
         }
 
         void clear_write_waker() {
-            if (m_registration && m_write_waiter_id != 0) {
+            if (m_registration && m_write_waiter_id != usize()) {
                 (*m_registration)
                     ->clear_waker(rstd::async::Interest::writable(), m_write_waiter_id);
-                m_write_waiter_id = 0;
+                m_write_waiter_id = usize();
             }
         }
 
-        Impl*                          m_owner {};
+        Impl*                                        m_owner {};
         rstd::Option<Arc<rstd::async::Registration>> m_registration;
-        bool                           m_wait_write { false };
-        usize                          m_read_waiter_id {};
-        usize                          m_write_waiter_id {};
+        bool                                         m_wait_write { false };
+        usize                                        m_read_waiter_id {};
+        usize                                        m_write_waiter_id {};
     };
 
     struct Callbacks {
@@ -259,7 +260,9 @@ class WebSocketBackend::Impl {
 public:
     Impl(rstd::Option<u64> max_buffer_size, std::pmr::memory_resource* mem_pool)
         : m_alloc(mem_pool),
-          m_read_buffer(max_buffer_size.unwrap_or(MaxBufferSize), m_alloc),
+          m_read_buffer(
+              static_cast<rstd::size_t>(max_buffer_size.unwrap_or(MaxBufferSize).to_primitive()),
+              m_alloc),
           m_msgs(m_alloc),
           m_curl(curl_easy_init()),
           m_connected(false),
@@ -294,10 +297,7 @@ public:
 
     auto is_connected() const -> bool { return m_connected.load(Ordering::Acquire); }
 
-    void send(ref<str> message) {
-        send(slice<byte>::from_raw_parts(
-            reinterpret_cast<const byte*>(message.data()), message.size()));
-    }
+    void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
 
     void send(slice<byte> in) {
         auto msg = rstd::rc::allocate_make_rc<byte[]>(m_alloc, in.len(), byte {});
@@ -341,9 +341,8 @@ private:
             auto registration = m_registration.is_some()
                                     ? rstd::Some(m_registration->clone())
                                     : rstd::None<Arc<rstd::async::Registration>>();
-            auto event = co_await NextEventFuture {
-                *this, rstd::move(registration), ! m_msgs.empty()
-            };
+            auto event =
+                co_await NextEventFuture { *this, rstd::move(registration), ! m_msgs.empty() };
             if (! handle_event(rstd::move(event))) {
                 break;
             }
@@ -418,12 +417,12 @@ private:
             return;
         }
 
-        auto url    = rstd::ffi::CString::from_vec_unchecked(
+        auto url = rstd::ffi::CString::from_vec_unchecked(
             rstd::into<rstd::vec::Vec<u8>>(rstd::move(command.url)));
-        auto result = curl_easy_setopt(
-            m_curl,
-            CURLoption::CURLOPT_URL,
-            reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
+        auto result =
+            curl_easy_setopt(m_curl,
+                             CURLoption::CURLOPT_URL,
+                             reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
         if (result == CURLcode::CURLE_OK) {
             result = curl_easy_setopt(m_curl, CURLoption::CURLOPT_CONNECT_ONLY, 2L);
         }
@@ -460,8 +459,8 @@ private:
         }
 
         reset_states();
-        m_registration = rstd::Some(Arc<rstd::async::Registration>::make(
-            rstd::move(registration).unwrap_unchecked()));
+        m_registration = rstd::Some(
+            Arc<rstd::async::Registration>::make(rstd::move(registration).unwrap_unchecked()));
         m_connected.store(true, Ordering::Release);
 
         (void)command.completion.complete(true);
@@ -472,11 +471,11 @@ private:
         if (! m_curl || ! is_connected()) return false;
 
         for (;;) {
-            auto  rlen   = usize { 0 };
-            auto* meta   = static_cast<const struct curl_ws_frame*>(nullptr);
-            auto* data   = m_read_buffer.data() + m_read_len;
-            auto  size   = m_read_buffer.size() - m_read_len;
-            auto  result = curl_ws_recv(m_curl, data, size, &rlen, &meta);
+            rstd::size_t rlen {};
+            auto*        meta   = static_cast<const struct curl_ws_frame*>(nullptr);
+            auto*        data   = m_read_buffer.data() + m_read_len;
+            auto         size   = m_read_buffer.size() - m_read_len;
+            auto         result = curl_ws_recv(m_curl, data, size, &rlen, &meta);
 
             m_read_len += rlen;
             if (result == CURLcode::CURLE_AGAIN) {
@@ -496,7 +495,8 @@ private:
 
             auto last = meta == nullptr || (! (meta->flags & CURLWS_CONT) && meta->bytesleft == 0);
             if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
-                emit_message(slice<byte>::from_raw_parts(m_read_buffer.data(), m_read_len), last);
+                emit_message(slice<byte>::from_raw_parts(m_read_buffer.data(), usize(m_read_len)),
+                             last);
                 m_read_len = 0;
             }
 
@@ -511,10 +511,10 @@ private:
             auto msg = m_msgs.front();
 
             for (;;) {
-                auto sent   = usize { 0 };
-                auto data   = msg.get() + m_sent_len;
-                auto size   = msg.size() - m_sent_len;
-                auto result = curl_ws_send(m_curl, data, size, &sent, 0, CURLWS_BINARY);
+                rstd::size_t sent {};
+                auto         data   = msg.get() + m_sent_len;
+                auto         size   = msg.size().to_primitive() - m_sent_len;
+                auto         result = curl_ws_send(m_curl, data, size, &sent, 0, CURLWS_BINARY);
 
                 m_sent_len += sent;
                 if (result == CURLcode::CURLE_AGAIN) {
@@ -636,16 +636,16 @@ private:
 
     std::pmr::polymorphic_allocator<rstd::byte>       m_alloc;
     std::pmr::vector<rstd::byte>                      m_read_buffer;
-    u64                                               m_read_len { 0 };
+    rstd::size_t                                      m_read_len {};
     std::pmr::deque<rstd::rc::Rc<const rstd::byte[]>> m_msgs;
-    u64                                               m_sent_len { 0 };
+    rstd::size_t                                      m_sent_len {};
 
-    ::curl::CURL*                  m_curl {};
+    ::curl::CURL*                                m_curl {};
     rstd::Option<Arc<rstd::async::Registration>> m_registration;
-    Atomic<bool>                   m_connected;
-    Atomic<bool>                   m_stop_requested;
-    CommandQueue                   m_commands;
-    Option<rstd::thread::JoinHandle<void>> m_worker;
+    Atomic<bool>                                 m_connected;
+    Atomic<bool>                                 m_stop_requested;
+    CommandQueue                                 m_commands;
+    Option<rstd::thread::JoinHandle<void>>       m_worker;
 
     rstd::sync::Mutex<Callbacks> m_callbacks;
 

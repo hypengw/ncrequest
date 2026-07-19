@@ -26,7 +26,7 @@ export struct Operation {
 
 export class Method : public DefaultInClass<Method, Clone> {
 public:
-    Method(Method&&) noexcept = default;
+    Method(Method&&) noexcept                    = default;
     auto operator=(Method&&) noexcept -> Method& = default;
 
     [[nodiscard]]
@@ -109,8 +109,7 @@ private:
 
 export class StatusLine : public DefaultInClass<StatusLine, Clone> {
 public:
-    StatusLine(Option<Version> version, StatusCode status,
-               Option<HeaderValue> reason) noexcept;
+    StatusLine(Option<Version> version, StatusCode status, Option<HeaderValue> reason) noexcept;
 
     [[nodiscard]]
     auto version() const noexcept -> Option<Version>;
@@ -131,7 +130,7 @@ private:
 };
 
 #define NCREQUEST_START_LINE_VARIANTS(V) \
-    V(Request, (RequestLine value;))      \
+    V(Request, (RequestLine value;))     \
     V(Response, (StatusLine value;))
 
 export class StartLine : public DefaultInClass<StartLine, Clone> {
@@ -148,7 +147,7 @@ public:
     MessageHead(StartLine start, Header headers) noexcept;
 
     [[nodiscard]]
-    static auto parse(slice<u8> input) -> Result<MessageHead, HttpParseError>;
+    static auto parse(slice<byte> input) -> Result<MessageHead, HttpParseError>;
 
     [[nodiscard]]
     auto start() const noexcept -> const StartLine&;
@@ -171,7 +170,7 @@ private:
 };
 
 #define NCREQUEST_HTTP1_HEAD_EVENT_VARIANTS(V) \
-    V(NeedMore, ())                             \
+    V(NeedMore, ())                            \
     V(Complete, (MessageHead head; usize consumed;))
 
 export class Http1HeadEvent {
@@ -182,29 +181,29 @@ export class Http1HeadEvent {
 
 export class Http1HeadParser {
 public:
-    static constexpr usize MaxHeaderBytes = 64 * 1024;
+    static constexpr usize MaxHeaderBytes { 64 * 1024 };
 
-    Http1HeadParser() noexcept = default;
-    Http1HeadParser(Http1HeadParser&&) noexcept = default;
+    Http1HeadParser() noexcept                                     = default;
+    Http1HeadParser(Http1HeadParser&&) noexcept                    = default;
     auto operator=(Http1HeadParser&&) noexcept -> Http1HeadParser& = default;
 
     [[nodiscard]]
-    auto push(slice<u8> input) -> Result<Http1HeadEvent, HttpParseError>;
+    auto push(slice<byte> input) -> Result<Http1HeadEvent, HttpParseError>;
 
     [[nodiscard]]
     auto finish() -> Result<MessageHead, HttpParseError>;
 
 private:
     Vec<u8>           buffer_;
-    usize             line_start_ = 0;
-    usize             scan_       = 0;
+    usize             line_start_ {};
+    usize             scan_ {};
     Option<StartLine> start_;
     Header            headers_;
     bool              complete_ = false;
 };
 
 #define NCREQUEST_HTTP1_FIELD_SECTION_EVENT_VARIANTS(V) \
-    V(NeedMore, ())                                      \
+    V(NeedMore, ())                                     \
     V(Complete, (Header fields; usize consumed;))
 
 export class Http1FieldSectionEvent {
@@ -217,21 +216,20 @@ export class Http1FieldSectionParser {
 public:
     static constexpr usize MaxHeaderBytes = Http1HeadParser::MaxHeaderBytes;
 
-    Http1FieldSectionParser() noexcept = default;
-    Http1FieldSectionParser(Http1FieldSectionParser&&) noexcept = default;
-    auto operator=(Http1FieldSectionParser&&) noexcept
-        -> Http1FieldSectionParser& = default;
+    Http1FieldSectionParser() noexcept                                             = default;
+    Http1FieldSectionParser(Http1FieldSectionParser&&) noexcept                    = default;
+    auto operator=(Http1FieldSectionParser&&) noexcept -> Http1FieldSectionParser& = default;
 
     [[nodiscard]]
-    auto push(slice<u8> input) -> Result<Http1FieldSectionEvent, HttpParseError>;
+    auto push(slice<byte> input) -> Result<Http1FieldSectionEvent, HttpParseError>;
 
     [[nodiscard]]
     auto finish() -> Result<Header, HttpParseError>;
 
 private:
     Vec<u8> buffer_;
-    usize   line_start_ = 0;
-    usize   scan_       = 0;
+    usize   line_start_ {};
+    usize   scan_ {};
     Header  fields_;
     bool    complete_ = false;
 };
@@ -260,8 +258,7 @@ struct Impl<str_::FromStr, ncrequest::http::Version> : ImplBase<ncrequest::http:
 };
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::StatusCode>
-    : ImplBase<ncrequest::http::StatusCode> {
+struct Impl<str_::FromStr, ncrequest::http::StatusCode> : ImplBase<ncrequest::http::StatusCode> {
     using Err = ncrequest::http::HttpParseError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::StatusCode, Err> {
@@ -273,29 +270,29 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::Method> : ImplBase<ncrequest::http::Method> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto value = this->self().as_ref();
-        return formatter.write_raw(value.data(), value.size());
+        return formatter.write_raw(value.data(), value.size().to_primitive());
     }
 };
 
 export template<>
 struct Impl<fmt::Display, ncrequest::http::Version> : ImplBase<ncrequest::http::Version> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        const u8 value[] = { 'H', 'T', 'T', 'P', '/',
-                             static_cast<u8>('0' + this->self().major()), '.',
-                             static_cast<u8>('0' + this->self().minor()) };
-        return formatter.write_raw(value, 8);
+        const byte value[] = { 'H', 'T',
+                               'T', 'P',
+                               '/', static_cast<byte>('0' + this->self().major().to_primitive()),
+                               '.', static_cast<byte>('0' + this->self().minor().to_primitive()) };
+        return formatter.write_raw(value, sizeof(value));
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::StatusCode>
-    : ImplBase<ncrequest::http::StatusCode> {
+struct Impl<fmt::Display, ncrequest::http::StatusCode> : ImplBase<ncrequest::http::StatusCode> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        auto value = this->self().value();
-        const u8 bytes[] = { static_cast<u8>('0' + value / 100),
-                             static_cast<u8>('0' + value / 10 % 10),
-                             static_cast<u8>('0' + value % 10) };
-        return formatter.write_raw(bytes, 3);
+        auto       value   = this->self().value().to_primitive();
+        const byte bytes[] = { static_cast<byte>('0' + value / 100),
+                               static_cast<byte>('0' + value / 10 % 10),
+                               static_cast<byte>('0' + value % 10) };
+        return formatter.write_raw(bytes, sizeof(bytes));
     }
 };
 

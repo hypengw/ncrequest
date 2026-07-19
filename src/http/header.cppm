@@ -11,7 +11,7 @@ using rstd::vec::Vec;
 
 export class HeaderName : public DefaultInClass<HeaderName, Clone> {
 public:
-    HeaderName(HeaderName&&) noexcept = default;
+    HeaderName(HeaderName&&) noexcept                    = default;
     auto operator=(HeaderName&&) noexcept -> HeaderName& = default;
 
     [[nodiscard]]
@@ -34,14 +34,14 @@ private:
 
 export class HeaderValue : public DefaultInClass<HeaderValue, Clone> {
 public:
-    HeaderValue(HeaderValue&&) noexcept = default;
+    HeaderValue(HeaderValue&&) noexcept                    = default;
     auto operator=(HeaderValue&&) noexcept -> HeaderValue& = default;
 
     [[nodiscard]]
     static auto parse(ref<str> input) -> Result<HeaderValue, HeaderError>;
 
     [[nodiscard]]
-    static auto from_bytes(slice<u8> input) -> Result<HeaderValue, HeaderError>;
+    static auto from_bytes(slice<byte> input) -> Result<HeaderValue, HeaderError>;
 
     [[nodiscard]]
     auto as_bytes() const noexcept -> slice<u8>;
@@ -61,7 +61,7 @@ private:
 export class HeaderField : public DefaultInClass<HeaderField, Clone> {
 public:
     HeaderField(HeaderName name, HeaderValue value) noexcept;
-    HeaderField(HeaderField&&) noexcept = default;
+    HeaderField(HeaderField&&) noexcept                    = default;
     auto operator=(HeaderField&&) noexcept -> HeaderField& = default;
 
     [[nodiscard]]
@@ -110,8 +110,8 @@ private:
 
 export class Header : public DefaultInClass<Header, Clone> {
 public:
-    Header() noexcept = default;
-    Header(Header&&) noexcept = default;
+    Header() noexcept                            = default;
+    Header(Header&&) noexcept                    = default;
     auto operator=(Header&&) noexcept -> Header& = default;
 
     [[nodiscard]]
@@ -165,8 +165,7 @@ namespace rstd
 {
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::HeaderName>
-    : ImplBase<ncrequest::http::HeaderName> {
+struct Impl<str_::FromStr, ncrequest::http::HeaderName> : ImplBase<ncrequest::http::HeaderName> {
     using Err = ncrequest::http::HeaderError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::HeaderName, Err> {
@@ -175,8 +174,7 @@ struct Impl<str_::FromStr, ncrequest::http::HeaderName>
 };
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::HeaderValue>
-    : ImplBase<ncrequest::http::HeaderValue> {
+struct Impl<str_::FromStr, ncrequest::http::HeaderValue> : ImplBase<ncrequest::http::HeaderValue> {
     using Err = ncrequest::http::HeaderError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::HeaderValue, Err> {

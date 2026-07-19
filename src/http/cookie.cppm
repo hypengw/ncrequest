@@ -11,14 +11,14 @@ using rstd::vec::Vec;
 
 export class Cookie : public DefaultInClass<Cookie, Clone> {
 public:
-    Cookie(Cookie&&) noexcept = default;
+    Cookie(Cookie&&) noexcept                    = default;
     auto operator=(Cookie&&) noexcept -> Cookie& = default;
 
     [[nodiscard]]
     static auto parse(ref<str> input) -> Result<Cookie, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<u8> input) -> Result<Cookie, CookieError>;
+    static auto parse_bytes(slice<byte> input) -> Result<Cookie, CookieError>;
 
     [[nodiscard]]
     auto name() const noexcept -> ref<str>;
@@ -62,15 +62,15 @@ private:
 
 export class CookieHeader : public DefaultInClass<CookieHeader, Clone> {
 public:
-    CookieHeader() noexcept = default;
-    CookieHeader(CookieHeader&&) noexcept = default;
+    CookieHeader() noexcept                                  = default;
+    CookieHeader(CookieHeader&&) noexcept                    = default;
     auto operator=(CookieHeader&&) noexcept -> CookieHeader& = default;
 
     [[nodiscard]]
     static auto parse(ref<str> input) -> Result<CookieHeader, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<u8> input) -> Result<CookieHeader, CookieError>;
+    static auto parse_bytes(slice<byte> input) -> Result<CookieHeader, CookieError>;
 
     void add(Cookie cookie);
 
@@ -98,7 +98,7 @@ private:
 
 export class CookieAttribute : public DefaultInClass<CookieAttribute, Clone> {
 public:
-    CookieAttribute(CookieAttribute&&) noexcept = default;
+    CookieAttribute(CookieAttribute&&) noexcept                    = default;
     auto operator=(CookieAttribute&&) noexcept -> CookieAttribute& = default;
 
     [[nodiscard]]
@@ -126,8 +126,7 @@ export class CookieAttributeIter : public DefaultInClass<CookieAttributeIter, It
 public:
     using Item = ref<CookieAttribute>;
 
-    CookieAttributeIter(const CookieAttribute* current,
-                        const CookieAttribute* end) noexcept;
+    CookieAttributeIter(const CookieAttribute* current, const CookieAttribute* end) noexcept;
 
     [[nodiscard]]
     auto next() noexcept -> Option<Item>;
@@ -139,14 +138,14 @@ private:
 
 export class SetCookie : public DefaultInClass<SetCookie, Clone> {
 public:
-    SetCookie(SetCookie&&) noexcept = default;
+    SetCookie(SetCookie&&) noexcept                    = default;
     auto operator=(SetCookie&&) noexcept -> SetCookie& = default;
 
     [[nodiscard]]
     static auto parse(ref<str> input) -> Result<SetCookie, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<u8> input) -> Result<SetCookie, CookieError>;
+    static auto parse_bytes(slice<byte> input) -> Result<SetCookie, CookieError>;
 
     [[nodiscard]]
     auto cookie() const noexcept -> const Cookie&;
@@ -182,8 +181,7 @@ namespace rstd
 {
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::Cookie>
-    : ImplBase<ncrequest::http::Cookie> {
+struct Impl<str_::FromStr, ncrequest::http::Cookie> : ImplBase<ncrequest::http::Cookie> {
     using Err = ncrequest::http::CookieError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::Cookie, Err> {
@@ -202,8 +200,7 @@ struct Impl<str_::FromStr, ncrequest::http::CookieHeader>
 };
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::SetCookie>
-    : ImplBase<ncrequest::http::SetCookie> {
+struct Impl<str_::FromStr, ncrequest::http::SetCookie> : ImplBase<ncrequest::http::SetCookie> {
     using Err = ncrequest::http::CookieError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::SetCookie, Err> {
@@ -212,29 +209,29 @@ struct Impl<str_::FromStr, ncrequest::http::SetCookie>
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::Cookie>
-    : ImplBase<ncrequest::http::Cookie> {
+struct Impl<fmt::Display, ncrequest::http::Cookie> : ImplBase<ncrequest::http::Cookie> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        return formatter.write_raw(encoded.as_raw_ptr(), encoded.size());
+        auto bytes   = str_::as_bytes(encoded.as_str());
+        return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::CookieHeader>
-    : ImplBase<ncrequest::http::CookieHeader> {
+struct Impl<fmt::Display, ncrequest::http::CookieHeader> : ImplBase<ncrequest::http::CookieHeader> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        return formatter.write_raw(encoded.as_raw_ptr(), encoded.size());
+        auto bytes   = str_::as_bytes(encoded.as_str());
+        return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::SetCookie>
-    : ImplBase<ncrequest::http::SetCookie> {
+struct Impl<fmt::Display, ncrequest::http::SetCookie> : ImplBase<ncrequest::http::SetCookie> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        return formatter.write_raw(encoded.as_raw_ptr(), encoded.size());
+        auto bytes   = str_::as_bytes(encoded.as_str());
+        return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
 

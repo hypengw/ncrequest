@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <future>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <gtest/gtest.h>
 #include <QCoreApplication>
@@ -9,6 +10,7 @@
 #include <thread>
 
 import ncrequest.qt_network;
+import rstd.cppstd;
 
 namespace
 {
@@ -77,11 +79,12 @@ TEST(qt_network_websocket, LocalEchoText) {
         disconnected_promise.set_value();
     });
     client.set_on_message_callback([&message_promise](rstd::slice<rstd::byte> data, bool) {
-        std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()), data.len());
+        std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
+                        data.len().to_primitive());
         message_promise.set_value(std::move(out));
     });
 
-    auto connected = wait_completion(client.connect(url));
+    auto connected = wait_completion(client.connect(rstd::cppstd::as_str(url)));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());

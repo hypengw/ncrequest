@@ -51,7 +51,8 @@ public:
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERFUNCTION, CurlMulti::curl_timer_func);
         // curl_multi_setopt(m_multi, CURLMOPT_TIMERDATA, this);
 
-        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+        curl_share_setopt(
+            m_share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
         curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_LOCKFUNC, CurlMulti::static_share_lock);
         curl_share_setopt(
             m_share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, CurlMulti::static_share_unlock);
@@ -81,8 +82,8 @@ public:
     }
 
     auto set_options(CurlOptions options) -> CurlMultiResult {
-        auto old = m_options;
-        m_options = options;
+        auto old     = m_options;
+        m_options    = options;
         auto applied = apply_multi_options();
         if (applied.is_err()) {
             m_options = old;
@@ -107,13 +108,13 @@ public:
     }
 
     auto poll(rstd::time::Duration timeout) -> CurlMultiResult {
-        return multi_result(
-            curl_multi_poll(m_multi, nullptr, 0, static_cast<int>(timeout.as_millis()), nullptr));
+        return multi_result(curl_multi_poll(
+            m_multi, nullptr, 0, static_cast<int>(timeout.as_millis().to_primitive()), nullptr));
     }
 
     auto query_info_msg() -> rstd::vec::Vec<InfoMsg> {
         auto out = rstd::vec::Vec<InfoMsg>::make();
-        int                     message_left { 0 };
+        int  message_left { 0 };
         while (CURLMsg* msg = curl_multi_info_read(m_multi, &message_left)) {
             out.push(InfoMsg {
                 .msg         = msg->msg,
@@ -125,8 +126,8 @@ public:
     }
 
     auto cookies() const -> rstd::vec::Vec<rstd::string::String> {
-        auto out = rstd::vec::Vec<rstd::string::String>::make();
-        CurlEasy                       x;
+        auto     out = rstd::vec::Vec<rstd::string::String>::make();
+        CurlEasy x;
 
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         auto list_ = x.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
@@ -200,8 +201,8 @@ private:
 
     auto apply_easy_options(CurlEasy& easy) -> CurlMultiResult {
         if (m_options.receive_buffer_size > 0) {
-            if (auto ec = easy.setopt(CURLoption::CURLOPT_BUFFERSIZE,
-                                      m_options.receive_buffer_size)) {
+            if (auto ec =
+                    easy.setopt(CURLoption::CURLOPT_BUFFERSIZE, m_options.receive_buffer_size)) {
                 return rstd::Err(CurlMultiError::Easy(ec));
             }
         }
@@ -234,8 +235,8 @@ private:
     }
 
 private:
-    CURLM*  m_multi;
-    CURLSH* m_share;
+    CURLM*      m_multi;
+    CURLSH*     m_share;
     CurlOptions m_options;
 
     rstd::sync::Mutex<empty>                    m_share_mutex;

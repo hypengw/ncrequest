@@ -24,20 +24,20 @@ using rstd::path::PathBuf;
 using namespace rstd::prelude;
 
 struct FetchResult {
-    bool        got_response { false };
-    bool        got_body { false };
-    bool        got_error { false };
-    int         code { 0 };
-    bool        has_test_header { false };
-    usize       set_cookie_count { 0 };
-    bool        finished_while_paused { false };
-    usize       upload_callback_count { 0 };
-    usize       trailer_count { 0 };
-    bool        initial_has_trailer { false };
-    std::string body;
-    std::string first_set_cookie_name;
-    std::string repeated_header_values;
-    std::string error;
+    bool                 got_response { false };
+    bool                 got_body { false };
+    bool                 got_error { false };
+    int                  code { 0 };
+    bool                 has_test_header { false };
+    std::size_t          set_cookie_count { 0 };
+    bool                 finished_while_paused { false };
+    std::size_t          upload_callback_count { 0 };
+    std::size_t          trailer_count { 0 };
+    bool                 initial_has_trailer { false };
+    std::string          body;
+    std::string          first_set_cookie_name;
+    std::string          repeated_header_values;
+    std::string          error;
     ncrequest::ErrorKind error_kind { ncrequest::ErrorKind::InvalidState };
 };
 
@@ -85,7 +85,7 @@ auto local_http_url(std::string_view base, std::string_view path) -> std::string
 }
 
 auto make_request(std::string_view url) -> ncrequest::Request {
-    return rstd::move(ncrequest::Request::from_url(url)).unwrap();
+    return rstd::move(ncrequest::Request::from_url(rstd::cppstd::as_str(url))).unwrap();
 }
 
 auto large_body() -> std::string {
@@ -101,7 +101,7 @@ auto large_body() -> std::string {
 auto download_body() -> std::string {
     std::string out;
     out.resize(256 * 1024);
-    for (usize i = 0; i < out.size(); ++i) {
+    for (std::size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<char>((i * 37 + 11) % 256);
     }
     return out;
@@ -120,34 +120,36 @@ auto download_body() -> std::string {
 auto upload_body() -> std::string {
     std::string out;
     out.reserve(192 * 1024);
-    for (usize i = 0; i < 192 * 1024; ++i) {
+    for (std::size_t i = 0; i < 192 * 1024; ++i) {
         out.push_back(static_cast<char>((i * 19 + 5) % 256));
     }
     return out;
 }
 
 auto bytes_from_string(const std::string& body) -> rstd::bytes::Bytes {
-    return rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
-        reinterpret_cast<const rstd::u8*>(body.data()), body.size()));
+    auto bytes = rstd::slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(body.data()),
+                                                   usize(body.size()));
+    return rstd::bytes::Bytes::copy_from_bytes(bytes);
 }
 
 auto string_from_bytes(const rstd::bytes::Bytes& bytes) -> std::string {
-    if (bytes.size() == 0) return {};
-    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.size() };
+    if (bytes.size() == usize()) return {};
+    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.size().to_primitive() };
 }
 
 auto unique_temp_path(std::string_view name) -> PathBuf {
-    auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto path = rstd::env::temp_dir();
-    auto filename =
-        std::string("ncrequest-") + std::string(name) + "-" + std::to_string(ticks);
-    path.push(ref<Path>(ref<str>(filename)));
+    auto ticks    = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto path     = rstd::env::temp_dir();
+    auto filename = std::string("ncrequest-") + std::string(name) + "-" + std::to_string(ticks);
+    path.push(ref<Path>(rstd::cppstd::as_str(filename)));
     return path;
 }
 
 auto write_file(ref<Path> path, const std::string& body) -> bool {
-    auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const u8*>(body.data()), body.size());
-    return rstd::fs::write(path, bytes).is_ok();
+    auto bytes =
+        slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(body.data()), usize(body.size()));
+    auto owned = rstd::vec::Vec<u8>::copy_from_bytes(bytes);
+    return rstd::fs::write(path, owned.as_slice()).is_ok();
 }
 
 auto read_file(ref<Path> path) -> std::optional<std::string> {
@@ -155,16 +157,14 @@ auto read_file(ref<Path> path) -> std::optional<std::string> {
     if (input.is_err()) return std::nullopt;
     auto bytes = rstd::move(input).unwrap();
     if (bytes.is_empty()) return std::string {};
-    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.len() };
+    return std::string { reinterpret_cast<const char*>(bytes.data()), bytes.len().to_primitive() };
 }
 
-void remove_file(ref<Path> path) {
-    (void)rstd::fs::remove_file(path);
-}
+void remove_file(ref<Path> path) { (void)rstd::fs::remove_file(path); }
 
 auto response_code(const ncrequest::Arc<ncrequest::Response>& rsp) -> int {
     auto code = rsp->code();
-    if (code.is_some()) return code.unwrap();
+    if (code.is_some()) return code.unwrap().to_primitive();
     return 0;
 }
 
@@ -173,7 +173,7 @@ void record_error(ErrorResult& result, const ncrequest::Error& error) {
     result.kind      = error.kind();
     if (error.is_Client()) {
         result.backend     = error.as_Client().error.backend;
-        result.client_code = error.as_Client().error.code;
+        result.client_code = error.as_Client().error.code.to_primitive();
     }
 }
 
@@ -199,24 +199,23 @@ auto fetch_text_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::R
         co_return result;
     }
 
-    result.code            = response_code(response);
-    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.code                = response_code(response);
+    result.has_test_header     = response->header().has_field("x-ncrequest-test");
     result.initial_has_trailer = response->header().has_field("x-ncrequest-trailer");
-    result.body            = text.unwrap();
-    auto trailers = response->trailers();
+    result.body                = text.unwrap();
+    auto trailers              = response->trailers();
     if (trailers.is_some()) {
-        result.trailer_count = (**trailers).values("x-ncrequest-trailer").count();
+        result.trailer_count = (**trailers).values("x-ncrequest-trailer").count().to_primitive();
     }
     auto set_cookies = response->set_cookies();
     if (set_cookies.is_err()) {
         result.error = "Set-Cookie parsing failed";
         co_return result;
     }
-    auto cookies = rstd::move(set_cookies).unwrap();
-    result.set_cookie_count = cookies.len();
+    auto cookies            = rstd::move(set_cookies).unwrap();
+    result.set_cookie_count = cookies.len().to_primitive();
     if (! cookies.is_empty()) {
-        result.first_set_cookie_name =
-            rstd::cppstd::to_string(cookies[0].cookie().name());
+        result.first_set_cookie_name = rstd::cppstd::to_string(cookies[usize()].cookie().name());
     }
     auto repeated = response->header().values("x-ncrequest-repeat");
     for (auto value = repeated.next(); value.is_some(); value = repeated.next()) {
@@ -230,7 +229,7 @@ auto fetch_text_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::R
         }
         result.repeated_header_values.append(rstd::cppstd::as_string_view(*text_value));
     }
-    result.got_body        = true;
+    result.got_body = true;
     co_return result;
 }
 
@@ -280,22 +279,21 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
 }
 
 auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base,
-                    PathBuf cookie_file, PathBuf fixture_file)
-    -> ncrequest::coro<ShareResult> {
+                    PathBuf cookie_file, PathBuf fixture_file) -> ncrequest::coro<ShareResult> {
     auto result   = ShareResult {};
     auto shared   = ncrequest::SessionShare {};
     auto isolated = ncrequest::SessionShare {};
 
     result.default_set = co_await fetch_text(
         session.clone(), local_http_url(base, "/cookie/set?name=default_cookie&value=default"));
-    auto shared_task = rstd::async::spawn_local(fetch_text_request(
+    auto shared_task   = rstd::async::spawn_local(fetch_text_request(
         session.clone(),
-        request_with_share(
-            local_http_url(base, "/cookie/set?name=shared_cookie&value=shared"), shared)));
+        request_with_share(local_http_url(base, "/cookie/set?name=shared_cookie&value=shared"),
+                           shared)));
     auto isolated_task = rstd::async::spawn_local(fetch_text_request(
         session.clone(),
-        request_with_share(
-            local_http_url(base, "/cookie/set?name=isolated_cookie&value=isolated"), isolated)));
+        request_with_share(local_http_url(base, "/cookie/set?name=isolated_cookie&value=isolated"),
+                           isolated)));
     auto share_sets =
         co_await rstd::async::join(rstd::move(shared_task), rstd::move(isolated_task));
     result.share_set    = rstd::move(share_sets.get<0>()).unwrap();
@@ -305,39 +303,33 @@ auto exercise_share(ncrequest::Arc<ncrequest::Session> session, std::string base
     result.share_echo = co_await fetch_text_request(
         session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), shared));
     result.isolated_echo = co_await fetch_text_request(
-        rstd::move(session),
-        request_with_share(local_http_url(base, "/cookie/echo"), isolated));
+        rstd::move(session), request_with_share(local_http_url(base, "/cookie/echo"), isolated));
 
     auto second_session = ncrequest::Session::make();
     auto cloned         = shared.clone();
     result.cloned_echo  = co_await fetch_text_request(
-        second_session.clone(),
-        request_with_share(local_http_url(base, "/cookie/echo"), cloned));
+        second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), cloned));
     result.redirect_echo = co_await fetch_text_request(
         second_session.clone(),
-        request_with_share(local_http_url(
-                               base,
-                               "/cookie/redirect-set?name=redirect_cookie&value=redirected"),
-                           cloned));
+        request_with_share(
+            local_http_url(base, "/cookie/redirect-set?name=redirect_cookie&value=redirected"),
+            cloned));
     result.temporary_request = co_await fetch_after_request_drop(
         second_session.clone(),
         local_http_url(base, "/cookie/slow-set?name=lifetime_cookie&value=alive"),
         cloned);
     result.canceled_request = co_await cancel_request(
-        second_session.clone(),
-        request_with_share(local_http_url(base, "/slow-stream"), cloned));
+        second_session.clone(), request_with_share(local_http_url(base, "/slow-stream"), cloned));
     result.timed_out_request = co_await timeout_request(
         second_session.clone(),
         request_with_share(local_http_url(base, "/slow-first-byte"), cloned));
     result.recovered_echo = co_await fetch_text_request(
-        second_session.clone(),
-        request_with_share(local_http_url(base, "/cookie/echo"), cloned));
+        second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), cloned));
 
     auto fixture = ncrequest::SessionShare {};
     fixture.load(fixture_file.as_path());
     result.fixture_echo = co_await fetch_text_request(
-        second_session.clone(),
-        request_with_share(local_http_url(base, "/cookie/echo"), fixture));
+        second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), fixture));
 
     cloned.save(cookie_file.as_path());
     auto persisted = ncrequest::SessionShare {};
@@ -431,10 +423,10 @@ auto timeout_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Requ
     ErrorResult result;
     auto&       timeout = req.get_opt<ncrequest::req_opt::Timeout>();
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-    timeout.transfer_timeout = 100;
+    timeout.transfer_timeout = i64(100);
 #else
-    timeout.low_speed        = 1;
-    timeout.transfer_timeout = 1;
+    timeout.low_speed        = i64(1);
+    timeout.transfer_timeout = i64(1);
 #endif
 
     auto rsp = co_await session->get(req);
@@ -505,7 +497,7 @@ auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url
     auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
     response->pause_recv(true);
-    co_await rstd::async::sleep(rstd::time::Duration::from_millis(350));
+    co_await rstd::async::sleep(rstd::time::Duration::from_millis(rstd::u64(350)));
     result.finished_while_paused = response->is_finished();
     response->pause_recv(false);
 
@@ -525,19 +517,19 @@ auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url
 auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::string url,
                            std::string body) -> ncrequest::coro<FetchResult> {
     FetchResult result;
-    auto        req    = make_request(url);
-    usize       offset = 0;
-    usize       calls  = 0;
+    auto        req = make_request(url);
+    usize       offset {};
+    usize       calls {};
     auto&       reader = req.get_opt<ncrequest::req_opt::Read>();
-    reader.size        = body.size();
+    reader.size        = usize(body.size());
     reader.callback    = [&body, &offset, &calls](byte* ptr, usize size) -> usize {
         ++calls;
-        auto remaining = body.size() - offset;
+        auto remaining = usize(body.size()) - offset;
         auto copied    = remaining;
         if (copied > size) copied = size;
-        if (copied > 4096) copied = 4096;
-        if (copied == 0) return 0;
-        std::memcpy(ptr, body.data() + offset, copied);
+        if (copied > usize(4096)) copied = usize(4096);
+        if (copied == usize()) return usize();
+        std::memcpy(ptr, body.data() + offset.to_primitive(), copied.to_primitive());
         offset += copied;
         return copied;
     };
@@ -560,7 +552,7 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
     result.code                  = response_code(response);
     result.has_test_header       = response->header().has_field("x-ncrequest-test");
     result.body                  = string_from_bytes(rstd::move(bytes).unwrap());
-    result.upload_callback_count = calls;
+    result.upload_callback_count = calls.to_primitive();
     result.got_body              = true;
     co_return result;
 }
@@ -582,8 +574,7 @@ auto rstd_wait_yield() -> ncrequest::coro<int> {
 TEST(http, UrlEncoding) {
     using namespace ncrequest::http;
 
-    EXPECT_EQ(rstd::cppstd::as_string_view(encode_component("a b/+~").as_str()),
-              "a%20b%2F%2B~");
+    EXPECT_EQ(rstd::cppstd::as_string_view(encode_component("a b/+~").as_str()), "a%20b%2F%2B~");
 
     auto decoded = decode_component("a%20b%2Fb+plus");
     ASSERT_TRUE(decoded.is_ok());
@@ -592,7 +583,7 @@ TEST(http, UrlEncoding) {
     auto invalid = decode_component("a%20b%ZZ");
     ASSERT_TRUE(invalid.is_err());
     EXPECT_TRUE(invalid.unwrap_err().kind().is_InvalidPercentEncoding());
-    EXPECT_EQ(invalid.unwrap_err().offset(), 6u);
+    EXPECT_EQ(invalid.unwrap_err().offset().to_primitive(), 6u);
 
     auto form = decode_form_component("a+b");
     ASSERT_TRUE(form.is_ok());
@@ -606,7 +597,7 @@ TEST(http, QueryParamsPreserveOrderedRepeatedValues) {
     ASSERT_TRUE(parsed.is_ok());
     auto query = rstd::move(parsed).unwrap();
 
-    EXPECT_EQ(query.len(), 4u);
+    EXPECT_EQ(query.len().to_primitive(), 4u);
     EXPECT_EQ(rstd::cppstd::as_string_view(*query.get("first")), "one");
 
     auto values = query.values("repeat");
@@ -623,12 +614,12 @@ TEST(http, QueryParamsPreserveOrderedRepeatedValues) {
 
     query.set("repeat", "replacement");
     EXPECT_EQ(rstd::cppstd::as_string_view(*query.get("repeat")), "replacement");
-    EXPECT_EQ(query.values("repeat").next()->size(), 11u);
+    EXPECT_EQ(query.values("repeat").next()->size().to_primitive(), 11u);
 
     auto invalid_utf8 = QueryParams::parse_form("key=%FF");
     ASSERT_TRUE(invalid_utf8.is_err());
     EXPECT_TRUE(invalid_utf8.unwrap_err().kind().is_InvalidUtf8());
-    EXPECT_EQ(invalid_utf8.unwrap_err().offset(), 4u);
+    EXPECT_EQ(invalid_utf8.unwrap_err().offset().to_primitive(), 4u);
 
     auto from_trait = rstd::from_str<QueryParams>("a=1&a=2");
     ASSERT_TRUE(from_trait.is_ok());
@@ -644,8 +635,7 @@ TEST(http, QueryParamsPreserveOrderedRepeatedValues) {
 
     auto raw_trait = rstd::from_str<QueryParams>("value=a+b");
     ASSERT_TRUE(raw_trait.is_ok());
-    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", raw_trait.unwrap())),
-              "value=a%2Bb");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", raw_trait.unwrap())), "value=a%2Bb");
 }
 
 TEST(http, CookieValuesParseAttributesAndPreserveOrder) {
@@ -657,13 +647,12 @@ TEST(http, CookieValuesParseAttributesAndPreserveOrder) {
     EXPECT_EQ(rstd::cppstd::as_string_view(cookie.name()), "session");
     EXPECT_EQ(rstd::cppstd::as_string_view(cookie.value()), "abc123");
     EXPECT_TRUE(cookie.is_quoted());
-    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cookie)),
-              "session=\"abc123\"");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cookie)), "session=\"abc123\"");
 
     auto header = CookieHeader::parse(" \tfirst=one; repeat=a; repeat=\"b\" \t");
     ASSERT_TRUE(header.is_ok());
     auto cookies = rstd::move(header).unwrap();
-    EXPECT_EQ(cookies.len(), 3u);
+    EXPECT_EQ(cookies.len().to_primitive(), 3u);
     auto repeat = cookies.get("repeat");
     ASSERT_TRUE(repeat.is_some());
     EXPECT_EQ(rstd::cppstd::as_string_view((**repeat).value()), "a");
@@ -671,8 +660,7 @@ TEST(http, CookieValuesParseAttributesAndPreserveOrder) {
     EXPECT_EQ(rstd::cppstd::as_string_view(cookies.encode().as_str()),
               "first=one; repeat=a; repeat=\"b\"");
 
-    auto set = SetCookie::parse(
-        "session=abc123; Path=/account; Secure; HttpOnly; SameSite=Lax");
+    auto set = SetCookie::parse("session=abc123; Path=/account; Secure; HttpOnly; SameSite=Lax");
     ASSERT_TRUE(set.is_ok());
     auto set_cookie = rstd::move(set).unwrap();
     EXPECT_TRUE(set_cookie.secure());
@@ -681,24 +669,24 @@ TEST(http, CookieValuesParseAttributesAndPreserveOrder) {
     ASSERT_TRUE(path.is_some());
     ASSERT_TRUE((**path).value().is_some());
     EXPECT_EQ(rstd::cppstd::as_string_view(*(**path).value()), "/account");
-    EXPECT_EQ(set_cookie.attributes().count(), 4u);
+    EXPECT_EQ(set_cookie.attributes().count().to_primitive(), 4u);
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", set_cookie)),
               "session=abc123; Path=/account; Secure; HttpOnly; SameSite=Lax");
 
     auto invalid_name = Cookie::parse("bad name=value");
     ASSERT_TRUE(invalid_name.is_err());
     EXPECT_TRUE(invalid_name.unwrap_err().kind().is_InvalidName());
-    EXPECT_EQ(invalid_name.unwrap_err().offset(), 3u);
+    EXPECT_EQ(invalid_name.unwrap_err().offset().to_primitive(), 3u);
 
     auto invalid_value = Cookie::parse("name=a,b");
     ASSERT_TRUE(invalid_value.is_err());
     EXPECT_TRUE(invalid_value.unwrap_err().kind().is_InvalidValue());
-    EXPECT_EQ(invalid_value.unwrap_err().offset(), 6u);
+    EXPECT_EQ(invalid_value.unwrap_err().offset().to_primitive(), 6u);
 
     auto trailing = CookieHeader::parse("a=1;");
     ASSERT_TRUE(trailing.is_err());
     EXPECT_TRUE(trailing.unwrap_err().kind().is_EmptyName());
-    EXPECT_EQ(trailing.unwrap_err().offset(), 4u);
+    EXPECT_EQ(trailing.unwrap_err().offset().to_primitive(), 4u);
 }
 
 TEST(http, ParserCursorCompositionAndErrors) {
@@ -707,29 +695,29 @@ TEST(http, ParserCursorCompositionAndErrors) {
     auto cursor = parser::Cursor { "alpha" };
     auto prefix = parser::take_literal(cursor, "alp");
     ASSERT_TRUE(prefix.is_ok());
-    EXPECT_EQ(prefix.unwrap().begin, 0u);
-    EXPECT_EQ(prefix.unwrap().end, 3u);
-    EXPECT_EQ(cursor.offset(), 3u);
-    EXPECT_EQ(rstd::cppstd::as_string_view(
-                  *rstd::str_::from_utf8(cursor.slice(parser::Span { 0, 3 }))),
-              "alp");
+    EXPECT_EQ(prefix.unwrap().begin.to_primitive(), 0u);
+    EXPECT_EQ(prefix.unwrap().end.to_primitive(), 3u);
+    EXPECT_EQ(cursor.offset().to_primitive(), 3u);
+    auto prefix_bytes = cursor.slice(parser::Span { usize(), usize(3) });
+    auto prefix_text  = ref<str>::from_raw_parts(prefix_bytes.as_raw_ptr(), prefix_bytes.len());
+    EXPECT_EQ(rstd::cppstd::as_string_view(prefix_text), "alp");
 
     auto incomplete = parser::take_literal(cursor, "habet");
     ASSERT_TRUE(incomplete.is_err());
     auto incomplete_error = rstd::move(incomplete).unwrap_err();
     EXPECT_TRUE(incomplete_error.is_incomplete());
     EXPECT_FALSE(incomplete_error.is_committed());
-    EXPECT_EQ(incomplete_error.offset(), 5u);
-    EXPECT_EQ(cursor.offset(), 3u);
+    EXPECT_EQ(incomplete_error.offset().to_primitive(), 5u);
+    EXPECT_EQ(cursor.offset().to_primitive(), 3u);
 
     auto uncommitted_cursor = parser::Cursor { "ac" };
-    auto uncommitted = parser::choice(
+    auto uncommitted        = parser::choice(
         uncommitted_cursor,
         [](parser::Cursor& input) -> parser::ParseResult<parser::Span> {
             auto begin = input.mark();
-            auto first = parser::take_byte(input, 'a');
+            auto first = parser::take_byte(input, u8('a'));
             if (first.is_err()) return rstd::Err(rstd::move(first).unwrap_err());
-            auto second = parser::take_byte(input, 'b');
+            auto second = parser::take_byte(input, u8('b'));
             if (second.is_err()) return rstd::Err(rstd::move(second).unwrap_err());
             return rstd::Ok(input.span_from(begin));
         },
@@ -737,16 +725,16 @@ TEST(http, ParserCursorCompositionAndErrors) {
             return parser::take_literal(input, "ac");
         });
     ASSERT_TRUE(uncommitted.is_ok());
-    EXPECT_EQ(uncommitted_cursor.offset(), 2u);
+    EXPECT_EQ(uncommitted_cursor.offset().to_primitive(), 2u);
 
     auto committed_cursor = parser::Cursor { "ac" };
-    auto committed = parser::choice(
+    auto committed        = parser::choice(
         committed_cursor,
         [](parser::Cursor& input) -> parser::ParseResult<parser::Span> {
             auto begin = input.mark();
-            auto first = parser::take_byte(input, 'a');
+            auto first = parser::take_byte(input, u8('a'));
             if (first.is_err()) return rstd::Err(rstd::move(first).unwrap_err());
-            auto second = parser::committed(parser::take_byte(input, 'b'));
+            auto second = parser::committed(parser::take_byte(input, u8('b')));
             if (second.is_err()) return rstd::Err(rstd::move(second).unwrap_err());
             return rstd::Ok(input.span_from(begin));
         },
@@ -756,80 +744,95 @@ TEST(http, ParserCursorCompositionAndErrors) {
     ASSERT_TRUE(committed.is_err());
     auto committed_error = rstd::move(committed).unwrap_err();
     EXPECT_TRUE(committed_error.is_committed());
-    EXPECT_EQ(committed_error.offset(), 1u);
-    EXPECT_EQ(committed_cursor.offset(), 1u);
+    EXPECT_EQ(committed_error.offset().to_primitive(), 1u);
+    EXPECT_EQ(committed_cursor.offset().to_primitive(), 1u);
 
     auto attempted_cursor = parser::Cursor { "ac" };
-    auto attempted = parser::attempt(
-        attempted_cursor,
-        [](parser::Cursor& input) -> parser::ParseResult<parser::Span> {
+    auto attempted        = parser::attempt(
+        attempted_cursor, [](parser::Cursor& input) -> parser::ParseResult<parser::Span> {
             auto begin = input.mark();
-            auto first = parser::take_byte(input, 'a');
+            auto first = parser::take_byte(input, u8('a'));
             if (first.is_err()) return rstd::Err(rstd::move(first).unwrap_err());
-            auto second = parser::take_byte(input, 'b');
+            auto second = parser::take_byte(input, u8('b'));
             if (second.is_err()) return rstd::Err(rstd::move(second).unwrap_err());
             return rstd::Ok(input.span_from(begin));
         });
     ASSERT_TRUE(attempted.is_err());
-    EXPECT_EQ(attempted_cursor.offset(), 0u);
+    EXPECT_EQ(attempted_cursor.offset().to_primitive(), 0u);
 
     auto optional_cursor = parser::Cursor { "?value" };
-    auto present = parser::optional(optional_cursor, [](parser::Cursor& input) {
-        return parser::take_byte(input, '?');
+    auto present         = parser::optional(optional_cursor, [](parser::Cursor& input) {
+        return parser::take_byte(input, u8('?'));
     });
     ASSERT_TRUE(present.is_ok());
     EXPECT_TRUE(present.unwrap().is_some());
-    EXPECT_EQ(optional_cursor.offset(), 1u);
+    EXPECT_EQ(optional_cursor.offset().to_primitive(), 1u);
     auto absent = parser::optional(optional_cursor, [](parser::Cursor& input) {
-        return parser::take_byte(input, '#');
+        return parser::take_byte(input, u8('#'));
     });
     ASSERT_TRUE(absent.is_ok());
     EXPECT_TRUE(absent.unwrap().is_none());
-    EXPECT_EQ(optional_cursor.offset(), 1u);
+    EXPECT_EQ(optional_cursor.offset().to_primitive(), 1u);
 
     auto partial_cursor = parser::Cursor { "aX" };
-    auto partial = parser::optional(partial_cursor, [](parser::Cursor& input) {
+    auto partial        = parser::optional(partial_cursor, [](parser::Cursor& input) {
         return parser::take_literal(input, "ab");
     });
     ASSERT_TRUE(partial.is_err());
-    EXPECT_EQ(partial.unwrap_err().offset(), 1u);
-    EXPECT_EQ(partial_cursor.offset(), 0u);
+    EXPECT_EQ(partial.unwrap_err().offset().to_primitive(), 1u);
+    EXPECT_EQ(partial_cursor.offset().to_primitive(), 0u);
 
     auto sequence_cursor = parser::Cursor { "\r\nrest" };
-    auto sequenced = parser::sequence(
+    auto sequenced       = parser::sequence(
         sequence_cursor,
-        [](parser::Cursor& input) { return parser::take_byte(input, '\r'); },
-        [](parser::Cursor& input) { return parser::take_byte(input, '\n'); });
+        [](parser::Cursor& input) {
+            return parser::take_byte(input, u8('\r'));
+        },
+        [](parser::Cursor& input) {
+            return parser::take_byte(input, u8('\n'));
+        });
     ASSERT_TRUE(sequenced.is_ok());
-    EXPECT_EQ(sequenced.unwrap().size(), 2u);
+    EXPECT_EQ(sequenced.unwrap().size().to_primitive(), 2u);
 
     auto repeat_cursor = parser::Cursor { "///path" };
-    auto repeated = parser::repeat(
+    auto repeated      = parser::repeat(
         repeat_cursor,
-        [](parser::Cursor& input) { return parser::take_byte(input, '/'); }, 1, 4);
+        [](parser::Cursor& input) {
+            return parser::take_byte(input, u8('/'));
+        },
+        usize(1),
+        usize(4));
     ASSERT_TRUE(repeated.is_ok());
-    EXPECT_EQ(repeated.unwrap().size(), 3u);
-    EXPECT_EQ(repeat_cursor.offset(), 3u);
+    EXPECT_EQ(repeated.unwrap().size().to_primitive(), 3u);
+    EXPECT_EQ(repeat_cursor.offset().to_primitive(), 3u);
 
     auto delimited_cursor = parser::Cursor { "[ok]" };
-    auto delimited = parser::delimited(
+    auto delimited        = parser::delimited(
         delimited_cursor,
-        [](parser::Cursor& input) { return parser::take_byte(input, '['); },
-        [](parser::Cursor& input) { return parser::take_literal(input, "ok"); },
         [](parser::Cursor& input) {
-            return parser::committed(parser::take_byte(input, ']'));
+            return parser::take_byte(input, u8('['));
+        },
+        [](parser::Cursor& input) {
+            return parser::take_literal(input, "ok");
+        },
+        [](parser::Cursor& input) {
+            return parser::committed(parser::take_byte(input, u8(']')));
         });
     ASSERT_TRUE(delimited.is_ok());
-    EXPECT_EQ(delimited.unwrap().size(), 2u);
-    EXPECT_EQ(delimited_cursor.offset(), 4u);
+    EXPECT_EQ(delimited.unwrap().size().to_primitive(), 2u);
+    EXPECT_EQ(delimited_cursor.offset().to_primitive(), 4u);
 
     auto unclosed_cursor = parser::Cursor { "[ok" };
-    auto unclosed = parser::delimited(
+    auto unclosed        = parser::delimited(
         unclosed_cursor,
-        [](parser::Cursor& input) { return parser::take_byte(input, '['); },
-        [](parser::Cursor& input) { return parser::take_literal(input, "ok"); },
         [](parser::Cursor& input) {
-            return parser::committed(parser::take_byte(input, ']'));
+            return parser::take_byte(input, u8('['));
+        },
+        [](parser::Cursor& input) {
+            return parser::take_literal(input, "ok");
+        },
+        [](parser::Cursor& input) {
+            return parser::committed(parser::take_byte(input, u8(']')));
         });
     ASSERT_TRUE(unclosed.is_err());
     EXPECT_TRUE(unclosed.unwrap_err().is_committed());
@@ -855,9 +858,9 @@ TEST(http, UrlParsesOwnedComponentsAndTraits) {
     auto cloned = rstd::as<rstd::clone::Clone>(url).clone();
     EXPECT_EQ(rstd::cppstd::as_string_view(cloned.as_ref()),
               "foo://user@example.com:8042/over/there?name=ferret#nose");
-    EXPECT_EQ(rstd::cppstd::as_string_view(
-                  rstd::as<rstd::convert::AsRef<rstd::str>>(cloned).as_ref()),
-              rstd::cppstd::as_string_view(cloned.as_ref()));
+    EXPECT_EQ(
+        rstd::cppstd::as_string_view(rstd::as<rstd::convert::AsRef<rstd::str>>(cloned).as_ref()),
+        rstd::cppstd::as_string_view(cloned.as_ref()));
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cloned)),
               "foo://user@example.com:8042/over/there?name=ferret#nose");
 
@@ -865,7 +868,7 @@ TEST(http, UrlParsesOwnedComponentsAndTraits) {
     ASSERT_TRUE(from_trait.is_ok());
     auto relative = rstd::move(from_trait).unwrap();
     ASSERT_TRUE(relative.query().is_some());
-    EXPECT_EQ(relative.query()->size(), 0u);
+    EXPECT_EQ(relative.query()->size().to_primitive(), 0u);
     EXPECT_TRUE(relative.fragment().is_none());
 
     auto empty_fragment = Url::parse("#");
@@ -873,7 +876,7 @@ TEST(http, UrlParsesOwnedComponentsAndTraits) {
     auto empty_fragment_url = rstd::move(empty_fragment).unwrap();
     EXPECT_TRUE(empty_fragment_url.query().is_none());
     ASSERT_TRUE(empty_fragment_url.fragment().is_some());
-    EXPECT_EQ(empty_fragment_url.fragment()->size(), 0u);
+    EXPECT_EQ(empty_fragment_url.fragment()->size().to_primitive(), 0u);
 
     auto encoded_path = Url::parse("http://example.com/a%2Fb");
     ASSERT_TRUE(encoded_path.is_ok());
@@ -889,13 +892,13 @@ TEST(http, HttpUrlValidationReportsKindsAndOffsets) {
     ASSERT_TRUE(invalid_percent.is_err());
     auto percent_error = rstd::move(invalid_percent).unwrap_err();
     EXPECT_TRUE(percent_error.kind().is_InvalidPercentEncoding());
-    EXPECT_EQ(percent_error.offset(), 19u);
+    EXPECT_EQ(percent_error.offset().to_primitive(), 19u);
 
     auto invalid_character = Url::parse("http://example.com/a b");
     ASSERT_TRUE(invalid_character.is_err());
     auto character_error = rstd::move(invalid_character).unwrap_err();
     EXPECT_TRUE(character_error.kind().is_InvalidCharacter());
-    EXPECT_EQ(character_error.offset(), 20u);
+    EXPECT_EQ(character_error.offset().to_primitive(), 20u);
 
     auto missing_scheme = Url::parse_http("//example.com/path");
     ASSERT_TRUE(missing_scheme.is_err());
@@ -913,11 +916,11 @@ TEST(http, HttpUrlValidationReportsKindsAndOffsets) {
     ASSERT_TRUE(missing_host.is_err());
     EXPECT_TRUE(missing_host.unwrap_err().kind().is_MissingHost());
 
-    auto request =
-        ncrequest::Request::from_url("https://[2001:db8::1]/resource?#fragment");
+    auto request = ncrequest::Request::from_url("https://[2001:db8::1]/resource?#fragment");
     if (request.is_err()) {
         auto error = rstd::move(request).unwrap_err();
-        FAIL() << "URL error kind " << error.kind().index() << " at " << error.offset();
+        FAIL() << "URL error kind " << error.kind().index() << " at "
+               << error.offset().to_primitive();
     }
     auto value = rstd::move(request).unwrap();
     EXPECT_EQ(value.url(), "https://[2001:db8::1]/resource?#fragment");
@@ -1007,12 +1010,8 @@ TEST(http, UriParserValidatesIpLiterals) {
     }
 
     constexpr const char* invalid[] = {
-        "http://[:]/",
-        "http://[1:2:3:4:5:6:7]/",
-        "http://[1:2:3:4:5:6:7:8:9]/",
-        "http://[1::2::3]/",
-        "http://[::ffff:999.0.2.1]/",
-        "http://[v.fe80]/",
+        "http://[:]/",       "http://[1:2:3:4:5:6:7]/",    "http://[1:2:3:4:5:6:7:8:9]/",
+        "http://[1::2::3]/", "http://[::ffff:999.0.2.1]/", "http://[v.fe80]/",
         "http://[v1.]/",
     };
     for (auto value : invalid) {
@@ -1024,12 +1023,12 @@ TEST(http, UriParserValidatesIpLiterals) {
     auto invalid_ipv4 = Url::parse_http("http://999.0.2.1/");
     ASSERT_TRUE(invalid_ipv4.is_err());
     EXPECT_TRUE(invalid_ipv4.unwrap_err().kind().is_InvalidIpAddress());
-    EXPECT_EQ(invalid_ipv4.unwrap_err().offset(), 7u);
+    EXPECT_EQ(invalid_ipv4.unwrap_err().offset().to_primitive(), 7u);
 
     auto invalid_port = Url::parse_http("http://example.com:65536/");
     ASSERT_TRUE(invalid_port.is_err());
     EXPECT_TRUE(invalid_port.unwrap_err().kind().is_InvalidPort());
-    EXPECT_EQ(invalid_port.unwrap_err().offset(), 23u);
+    EXPECT_EQ(invalid_port.unwrap_err().offset().to_primitive(), 23u);
 }
 
 TEST(http, HeaderPreservesCaseInsensitiveOrderedValues) {
@@ -1040,9 +1039,9 @@ TEST(http, HeaderPreservesCaseInsensitiveOrderedValues) {
     auto parsed_name = rstd::from_str<HeaderName>("Set-Cookie");
     ASSERT_TRUE(parsed_name.is_ok());
     auto name = rstd::move(parsed_name).unwrap();
-    EXPECT_EQ(rstd::cppstd::as_string_view(
-                  rstd::as<rstd::convert::AsRef<rstd::str>>(name).as_ref()),
-              "Set-Cookie");
+    EXPECT_EQ(
+        rstd::cppstd::as_string_view(rstd::as<rstd::convert::AsRef<rstd::str>>(name).as_ref()),
+        "Set-Cookie");
 
     auto parsed_value = rstd::from_str<HeaderValue>("first=1");
     ASSERT_TRUE(parsed_value.is_ok());
@@ -1075,8 +1074,8 @@ TEST(http, HeaderPreservesCaseInsensitiveOrderedValues) {
     EXPECT_TRUE(values.next().is_none());
 
     ASSERT_TRUE(headers.set("fOo", "replacement").is_ok());
-    EXPECT_EQ(headers.len(), 4u);
-    EXPECT_EQ(headers.values("foo").count(), 1u);
+    EXPECT_EQ(headers.len().to_primitive(), 4u);
+    EXPECT_EQ(headers.values("foo").count().to_primitive(), 1u);
     auto replacement = headers.get("foo");
     ASSERT_TRUE(replacement.is_some());
     EXPECT_EQ(rstd::cppstd::as_string_view(*(**replacement).as_str()), "replacement");
@@ -1103,32 +1102,32 @@ TEST(http, HeaderRejectsInvalidNamesAndValues) {
     auto empty_name = HeaderName::parse("");
     ASSERT_TRUE(empty_name.is_err());
     EXPECT_TRUE(empty_name.unwrap_err().kind().is_InvalidName());
-    EXPECT_EQ(empty_name.unwrap_err().offset(), 0u);
+    EXPECT_EQ(empty_name.unwrap_err().offset().to_primitive(), 0u);
 
     auto invalid_name = HeaderName::parse("Bad Name");
     ASSERT_TRUE(invalid_name.is_err());
     EXPECT_TRUE(invalid_name.unwrap_err().kind().is_InvalidName());
-    EXPECT_EQ(invalid_name.unwrap_err().offset(), 3u);
+    EXPECT_EQ(invalid_name.unwrap_err().offset().to_primitive(), 3u);
 
     auto line_break = HeaderValue::parse("safe\r\ninjected");
     ASSERT_TRUE(line_break.is_err());
     EXPECT_TRUE(line_break.unwrap_err().kind().is_InvalidLineBreak());
-    EXPECT_EQ(line_break.unwrap_err().offset(), 4u);
+    EXPECT_EQ(line_break.unwrap_err().offset().to_primitive(), 4u);
 
-    const rstd::u8 control_bytes[] = { 'a', 0, 'b' };
-    auto control = HeaderValue::from_bytes(
-        rstd::slice<rstd::u8>::from_raw_parts(control_bytes, 3));
+    const byte control_bytes[] = { 'a', 0, 'b' };
+    auto       control =
+        HeaderValue::from_bytes(rstd::slice<byte>::from_raw_parts(control_bytes, usize(3)));
     ASSERT_TRUE(control.is_err());
     EXPECT_TRUE(control.unwrap_err().kind().is_InvalidValue());
-    EXPECT_EQ(control.unwrap_err().offset(), 1u);
+    EXPECT_EQ(control.unwrap_err().offset().to_primitive(), 1u);
 
-    const rstd::u8 opaque_bytes[] = { 'a', 0xff, 'b' };
-    auto opaque = HeaderValue::from_bytes(
-        rstd::slice<rstd::u8>::from_raw_parts(opaque_bytes, 3));
+    const byte opaque_bytes[] = { 'a', 0xff, 'b' };
+    auto       opaque =
+        HeaderValue::from_bytes(rstd::slice<byte>::from_raw_parts(opaque_bytes, usize(3)));
     ASSERT_TRUE(opaque.is_ok());
     auto opaque_value = rstd::move(opaque).unwrap();
     EXPECT_TRUE(opaque_value.as_str().is_none());
-    EXPECT_EQ(opaque_value.as_bytes().len(), 3u);
+    EXPECT_EQ(opaque_value.as_bytes().len().to_primitive(), 3u);
 }
 
 TEST(http, HeaderCloneAndRequestReuseTypedOwner) {
@@ -1149,7 +1148,7 @@ TEST(http, HeaderCloneAndRequestReuseTypedOwner) {
     auto request = ncrequest::Request {};
     request.update_header(source);
     EXPECT_EQ(request.header("x-first"), "one");
-    EXPECT_EQ(request.header().values("set-cookie").count(), 2u);
+    EXPECT_EQ(request.header().values("set-cookie").count().to_primitive(), 2u);
     ASSERT_TRUE(request.try_set_header("X-First", "request").is_ok());
     EXPECT_EQ(request.header("x-first"), "request");
 
@@ -1162,47 +1161,46 @@ TEST(http, HeaderCloneAndRequestReuseTypedOwner) {
 TEST(http, MessageHeadParsesTypedResponseAndDuplicateFields) {
     using ncrequest::http::MessageHead;
 
-    auto parsed = MessageHead::parse(rstd::str_::as_bytes(
-        "HTTP/1.1 200 OK\r\n"
-        "Set-Cookie: a=1\r\n"
-        "set-cookie:\tb=2 \t\r\n"
-        "X-Empty:\r\n"
-        "\r\n"));
+    auto parsed = MessageHead::parse(rstd::str_::as_bytes("HTTP/1.1 200 OK\r\n"
+                                                          "Set-Cookie: a=1\r\n"
+                                                          "set-cookie:\tb=2 \t\r\n"
+                                                          "X-Empty:\r\n"
+                                                          "\r\n"));
     ASSERT_TRUE(parsed.is_ok());
     auto head = rstd::move(parsed).unwrap();
 
     ASSERT_TRUE(head.start().is_Response());
     auto const& status = head.start().as_Response().value;
-    EXPECT_EQ(status.status().value(), 200u);
+    EXPECT_EQ(status.status().value().to_primitive(), 200u);
     auto version = status.version();
     ASSERT_TRUE(version.is_some());
-    EXPECT_EQ(version->major(), 1u);
-    EXPECT_EQ(version->minor(), 1u);
+    EXPECT_EQ(version->major().to_primitive(), 1u);
+    EXPECT_EQ(version->minor().to_primitive(), 1u);
     auto reason = status.reason();
     ASSERT_TRUE(reason.is_some());
     ASSERT_TRUE((**reason).as_str().is_some());
     EXPECT_EQ(rstd::cppstd::as_string_view(*(**reason).as_str()), "OK");
 
-    EXPECT_EQ(head.status_code().unwrap(), 200u);
-    EXPECT_EQ(head.headers().values("set-cookie").count(), 2u);
+    EXPECT_EQ(head.status_code().unwrap().to_primitive(), 200u);
+    EXPECT_EQ(head.headers().values("set-cookie").count().to_primitive(), 2u);
     EXPECT_TRUE(head.has_field("x-empty"));
     auto empty = head.headers().get("X-Empty");
     ASSERT_TRUE(empty.is_some());
-    EXPECT_EQ((**empty).as_bytes().len(), 0u);
+    EXPECT_EQ((**empty).as_bytes().len().to_primitive(), 0u);
 
     auto clone = head.clone();
-    EXPECT_EQ(clone.status_code().unwrap(), 200u);
-    EXPECT_EQ(clone.headers().values("SET-COOKIE").count(), 2u);
+    EXPECT_EQ(clone.status_code().unwrap().to_primitive(), 200u);
+    EXPECT_EQ(clone.headers().values("SET-COOKIE").count().to_primitive(), 2u);
 
     auto saw_response = false;
-    auto start = head.start().clone();
+    auto start        = head.start().clone();
     RSTD_MATCH(rstd::move(start)) {
         RSTD_CASE(Request, value) {
             (void)value;
             break;
         }
         RSTD_CASE(Response, value) {
-            saw_response = value.status().value() == 200u;
+            saw_response = value.status().value() == u16(200);
             break;
         }
     }
@@ -1224,66 +1222,70 @@ TEST(http, Http1HeadParserComposesAcrossArbitraryChunks) {
     auto event = rstd::move(third).unwrap();
     ASSERT_TRUE(event.is_Complete());
     auto completed = rstd::move(event).as_Complete();
-    auto head = rstd::move(completed.head);
-    EXPECT_EQ(head.status_code().unwrap(), 204u);
+    auto head      = rstd::move(completed.head);
+    EXPECT_EQ(head.status_code().unwrap().to_primitive(), 204u);
     EXPECT_TRUE(head.has_field("x-test"));
 
     auto incomplete = ncrequest::http::Http1HeadParser {};
-    auto partial = incomplete.push(rstd::str_::as_bytes("HTTP/1.1 200 OK\r\nX: value"));
+    auto partial    = incomplete.push(rstd::str_::as_bytes("HTTP/1.1 200 OK\r\nX: value"));
     ASSERT_TRUE(partial.is_ok());
     EXPECT_TRUE(partial.unwrap().is_NeedMore());
     auto ended = incomplete.finish();
     ASSERT_TRUE(ended.is_err());
     EXPECT_TRUE(ended.unwrap_err().kind().is_UnexpectedEof());
-    EXPECT_EQ(ended.unwrap_err().offset(), 25u);
+    EXPECT_EQ(ended.unwrap_err().offset().to_primitive(), 25u);
 
-    constexpr auto head_with_body = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody";
-    constexpr auto head_size = sizeof("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n") - 1;
-    auto followed = ncrequest::http::Http1HeadParser {};
-    auto followed_result = followed.push(rstd::str_::as_bytes(head_with_body));
+    constexpr auto head_with_body  = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody";
+    constexpr auto head_size       = sizeof("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n") - 1;
+    auto           followed        = ncrequest::http::Http1HeadParser {};
+    auto           followed_result = followed.push(rstd::str_::as_bytes(head_with_body));
     ASSERT_TRUE(followed_result.is_ok());
     auto followed_event = rstd::move(followed_result).unwrap();
     ASSERT_TRUE(followed_event.is_Complete());
     auto followed_complete = rstd::move(followed_event).as_Complete();
-    EXPECT_EQ(followed_complete.consumed, head_size);
-    EXPECT_EQ(followed_complete.head.status_code().unwrap(), 200u);
+    EXPECT_EQ(followed_complete.consumed.to_primitive(), head_size);
+    EXPECT_EQ(followed_complete.head.status_code().unwrap().to_primitive(), 200u);
 
     auto exact = ncrequest::http::MessageHead::parse(rstd::str_::as_bytes(head_with_body));
     ASSERT_TRUE(exact.is_err());
     EXPECT_TRUE(exact.unwrap_err().kind().is_InvalidSyntax());
-    EXPECT_EQ(exact.unwrap_err().offset(), head_size);
+    EXPECT_EQ(exact.unwrap_err().offset().to_primitive(), head_size);
 
-    auto oversized = std::string(ncrequest::http::Http1HeadParser::MaxHeaderBytes + 1, 'x');
+    auto oversized =
+        std::string(ncrequest::http::Http1HeadParser::MaxHeaderBytes.to_primitive() + 1, 'x');
     auto oversized_parser = ncrequest::http::Http1HeadParser {};
-    auto oversized_result = oversized_parser.push(rstd::str_::as_bytes(oversized));
+    auto oversized_result =
+        oversized_parser.push(rstd::str_::as_bytes(rstd::cppstd::as_str(oversized)));
     ASSERT_TRUE(oversized_result.is_err());
     EXPECT_TRUE(oversized_result.unwrap_err().kind().is_HeaderTooLarge());
-    EXPECT_EQ(oversized_result.unwrap_err().offset(),
-              ncrequest::http::Http1HeadParser::MaxHeaderBytes);
+    EXPECT_EQ(oversized_result.unwrap_err().offset().to_primitive(),
+              ncrequest::http::Http1HeadParser::MaxHeaderBytes.to_primitive());
 
     auto large_body_input = std::string("HTTP/1.1 200 OK\r\n\r\n");
-    large_body_input.append(ncrequest::http::Http1HeadParser::MaxHeaderBytes + 1, 'x');
+    large_body_input.append(ncrequest::http::Http1HeadParser::MaxHeaderBytes.to_primitive() + 1,
+                            'x');
     auto large_body_parser = ncrequest::http::Http1HeadParser {};
-    auto large_body_result = large_body_parser.push(rstd::str_::as_bytes(large_body_input));
+    auto large_body_result =
+        large_body_parser.push(rstd::str_::as_bytes(rstd::cppstd::as_str(large_body_input)));
     ASSERT_TRUE(large_body_result.is_ok());
     EXPECT_TRUE(large_body_result.unwrap().is_Complete());
 }
 
 TEST(http, Http1FieldSectionParserKeepsTrailersSeparate) {
     auto parser = ncrequest::http::Http1FieldSectionParser {};
-    auto first = parser.push(rstd::str_::as_bytes("Digest: first\r\nX-Tra"));
+    auto first  = parser.push(rstd::str_::as_bytes("Digest: first\r\nX-Tra"));
     ASSERT_TRUE(first.is_ok());
     EXPECT_TRUE(first.unwrap().is_NeedMore());
 
     constexpr auto remainder = "iler: second\r\n\r\nbody";
-    auto second = parser.push(rstd::str_::as_bytes(remainder));
+    auto           second    = parser.push(rstd::str_::as_bytes(remainder));
     ASSERT_TRUE(second.is_ok());
     auto event = rstd::move(second).unwrap();
     ASSERT_TRUE(event.is_Complete());
     auto complete = rstd::move(event).as_Complete();
-    EXPECT_EQ(complete.consumed,
+    EXPECT_EQ(complete.consumed.to_primitive(),
               sizeof("Digest: first\r\nX-Trailer: second\r\n\r\n") - 1);
-    EXPECT_EQ(complete.fields.len(), 2u);
+    EXPECT_EQ(complete.fields.len().to_primitive(), 2u);
     EXPECT_TRUE(complete.fields.contains("digest"));
     EXPECT_TRUE(complete.fields.contains("x-trailer"));
 
@@ -1294,7 +1296,7 @@ TEST(http, Http1FieldSectionParserKeepsTrailersSeparate) {
     EXPECT_FALSE(initial.unwrap().headers().contains("x-trailer"));
 
     auto incomplete = ncrequest::http::Http1FieldSectionParser {};
-    auto partial = incomplete.push(rstd::str_::as_bytes("X-Trailer: value\r\n"));
+    auto partial    = incomplete.push(rstd::str_::as_bytes("X-Trailer: value\r\n"));
     ASSERT_TRUE(partial.is_ok());
     EXPECT_TRUE(partial.unwrap().is_NeedMore());
     auto ended = incomplete.finish();
@@ -1312,8 +1314,7 @@ TEST(http, MessageHeadParsesRequestTargetFormsAndTraits) {
         { "GET /path?x=1 HTTP/1.1\r\n\r\n", "GET", "/path?x=1" },
         { "OPTIONS * HTTP/1.1\r\n\r\n", "OPTIONS", "*" },
         { "CONNECT example.com:443 HTTP/1.1\r\n\r\n", "CONNECT", "example.com:443" },
-        { "GET http://example.com/path HTTP/1.1\r\n\r\n", "GET",
-          "http://example.com/path" },
+        { "GET http://example.com/path HTTP/1.1\r\n\r\n", "GET", "http://example.com/path" },
     };
 
     for (auto const& example : examples) {
@@ -1325,8 +1326,8 @@ TEST(http, MessageHeadParsesRequestTargetFormsAndTraits) {
         auto const& request = head.start().as_Request().value;
         EXPECT_EQ(rstd::cppstd::as_string_view(request.method().as_ref()), example.method);
         EXPECT_EQ(rstd::cppstd::as_string_view(request.target()), example.target);
-        EXPECT_EQ(request.version().major(), 1u);
-        EXPECT_EQ(request.version().minor(), 1u);
+        EXPECT_EQ(request.version().major().to_primitive(), 1u);
+        EXPECT_EQ(request.version().minor().to_primitive(), 1u);
     }
 
     auto method = rstd::from_str<ncrequest::http::Method>("PATCH");
@@ -1341,42 +1342,42 @@ TEST(http, MessageHeadParsesRequestTargetFormsAndTraits) {
 }
 
 TEST(http, MessageHeadReportsStartAndFieldErrors) {
-    auto invalid_status = ncrequest::http::MessageHead::parse(
-        rstd::str_::as_bytes("HTTP/1.1 099 Bad\r\n\r\n"));
+    auto invalid_status =
+        ncrequest::http::MessageHead::parse(rstd::str_::as_bytes("HTTP/1.1 099 Bad\r\n\r\n"));
     ASSERT_TRUE(invalid_status.is_err());
     EXPECT_TRUE(invalid_status.unwrap_err().kind().is_InvalidStartLine());
-    EXPECT_EQ(invalid_status.unwrap_err().offset(), 9u);
+    EXPECT_EQ(invalid_status.unwrap_err().offset().to_primitive(), 9u);
 
     auto bad_name_text = std::string { "HTTP/1.1 200 OK\r\nBad Name: value\r\n\r\n" };
-    auto bad_name = ncrequest::http::MessageHead::parse(rstd::slice<rstd::u8>::from_raw_parts(
-        reinterpret_cast<const rstd::u8*>(bad_name_text.data()), bad_name_text.size()));
+    auto bad_name      = ncrequest::http::MessageHead::parse(rstd::slice<byte>::from_raw_parts(
+        reinterpret_cast<const byte*>(bad_name_text.data()), usize(bad_name_text.size())));
     ASSERT_TRUE(bad_name.is_err());
     EXPECT_TRUE(bad_name.unwrap_err().kind().is_InvalidHeaderLine());
-    EXPECT_EQ(bad_name.unwrap_err().offset(), bad_name_text.find("Bad Name") + 3);
+    EXPECT_EQ(bad_name.unwrap_err().offset().to_primitive(), bad_name_text.find("Bad Name") + 3);
 
     auto obs_fold_text = std::string { "HTTP/1.1 200 OK\r\nX: value\r\n continuation\r\n\r\n" };
-    auto obs_fold = ncrequest::http::MessageHead::parse(rstd::slice<rstd::u8>::from_raw_parts(
-        reinterpret_cast<const rstd::u8*>(obs_fold_text.data()), obs_fold_text.size()));
+    auto obs_fold      = ncrequest::http::MessageHead::parse(rstd::slice<byte>::from_raw_parts(
+        reinterpret_cast<const byte*>(obs_fold_text.data()), usize(obs_fold_text.size())));
     ASSERT_TRUE(obs_fold.is_err());
     EXPECT_TRUE(obs_fold.unwrap_err().kind().is_InvalidHeaderLine());
-    EXPECT_EQ(obs_fold.unwrap_err().offset(), obs_fold_text.find(" continuation"));
+    EXPECT_EQ(obs_fold.unwrap_err().offset().to_primitive(), obs_fold_text.find(" continuation"));
 
     auto bare_cr_text = std::string { "HTTP/1.1 200 OK\r\nX: safe\rbad\r\n\r\n" };
-    auto bare_cr = ncrequest::http::MessageHead::parse(rstd::slice<rstd::u8>::from_raw_parts(
-        reinterpret_cast<const rstd::u8*>(bare_cr_text.data()), bare_cr_text.size()));
+    auto bare_cr      = ncrequest::http::MessageHead::parse(rstd::slice<byte>::from_raw_parts(
+        reinterpret_cast<const byte*>(bare_cr_text.data()), usize(bare_cr_text.size())));
     ASSERT_TRUE(bare_cr.is_err());
     EXPECT_TRUE(bare_cr.unwrap_err().kind().is_InvalidHeaderLine());
-    EXPECT_EQ(bare_cr.unwrap_err().offset(), bare_cr_text.find("\rbad"));
+    EXPECT_EQ(bare_cr.unwrap_err().offset().to_primitive(), bare_cr_text.find("\rbad"));
 }
 
 TEST(http, HttpErrorDisplayTraitsDescribeStableKinds) {
     using namespace ncrequest::http;
 
-    auto url = UrlError { UrlErrorKind::UnsupportedScheme(), 4 };
-    auto header = HeaderError { HeaderErrorKind::InvalidLineBreak(), 7 };
-    auto message = HttpParseError { HttpParseErrorKind::HeaderTooLarge(), 9 };
-    auto query = QueryError { QueryErrorKind::InvalidUtf8(), 2 };
-    auto cookie = CookieError { CookieErrorKind::InvalidAttribute(), 5 };
+    auto url     = UrlError { UrlErrorKind::UnsupportedScheme(), usize(4) };
+    auto header  = HeaderError { HeaderErrorKind::InvalidLineBreak(), usize(7) };
+    auto message = HttpParseError { HttpParseErrorKind::HeaderTooLarge(), usize(9) };
+    auto query   = QueryError { QueryErrorKind::InvalidUtf8(), usize(2) };
+    auto cookie  = CookieError { CookieErrorKind::InvalidAttribute(), usize(5) };
 
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", url)),
               "HTTP URL has an unsupported scheme");
@@ -1384,10 +1385,8 @@ TEST(http, HttpErrorDisplayTraitsDescribeStableKinds) {
               "line break in HTTP field value");
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", message)),
               "HTTP field section is too large");
-    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", query)),
-              "invalid UTF-8 in query");
-    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cookie)),
-              "invalid cookie attribute");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", query)), "invalid UTF-8 in query");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cookie)), "invalid cookie attribute");
 }
 
 TEST(http, RstdAsyncPollFuture) {
@@ -1406,13 +1405,13 @@ TEST(http, ErrorModelVariants) {
 #else
     auto client = ncrequest::Error::Client(ncrequest::ClientError {
         .backend = ncrequest::ClientBackend::QtNetwork,
-        .code    = 7,
+        .code    = i32(7),
         .message = "client error",
     });
     EXPECT_EQ(client.kind(), ncrequest::ErrorKind::Client);
     ASSERT_TRUE(client.is_Client());
     EXPECT_EQ(client.as_Client().error.backend, ncrequest::ClientBackend::QtNetwork);
-    EXPECT_EQ(client.as_Client().error.code, 7);
+    EXPECT_EQ(client.as_Client().error.code.to_primitive(), 7);
 #endif
 
     auto io = rstd::io::error::Error::from_kind(
@@ -1428,21 +1427,20 @@ TEST(http, ErrorModelVariants) {
 
     auto unsupported = ncrequest::Error::Unsupported("unsupported capability");
     EXPECT_EQ(unsupported.kind(), ncrequest::ErrorKind::Unsupported);
-    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", unsupported)),
-              "unsupported capability");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", unsupported)), "unsupported capability");
 }
 
 TEST(http, RequestOptionEnumSetOpt) {
     auto req = ncrequest::Request {};
 
     req.set_opt(ncrequest::RequestOpt::Timeout(ncrequest::req_opt::Timeout {
-        .low_speed        = 2,
-        .connect_timeout  = 3,
-        .transfer_timeout = 4,
+        .low_speed        = i64(2),
+        .connect_timeout  = i64(3),
+        .transfer_timeout = i64(4),
     }));
-    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().low_speed, 2);
-    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().connect_timeout, 3);
-    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().transfer_timeout, 4);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().low_speed.to_primitive(), 2);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().connect_timeout.to_primitive(), 3);
+    EXPECT_EQ(req.get_opt<ncrequest::req_opt::Timeout>().transfer_timeout.to_primitive(), 4);
 
     req.set_opt(ncrequest::RequestOpt::Proxy(ncrequest::req_opt::Proxy {
         .type    = ncrequest::req_opt::Proxy::Type::SOCKS5,
@@ -1478,13 +1476,11 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
                            "http_only_cookie\thttp-only\n"
                            "127.0.0.1\tFALSE\t/\tFALSE\t1\texpired_cookie\texpired\n"
                            "malformed\n"));
-    auto result = run_http(
-        [base, cookie_path = cookie_file.clone(), fixture_path = fixture_file.clone()](
-            auto session) mutable {
-            return exercise_share(rstd::move(session),
-                                  base,
-                                  rstd::move(cookie_path),
-                                  rstd::move(fixture_path));
+    auto result =
+        run_http([base, cookie_path = cookie_file.clone(), fixture_path = fixture_file.clone()](
+                     auto session) mutable {
+            return exercise_share(
+                rstd::move(session), base, rstd::move(cookie_path), rstd::move(fixture_path));
         });
     auto persisted = read_file(cookie_file);
     remove_file(cookie_file);
@@ -1537,8 +1533,7 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
     EXPECT_EQ(result.redirect_echo.body.find("default_cookie=default"), std::string::npos);
     EXPECT_EQ(result.temporary_request.body, "cookie set slowly\n");
     EXPECT_NE(result.recovered_echo.body.find("lifetime_cookie=alive"), std::string::npos);
-    EXPECT_NE(result.recovered_echo.body.find("redirect_cookie=redirected"),
-              std::string::npos);
+    EXPECT_NE(result.recovered_echo.body.find("redirect_cookie=redirected"), std::string::npos);
     EXPECT_EQ(result.recovered_echo.body.find("default_cookie=default"), std::string::npos);
     EXPECT_NE(result.fixture_echo.body.find("fixture_cookie=fixture"), std::string::npos);
     EXPECT_NE(result.fixture_echo.body.find("http_only_cookie=http-only"), std::string::npos);
@@ -1587,15 +1582,15 @@ TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
         GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
     }
 
-    auto request_result = run_http([url = local_http_url(base, "/headers/request-repeat")](
-                                       auto session) {
-        auto request = make_request(url);
-        auto headers = ncrequest::http::Header {};
-        (void)headers.add("X-Ncrequest-Repeat", "one");
-        (void)headers.add("X-Ncrequest-Repeat", "two");
-        request.update_header(headers);
-        return fetch_text_request(rstd::move(session), rstd::move(request));
-    });
+    auto request_result =
+        run_http([url = local_http_url(base, "/headers/request-repeat")](auto session) {
+            auto request = make_request(url);
+            auto headers = ncrequest::http::Header {};
+            (void)headers.add("X-Ncrequest-Repeat", "one");
+            (void)headers.add("X-Ncrequest-Repeat", "two");
+            request.update_header(headers);
+            return fetch_text_request(rstd::move(session), rstd::move(request));
+        });
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
     ASSERT_TRUE(request_result.got_error) << request_result.error;
     EXPECT_EQ(request_result.error_kind, ncrequest::ErrorKind::Unsupported);
@@ -1604,10 +1599,10 @@ TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
     EXPECT_EQ(request_result.body, "one|two\n");
 #endif
 
-    auto response_result = run_http([url = local_http_url(base, "/headers/response-repeat")](
-                                        auto session) {
-        return fetch_text(rstd::move(session), url);
-    });
+    auto response_result =
+        run_http([url = local_http_url(base, "/headers/response-repeat")](auto session) {
+            return fetch_text(rstd::move(session), url);
+        });
     ASSERT_TRUE(response_result.got_body) << response_result.error;
     EXPECT_EQ(response_result.repeated_header_values, "one|two");
     EXPECT_EQ(response_result.set_cookie_count, 2u);
@@ -1760,8 +1755,7 @@ TEST(http, LocalHttpTimeout) {
 #else
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
     EXPECT_EQ(result.backend, ncrequest::ClientBackend::Curl);
-    EXPECT_EQ(result.client_code,
-              static_cast<rstd::i32>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(result.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
 #endif
 }
 

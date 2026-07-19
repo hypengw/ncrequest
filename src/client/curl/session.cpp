@@ -12,7 +12,7 @@ import cppstd;
 namespace ncrequest::client::curl
 {
 
-constexpr static auto POLL_TIMEOUT { rstd::time::Duration::from_millis(1000) };
+constexpr static auto POLL_TIMEOUT { rstd::time::Duration::from_millis(u64(1000)) };
 namespace sm = ncrequest::client::curl::session_message;
 
 namespace
@@ -44,8 +44,8 @@ public:
     void remove_connect(const Arc<Connection>&);
 
 private:
-    Box<CurlMulti>                    m_curl_multi;
-    rstd::vec::Vec<Arc<Connection>>   m_connect_set;
+    Box<CurlMulti>                  m_curl_multi;
+    rstd::vec::Vec<Arc<Connection>> m_connect_set;
 
     Arc<channel_type> m_channel;
     bool              m_stopped;
@@ -60,9 +60,7 @@ private:
 SessionBackend::SessionBackend(std::pmr::memory_resource* mem_pool, CurlOptions options)
     : m_d(Box<Private>::make(mem_pool, options)) {}
 
-void SessionBackend::start() {
-    m_d->ensure_worker();
-}
+void SessionBackend::start() { m_d->ensure_worker(); }
 
 SessionBackend::~SessionBackend() {
     about_to_stop();
@@ -99,8 +97,7 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
 auto SessionBackend::start_request(const Request& req, http::Operation operation,
                                    rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
-    Arc<ResponseBackend> res =
-        ResponseBackend::make_response(prepare_req(req), operation, *this);
+    Arc<ResponseBackend> res = ResponseBackend::make_response(prepare_req(req), operation, *this);
     if (body.is_some()) {
         res->add_send_buffer(rstd::move(body).unwrap_unchecked());
     }
@@ -114,8 +111,7 @@ auto SessionBackend::start_request(const Request& req, http::Operation operation
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res =
-        ResponseBackend::make_response(prepare_req(req), http::Operation::Get(), *this);
+    auto res = ResponseBackend::make_response(prepare_req(req), http::Operation::Get(), *this);
 
     auto performed = co_await perform(res);
     if (performed.is_ok()) {
@@ -147,8 +143,7 @@ auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
 }
 
-SessionBackend::Private::Private(std::pmr::memory_resource* mem_pool,
-                                 CurlOptions options) noexcept
+SessionBackend::Private::Private(std::pmr::memory_resource* mem_pool, CurlOptions options) noexcept
     : m_curl_multi(Box<CurlMulti>::make(options)),
       m_channel(Arc<channel_type>::make()),
       m_stopped(false),
@@ -161,9 +156,7 @@ SessionBackend::Private::Private(std::pmr::memory_resource* mem_pool,
     });
 }
 
-SessionBackend::Private::~Private() {
-    join_worker();
-}
+SessionBackend::Private::~Private() { join_worker(); }
 
 void SessionBackend::Private::ensure_worker() {
     auto thread = m_thread.lock().unwrap();
@@ -197,24 +190,16 @@ void SessionBackend::save_cookie(ref<rstd::path::Path> path) const {
 auto SessionBackend::cookies() -> rstd::vec::Vec<rstd::string::String> {
     return m_d->m_curl_multi->cookies();
 }
-void SessionBackend::set_proxy(const req_opt::Proxy& p) {
-    m_d->m_proxy = Some(p.clone());
-}
-void SessionBackend::set_verify_certificate(bool v) {
-    m_d->m_ignore_certificate = ! v;
-}
+void SessionBackend::set_proxy(const req_opt::Proxy& p) { m_d->m_proxy = Some(p.clone()); }
+void SessionBackend::set_verify_certificate(bool v) { m_d->m_ignore_certificate = ! v; }
 
-SessionBackend::channel_type& SessionBackend::channel() {
-    return *(m_d->m_channel);
-}
+SessionBackend::channel_type& SessionBackend::channel() { return *(m_d->m_channel); }
 
 auto SessionBackend::channel_rc() -> Arc<SessionBackend::channel_type> {
     return m_d->m_channel.clone();
 }
 
-void SessionBackend::about_to_stop() {
-    channel().try_send(SessionMessage::Stop());
-}
+void SessionBackend::about_to_stop() { channel().try_send(SessionMessage::Stop()); }
 
 void SessionBackend::Private::add_connect(const Arc<Connection>& con) {
     auto added = m_curl_multi->add_handle(con->easy());
@@ -227,9 +212,9 @@ void SessionBackend::Private::add_connect(const Arc<Connection>& con) {
 }
 void SessionBackend::Private::remove_connect(const Arc<Connection>& con) {
     (void)m_curl_multi->remove_handle(con->easy());
-    for (usize i = 0; i < m_connect_set.len(); ++i) {
+    for (usize i {}; i < m_connect_set.len(); ++i) {
         if (! Arc<Connection>::ptr_eq(m_connect_set[i], con)) continue;
-        auto last = m_connect_set.len() - 1;
+        auto last = m_connect_set.len() - usize(1);
         if (i != last) m_connect_set[i] = rstd::move(m_connect_set[last]);
         m_connect_set.pop_back();
         return;

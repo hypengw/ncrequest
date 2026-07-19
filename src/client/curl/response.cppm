@@ -34,12 +34,12 @@ public:
             rstd::panic { "ResponseBackend::read_to_stream failed" };
         }
 
-        auto  data    = rstd::move(data_result).unwrap();
-        usize written = 0;
+        auto  data = rstd::move(data_result).unwrap();
+        usize written {};
         while (written < data.size()) {
-            auto size = writer.write_some(slice<u8>::from_raw_parts(
-                reinterpret_cast<const u8*>(data.data() + written), data.size() - written));
-            if (size == 0) {
+            auto size = writer.write_some(
+                slice<u8>::from_raw_parts(data.data() + written, data.size() - written));
+            if (size == usize()) {
                 rstd::panic { "ResponseBackend::read_to_stream made no progress" };
             }
             written += size;
@@ -87,7 +87,7 @@ private:
     Request          m_req;
 
     http::Operation m_operation;
-    bool      m_finished;
+    bool            m_finished;
 
     rstd::bytes::Bytes         m_send_buffer;
     Arc<Connection>            m_connect;

@@ -40,7 +40,7 @@ export struct HeaderErrorKind {
 #undef NCREQUEST_HEADER_ERROR_KIND_VARIANTS
 
 #define NCREQUEST_QUERY_ERROR_KIND_VARIANTS(V) \
-    V(InvalidPercentEncoding)                    \
+    V(InvalidPercentEncoding)                  \
     V(InvalidUtf8)
 
 export struct QueryErrorKind {
@@ -63,10 +63,10 @@ export struct CookieErrorKind {
 #undef NCREQUEST_COOKIE_ERROR_KIND_VARIANTS
 
 #define NCREQUEST_HTTP_PARSE_ERROR_KIND_VARIANTS(V) \
-    V(InvalidStartLine)                          \
-    V(InvalidHeaderLine)                         \
-    V(InvalidSyntax)                             \
-    V(HeaderTooLarge)                            \
+    V(InvalidStartLine)                             \
+    V(InvalidHeaderLine)                            \
+    V(InvalidSyntax)                                \
+    V(HeaderTooLarge)                               \
     V(UnexpectedEof)
 
 export struct HttpParseErrorKind {
@@ -218,8 +218,7 @@ inline auto message(const HttpParseErrorKind& kind) noexcept -> const char* {
 
 inline auto message(const QueryErrorKind& kind) noexcept -> const char* {
     switch (kind.tag()) {
-    case QueryErrorKind::Tag::InvalidPercentEncoding:
-        return "invalid percent encoding in query";
+    case QueryErrorKind::Tag::InvalidPercentEncoding: return "invalid percent encoding in query";
     case QueryErrorKind::Tag::InvalidUtf8: return "invalid UTF-8 in query";
     }
     rstd::unreachable();
@@ -244,20 +243,18 @@ namespace rstd
 {
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::UrlError>
-    : ImplBase<ncrequest::http::UrlError> {
+struct Impl<fmt::Display, ncrequest::http::UrlError> : ImplBase<ncrequest::http::UrlError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto* message = ncrequest::http::detail::message(this->self().kind());
-        return formatter.write_raw(reinterpret_cast<const u8*>(message), rstd::strlen(message));
+        return formatter.write_raw(message, rstd::strlen(message));
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::HeaderError>
-    : ImplBase<ncrequest::http::HeaderError> {
+struct Impl<fmt::Display, ncrequest::http::HeaderError> : ImplBase<ncrequest::http::HeaderError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto* message = ncrequest::http::detail::message(this->self().kind());
-        return formatter.write_raw(reinterpret_cast<const u8*>(message), rstd::strlen(message));
+        return formatter.write_raw(message, rstd::strlen(message));
     }
 };
 
@@ -266,25 +263,23 @@ struct Impl<fmt::Display, ncrequest::http::HttpParseError>
     : ImplBase<ncrequest::http::HttpParseError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto* message = ncrequest::http::detail::message(this->self().kind());
-        return formatter.write_raw(reinterpret_cast<const u8*>(message), rstd::strlen(message));
+        return formatter.write_raw(message, rstd::strlen(message));
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::QueryError>
-    : ImplBase<ncrequest::http::QueryError> {
+struct Impl<fmt::Display, ncrequest::http::QueryError> : ImplBase<ncrequest::http::QueryError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto* message = ncrequest::http::detail::message(this->self().kind());
-        return formatter.write_raw(reinterpret_cast<const u8*>(message), rstd::strlen(message));
+        return formatter.write_raw(message, rstd::strlen(message));
     }
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::CookieError>
-    : ImplBase<ncrequest::http::CookieError> {
+struct Impl<fmt::Display, ncrequest::http::CookieError> : ImplBase<ncrequest::http::CookieError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto* message = ncrequest::http::detail::message(this->self().kind());
-        return formatter.write_raw(reinterpret_cast<const u8*>(message), rstd::strlen(message));
+        return formatter.write_raw(message, rstd::strlen(message));
     }
 };
 

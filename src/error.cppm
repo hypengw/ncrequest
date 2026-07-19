@@ -12,8 +12,7 @@ export import cppstd;
 namespace ncrequest
 {
 
-export enum class ProtocolError
-{
+export enum class ProtocolError {
     InvalidStatusLine,
     InvalidHeaderLine,
     HeaderTooLarge,
@@ -21,8 +20,7 @@ export enum class ProtocolError
     UnexpectedEof,
 };
 
-export enum class ErrorKind
-{
+export enum class ErrorKind {
     Client,
     Io,
     Protocol,
@@ -31,8 +29,7 @@ export enum class ErrorKind
     InvalidState,
 };
 
-export enum class ClientBackend
-{
+export enum class ClientBackend {
     QtNetwork,
     Curl,
 };
@@ -43,17 +40,17 @@ export struct ClientError {
     std::string   message;
 };
 
-#define NCREQUEST_ERROR_VARIANTS(V)                    \
-    V(Client, (ClientError error;))                    \
-    V(Io, (rstd::io::error::Error error;))             \
+#define NCREQUEST_ERROR_VARIANTS(V)                     \
+    V(Client, (ClientError error;))                     \
+    V(Io, (rstd::io::error::Error error;))              \
     V(Protocol, (ProtocolError kind; const char* msg;)) \
     V(Unsupported, (const char* msg;))                  \
-    V(Canceled, ())                                    \
+    V(Canceled, ())                                     \
     V(InvalidState, (const char* msg;))
 
 export struct Error {
-    RSTD_ENUM_BODY_WITH_DEFAULT(
-        Error, NCREQUEST_ERROR_VARIANTS, InvalidState, "uncategorized ncrequest error")
+    RSTD_ENUM_BODY_WITH_DEFAULT(Error, NCREQUEST_ERROR_VARIANTS, InvalidState,
+                                "uncategorized ncrequest error")
 
     auto kind() const noexcept -> ErrorKind {
         switch (tag()) {
@@ -93,7 +90,7 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncreque
         switch (e.tag()) {
         case ncrequest::Error::Tag::Client: {
             auto& msg = e.as_Client().error.message;
-            return f.write_raw((u8 const*)msg.data(), msg.size());
+            return f.write_raw(msg.data(), msg.size());
         }
         case ncrequest::Error::Tag::Io: {
             return rstd::as<rstd::fmt::Display>(e.as_Io().error).fmt(f);
@@ -102,21 +99,21 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncreque
             auto& payload = e.as_Protocol();
             auto* msg = payload.msg != nullptr ? payload.msg
                                                : ncrequest::protocol_error_message(payload.kind);
-            return f.write_raw((u8 const*)msg, rstd::strlen(msg));
+            return f.write_raw(msg, rstd::strlen(msg));
         }
         case ncrequest::Error::Tag::Unsupported: {
             auto* msg = e.as_Unsupported().msg;
             if (msg == nullptr) msg = "unsupported ncrequest capability";
-            return f.write_raw((u8 const*)msg, rstd::strlen(msg));
+            return f.write_raw(msg, rstd::strlen(msg));
         }
         case ncrequest::Error::Tag::Canceled: {
             constexpr std::string_view msg { "operation canceled" };
-            return f.write_raw((u8 const*)msg.data(), msg.size());
+            return f.write_raw(msg.data(), msg.size());
         }
         case ncrequest::Error::Tag::InvalidState: {
             auto* msg = e.as_InvalidState().msg;
             if (msg == nullptr) msg = "invalid ncrequest state";
-            return f.write_raw((u8 const*)msg, rstd::strlen(msg));
+            return f.write_raw(msg, rstd::strlen(msg));
         }
         }
         return false;

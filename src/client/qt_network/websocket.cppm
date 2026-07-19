@@ -22,17 +22,16 @@ public:
     explicit WebSocketBackend(
         QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
         std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource())
-        : m_owned_socket(
-              parent == nullptr
-                  ? Some(Box<QWebSocket>::make(QString {}, QWebSocketProtocol::VersionLatest))
-                  : None<Box<QWebSocket>>()),
+        : m_owned_socket(parent == nullptr ? Some(Box<QWebSocket>::make(
+                                                 QString {}, QWebSocketProtocol::VersionLatest))
+                                           : None<Box<QWebSocket>>()),
           m_socket(parent == nullptr
                        ? (*m_owned_socket).get()
                        : new QWebSocket(QString {}, QWebSocketProtocol::VersionLatest, parent)),
           m_connected(false),
           m_connecting(false),
           m_alloc(mem_pool),
-          m_read_buffer(max_buffer_size.unwrap_or(MaxBufferSize), m_alloc) {
+          m_read_buffer(max_buffer_size.unwrap_or(MaxBufferSize).to_primitive(), m_alloc) {
         bind_socket();
     }
 
@@ -45,11 +44,11 @@ public:
     WebSocketBackend& operator=(const WebSocketBackend&) = delete;
 
     auto connect(ref<str> url) -> rstd::async::Completion<bool> {
-        auto made       = rstd::async::Completion<bool>::make();
-        auto pair       = rstd::move(made).unwrap();
-        auto completion = rstd::move(pair.get<0>());
-        auto handle     = rstd::move(pair.get<1>());
-        auto* socket    = m_socket.data();
+        auto  made       = rstd::async::Completion<bool>::make();
+        auto  pair       = rstd::move(made).unwrap();
+        auto  completion = rstd::move(pair.get<0>());
+        auto  handle     = rstd::move(pair.get<1>());
+        auto* socket     = m_socket.data();
 
         if (QCoreApplication::instance() == nullptr) {
             (void)handle.complete(false);
@@ -78,7 +77,7 @@ public:
         m_connecting      = true;
         m_connect_promise = Some(rstd::move(handle));
         socket->open(QUrl(QString::fromUtf8(reinterpret_cast<const char*>(url.data()),
-                                           static_cast<qsizetype>(url.size()))));
+                                            static_cast<qsizetype>(url.size().to_primitive()))));
         return completion;
     }
 
@@ -91,17 +90,13 @@ public:
 
     bool is_connected() const { return m_connected && m_socket != nullptr; }
 
-    void send(ref<str> message) {
-        send(slice<byte>::from_raw_parts(
-            reinterpret_cast<const byte*>(message.data()), message.size()));
-    }
+    void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
 
     void send(slice<byte> message) {
         auto* socket = m_socket.data();
         if (! m_connected || socket == nullptr) return;
-        socket->sendBinaryMessage(
-            QByteArray(reinterpret_cast<const char*>(message.as_raw_ptr()),
-                       static_cast<qsizetype>(message.len())));
+        socket->sendBinaryMessage(QByteArray(reinterpret_cast<const char*>(message.as_raw_ptr()),
+                                             static_cast<qsizetype>(message.len().to_primitive())));
     }
 
     void set_on_connected_callback(ConnectedCallback callback) {
@@ -141,19 +136,19 @@ private:
             socket, &QWebSocket::textMessageReceived, socket, [this](const QString& message) {
                 if (! m_on_message) return;
                 auto bytes = message.toUtf8();
-                m_on_message(slice<byte>::from_raw_parts(
-                                 reinterpret_cast<const byte*>(bytes.constData()),
-                                 static_cast<usize>(bytes.size())),
-                             true);
+                m_on_message(
+                    slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(bytes.constData()),
+                                                static_cast<usize>(bytes.size())),
+                    true);
             }));
 
         m_connections.append(QObject::connect(
             socket, &QWebSocket::binaryMessageReceived, socket, [this](const QByteArray& message) {
                 if (! m_on_message) return;
-                m_on_message(slice<byte>::from_raw_parts(
-                                 reinterpret_cast<const byte*>(message.constData()),
-                                 static_cast<usize>(message.size())),
-                             true);
+                m_on_message(
+                    slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(message.constData()),
+                                                static_cast<usize>(message.size())),
+                    true);
             }));
 
         m_connections.append(QObject::connect(
@@ -183,8 +178,8 @@ private:
     void emit_error(const QString& message) {
         if (! m_on_error) return;
         auto text = message.toUtf8();
-        m_on_error(ref<str>::from_raw_parts(
-            reinterpret_cast<const u8*>(text.constData()), static_cast<usize>(text.size())));
+        m_on_error(ref<str>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
+                                            static_cast<usize>(text.size())));
     }
 
     void disconnect_signals() {
@@ -201,10 +196,10 @@ private:
     bool                           m_connecting;
 
     Option<rstd::async::CompletionHandle<bool>> m_connect_promise;
-    ConnectedCallback       m_on_connected;
-    DisconnectedCallback    m_on_disconnected;
-    MessageCallback         m_on_message;
-    ErrorCallback           m_on_error;
+    ConnectedCallback                           m_on_connected;
+    DisconnectedCallback                        m_on_disconnected;
+    MessageCallback                             m_on_message;
+    ErrorCallback                               m_on_error;
 
     std::pmr::polymorphic_allocator<rstd::byte> m_alloc;
     std::pmr::vector<rstd::byte>                m_read_buffer;

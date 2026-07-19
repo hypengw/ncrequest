@@ -10,14 +10,14 @@ using rstd::string::String;
 
 export class Url : public DefaultInClass<Url, Clone> {
     struct Component {
-        usize offset  = 0;
-        usize size    = 0;
+        usize offset {};
+        usize size {};
         bool  present = false;
     };
 
 public:
-    Url() noexcept = default;
-    Url(Url&&) noexcept = default;
+    Url() noexcept                         = default;
+    Url(Url&&) noexcept                    = default;
     auto operator=(Url&&) noexcept -> Url& = default;
 
     [[nodiscard]]
@@ -63,9 +63,8 @@ public:
     auto clone() const -> Url;
 
 private:
-    Url(String source, Component scheme, Component authority, Component userinfo,
-        Component host, Component port, Component path, Component query,
-        Component fragment) noexcept;
+    Url(String source, Component scheme, Component authority, Component userinfo, Component host,
+        Component port, Component path, Component query, Component fragment) noexcept;
 
     [[nodiscard]]
     auto component(Component value) const noexcept -> Option<ref<str>>;
@@ -102,7 +101,7 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::Url> : ImplBase<ncrequest::http::Url> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto value = this->self().as_ref();
-        return formatter.write_raw(value.data(), value.size());
+        return formatter.write_raw(value.data(), value.size().to_primitive());
     }
 };
 

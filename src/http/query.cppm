@@ -45,9 +45,7 @@ export class QueryValues : public DefaultInClass<QueryValues, Iterator> {
 public:
     using Item = ref<str>;
 
-    QueryValues(const QueryPair* current,
-                const QueryPair* end,
-                const QueryPair* match) noexcept;
+    QueryValues(const QueryPair* current, const QueryPair* end, const QueryPair* match) noexcept;
 
     [[nodiscard]]
     auto next() noexcept -> Option<Item>;
@@ -60,8 +58,8 @@ private:
 
 export class QueryParams : public DefaultInClass<QueryParams, Clone> {
 public:
-    QueryParams() noexcept = default;
-    QueryParams(QueryParams&&) noexcept = default;
+    QueryParams() noexcept                                 = default;
+    QueryParams(QueryParams&&) noexcept                    = default;
     auto operator=(QueryParams&&) noexcept -> QueryParams& = default;
 
     [[nodiscard]]
@@ -101,8 +99,7 @@ public:
     auto clone() const -> QueryParams;
 
 private:
-    static auto parse_with_mode(ref<str> input, bool form)
-        -> Result<QueryParams, QueryError>;
+    static auto parse_with_mode(ref<str> input, bool form) -> Result<QueryParams, QueryError>;
 
     auto encode_with_mode(bool form) const -> String;
 
@@ -123,8 +120,7 @@ namespace rstd
 {
 
 export template<>
-struct Impl<str_::FromStr, ncrequest::http::QueryParams>
-    : ImplBase<ncrequest::http::QueryParams> {
+struct Impl<str_::FromStr, ncrequest::http::QueryParams> : ImplBase<ncrequest::http::QueryParams> {
     using Err = ncrequest::http::QueryError;
 
     static auto from_str(ref<str> input) -> Result<ncrequest::http::QueryParams, Err> {
@@ -133,11 +129,11 @@ struct Impl<str_::FromStr, ncrequest::http::QueryParams>
 };
 
 export template<>
-struct Impl<fmt::Display, ncrequest::http::QueryParams>
-    : ImplBase<ncrequest::http::QueryParams> {
+struct Impl<fmt::Display, ncrequest::http::QueryParams> : ImplBase<ncrequest::http::QueryParams> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode_query();
-        return formatter.write_raw(encoded.as_raw_ptr(), encoded.size());
+        auto bytes   = str_::as_bytes(encoded.as_str());
+        return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
 

@@ -29,12 +29,11 @@ public:
 
     auto code() const -> rstd::Option<i32> { return Backend::code(); }
 
-    auto set_cookies() const
-        -> rstd::Result<rstd::vec::Vec<http::SetCookie>, http::CookieError> {
+    auto set_cookies() const -> rstd::Result<rstd::vec::Vec<http::SetCookie>, http::CookieError> {
         auto cookies = rstd::vec::Vec<http::SetCookie>::make();
         auto values  = this->header().values("set-cookie");
         for (auto value = values.next(); value.is_some(); value = values.next()) {
-            auto parsed = http::SetCookie::parse_bytes((**value).as_bytes());
+            auto parsed = http::SetCookie::parse_bytes(rstd::as_bytes((**value).as_bytes()));
             if (parsed.is_err()) {
                 return rstd::Err(rstd::move(parsed).unwrap_err());
             }
@@ -52,7 +51,7 @@ public:
 
         auto        data = rstd::move(data_result).unwrap();
         std::string out;
-        out.assign(reinterpret_cast<const char*>(data.data()), data.size());
+        out.assign(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
         co_return Result<std::string>(Ok(rstd::move(out)));
     }
 };

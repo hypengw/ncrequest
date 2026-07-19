@@ -9,12 +9,14 @@ namespace
 {
 
 constexpr auto ascii_lower(u8 value) noexcept -> u8 {
-    if (value >= 'A' && value <= 'Z') return value + ('a' - 'A');
+    auto raw = value.to_primitive();
+    if (raw >= 'A' && raw <= 'Z') return u8(raw + ('a' - 'A'));
     return value;
 }
 
 constexpr auto valid_value_byte(u8 value) noexcept -> bool {
-    return value == '\t' || (value >= 0x20 && value <= 0x7e) || value >= 0x80;
+    auto raw = value.to_primitive();
+    return raw == '\t' || (raw >= 0x20 && raw <= 0x7e) || raw >= 0x80;
 }
 
 } // namespace
@@ -22,10 +24,12 @@ constexpr auto valid_value_byte(u8 value) noexcept -> bool {
 HeaderName::HeaderName(String value) noexcept: value_(rstd::move(value)) {}
 
 auto HeaderName::parse(ref<str> input) -> rstd::Result<HeaderName, HeaderError> {
-    if (input.size() == 0) return Err(HeaderError { HeaderErrorKind::InvalidName(), 0 });
+    if (input.size() == usize()) {
+        return Err(HeaderError { HeaderErrorKind::InvalidName(), usize() });
+    }
 
-    for (usize offset = 0; offset < input.size(); ++offset) {
-        if (! parser::ascii::tchar(input.data()[offset])) {
+    for (usize offset {}; offset < input.size(); ++offset) {
+        if (! parser::ascii::tchar(input[offset])) {
             return Err(HeaderError { HeaderErrorKind::InvalidName(), offset });
         }
     }
@@ -37,8 +41,8 @@ auto HeaderName::as_ref() const noexcept -> ref<str> { return value_.as_str(); }
 auto HeaderName::equals(ref<str> other) const noexcept -> bool {
     auto self = as_ref();
     if (self.size() != other.size()) return false;
-    for (usize offset = 0; offset < self.size(); ++offset) {
-        if (ascii_lower(self.data()[offset]) != ascii_lower(other.data()[offset])) return false;
+    for (usize offset {}; offset < self.size(); ++offset) {
+        if (ascii_lower(self[offset]) != ascii_lower(other[offset])) return false;
     }
     return true;
 }
@@ -51,18 +55,17 @@ auto HeaderValue::parse(ref<str> input) -> rstd::Result<HeaderValue, HeaderError
     return from_bytes(rstd::str_::as_bytes(input));
 }
 
-auto HeaderValue::from_bytes(slice<u8> input) -> rstd::Result<HeaderValue, HeaderError> {
-    auto value = Vec<u8>::with_capacity(input.len());
-    for (usize offset = 0; offset < input.len(); ++offset) {
-        auto byte = input[offset];
-        if (! valid_value_byte(byte)) {
-            auto kind = byte == '\r' || byte == '\n' ? HeaderErrorKind::InvalidLineBreak()
-                                                     : HeaderErrorKind::InvalidValue();
+auto HeaderValue::from_bytes(slice<byte> input) -> rstd::Result<HeaderValue, HeaderError> {
+    for (usize offset {}; offset < input.len(); ++offset) {
+        auto value = rstd::byte_value(input[offset]);
+        if (! valid_value_byte(value)) {
+            auto raw  = value.to_primitive();
+            auto kind = raw == '\r' || raw == '\n' ? HeaderErrorKind::InvalidLineBreak()
+                                                   : HeaderErrorKind::InvalidValue();
             return Err(HeaderError { rstd::move(kind), offset });
         }
-        value.push(rstd::move(byte));
     }
-    return Ok(HeaderValue { rstd::move(value) });
+    return Ok(HeaderValue { Vec<u8>::copy_from_bytes(input) });
 }
 
 auto HeaderValue::as_bytes() const noexcept -> slice<u8> { return value_.as_slice(); }
@@ -161,8 +164,8 @@ auto Header::contains(ref<str> name) const noexcept -> bool { return get(name).i
 auto Header::has_field(ref<str> name) const noexcept -> bool { return contains(name); }
 
 auto Header::remove(ref<str> name) noexcept -> usize {
-    usize removed = 0;
-    for (usize offset = 0; offset < fields_.len();) {
+    usize removed {};
+    for (usize offset {}; offset < fields_.len();) {
         if (fields_[offset].name().equals(name)) {
             fields_.remove(offset);
             ++removed;
@@ -182,7 +185,7 @@ auto Header::iter() const noexcept -> HeaderIter {
 }
 
 auto Header::clone() const -> Header {
-    auto result = Header {};
+    auto result    = Header {};
     result.fields_ = fields_.clone();
     return result;
 }

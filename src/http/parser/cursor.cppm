@@ -10,27 +10,27 @@ export namespace ncrequest::http::parser
 using namespace rstd::prelude;
 
 #define NCREQUEST_PARSE_EXPECTATION_VARIANTS(V) \
-    V(Byte)                                      \
-    V(Literal)                                   \
-    V(AsciiClass)                                \
-    V(PercentEncoding)                           \
-    V(Scheme)                                    \
-    V(Host)                                      \
-    V(IpLiteral)                                 \
-    V(Ipv4Address)                               \
-    V(Ipv6Address)                               \
-    V(Port)                                      \
-    V(Path)                                      \
-    V(Query)                                     \
-    V(Fragment)                                  \
-    V(Method)                                    \
-    V(RequestTarget)                             \
-    V(HttpVersion)                               \
-    V(StatusCode)                                \
-    V(ReasonPhrase)                              \
-    V(HeaderName)                                \
-    V(HeaderValue)                               \
-    V(CrLf)                                      \
+    V(Byte)                                     \
+    V(Literal)                                  \
+    V(AsciiClass)                               \
+    V(PercentEncoding)                          \
+    V(Scheme)                                   \
+    V(Host)                                     \
+    V(IpLiteral)                                \
+    V(Ipv4Address)                              \
+    V(Ipv6Address)                              \
+    V(Port)                                     \
+    V(Path)                                     \
+    V(Query)                                    \
+    V(Fragment)                                 \
+    V(Method)                                   \
+    V(RequestTarget)                            \
+    V(HttpVersion)                              \
+    V(StatusCode)                               \
+    V(ReasonPhrase)                             \
+    V(HeaderName)                               \
+    V(HeaderValue)                              \
+    V(CrLf)                                     \
     V(End)
 
 struct Expectation {
@@ -40,8 +40,8 @@ struct Expectation {
 #undef NCREQUEST_PARSE_EXPECTATION_VARIANTS
 
 struct Span {
-    usize begin = 0;
-    usize end   = 0;
+    usize begin {};
+    usize end {};
 
     [[nodiscard]]
     constexpr auto size() const noexcept -> usize {
@@ -55,7 +55,7 @@ struct Span {
 };
 
 struct Mark {
-    usize offset = 0;
+    usize offset {};
 };
 
 class ParseFailure {
@@ -104,13 +104,12 @@ using ParseResult = Result<T, ParseFailure>;
 
 class Cursor {
 public:
-    explicit constexpr Cursor(ref<str> input) noexcept
-        : input_(rstd::slice<u8>::from_raw_parts(input.data(), input.size())) {}
+    explicit constexpr Cursor(ref<str> input) noexcept: input_(rstd::str_::as_bytes(input)) {}
 
-    explicit constexpr Cursor(rstd::slice<u8> input) noexcept: input_(input) {}
+    explicit constexpr Cursor(rstd::slice<byte> input) noexcept: input_(input) {}
 
     [[nodiscard]]
-    constexpr auto input() const noexcept -> rstd::slice<u8> {
+    constexpr auto input() const noexcept -> rstd::slice<byte> {
         return input_;
     }
 
@@ -132,7 +131,7 @@ public:
     [[nodiscard]]
     constexpr auto peek() const noexcept -> Option<u8> {
         if (at_end()) return None();
-        auto value = input_[offset_];
+        auto value = rstd::byte_value(input_[offset_]);
         return Some(rstd::move(value));
     }
 
@@ -155,13 +154,14 @@ public:
     }
 
     [[nodiscard]]
-    constexpr auto slice(Span span) const noexcept -> rstd::slice<u8> {
-        return rstd::slice<u8>::from_raw_parts(input_.as_raw_ptr() + span.begin, span.size());
+    constexpr auto slice(Span span) const noexcept -> rstd::slice<byte> {
+        return rstd::slice<byte>::from_raw_parts(input_.as_raw_ptr() + span.begin.to_primitive(),
+                                                 span.size());
     }
 
 private:
-    rstd::slice<u8> input_;
-    usize    offset_ = 0;
+    rstd::slice<byte> input_;
+    usize             offset_ {};
 };
 
 using Predicate = bool (*)(u8) noexcept;
@@ -186,7 +186,7 @@ constexpr auto take_byte(Cursor& cursor, u8 expected) noexcept -> ParseResult<Sp
     if (*next != expected) {
         return Err(ParseFailure { Expectation::Byte(), cursor.offset() });
     }
-    cursor.advance(1);
+    cursor.advance(usize(1));
     return Ok(cursor.span_from(mark));
 }
 
@@ -200,7 +200,7 @@ constexpr auto take_if(Cursor& cursor, Predicate predicate) noexcept -> ParseRes
     if (! predicate(*next)) {
         return Err(ParseFailure { Expectation::AsciiClass(), cursor.offset() });
     }
-    cursor.advance(1);
+    cursor.advance(usize(1));
     return Ok(cursor.span_from(mark));
 }
 
@@ -209,7 +209,7 @@ constexpr auto take_while(Cursor& cursor, Predicate predicate) noexcept -> Span 
     auto mark = cursor.mark();
     while (auto next = cursor.peek()) {
         if (! predicate(*next)) break;
-        cursor.advance(1);
+        cursor.advance(usize(1));
     }
     return cursor.span_from(mark);
 }
@@ -218,24 +218,23 @@ constexpr auto take_while(Cursor& cursor, Predicate predicate) noexcept -> Span 
 constexpr auto take_while1(Cursor& cursor, Predicate predicate) noexcept -> ParseResult<Span> {
     auto span = take_while(cursor, predicate);
     if (! span.is_empty()) return Ok(span);
-    return Err(ParseFailure { Expectation::AsciiClass(), cursor.offset(), false,
-                              cursor.at_end() });
+    return Err(ParseFailure { Expectation::AsciiClass(), cursor.offset(), false, cursor.at_end() });
 }
 
 [[nodiscard]]
 inline auto take_literal(Cursor& cursor, ref<str> literal) noexcept -> ParseResult<Span> {
     auto mark = cursor.mark();
-    for (usize i = 0; i < literal.size(); ++i) {
+    for (usize i {}; i < literal.size(); ++i) {
         auto next = cursor.peek();
         if (next.is_none()) {
             cursor.restore(mark);
             return Err(ParseFailure { Expectation::Literal(), mark.offset + i, false, true });
         }
-        if (*next != literal.data()[i]) {
+        if (*next != rstd::byte_value(literal.data()[i.to_primitive()])) {
             cursor.restore(mark);
             return Err(ParseFailure { Expectation::Literal(), mark.offset + i });
         }
-        cursor.advance(1);
+        cursor.advance(usize(1));
     }
     return Ok(cursor.span_from(mark));
 }
@@ -275,8 +274,7 @@ constexpr auto attempt(Cursor& cursor, Rule rule) -> ParseResult<RuleValue<Rule>
 
 template<typename Rule>
 [[nodiscard]]
-constexpr auto optional(Cursor& cursor, Rule rule)
-    -> ParseResult<Option<RuleValue<Rule>>> {
+constexpr auto optional(Cursor& cursor, Rule rule) -> ParseResult<Option<RuleValue<Rule>>> {
     auto mark   = cursor.mark();
     auto result = rule(cursor);
     if (result.is_ok()) {
@@ -292,8 +290,7 @@ constexpr auto optional(Cursor& cursor, Rule rule)
 
 template<typename First, typename Second>
 [[nodiscard]]
-constexpr auto sequence(Cursor& cursor, First first, Second second)
-    -> ParseResult<Span> {
+constexpr auto sequence(Cursor& cursor, First first, Second second) -> ParseResult<Span> {
     auto begin = cursor.mark();
     auto left  = first(cursor);
     if (left.is_err()) {
@@ -313,10 +310,10 @@ constexpr auto sequence(Cursor& cursor, First first, Second second)
 
 template<typename Rule>
 [[nodiscard]]
-constexpr auto repeat(Cursor& cursor, Rule rule, usize minimum = 0,
-                      usize maximum = static_cast<usize>(-1)) -> ParseResult<Span> {
-    auto begin = cursor.mark();
-    usize count = 0;
+constexpr auto repeat(Cursor& cursor, Rule rule, usize minimum = usize(),
+                      usize maximum = usize::MAX) -> ParseResult<Span> {
+    auto  begin = cursor.mark();
+    usize count {};
     while (count < maximum) {
         auto item_begin = cursor.mark();
         auto item       = rule(cursor);
@@ -343,7 +340,7 @@ template<typename Open, typename Inner, typename Close>
 [[nodiscard]]
 constexpr auto delimited(Cursor& cursor, Open open, Inner inner, Close close)
     -> ParseResult<RuleValue<Inner>> {
-    auto begin = cursor.mark();
+    auto begin  = cursor.mark();
     auto opened = open(cursor);
     if (opened.is_err()) {
         auto error = rstd::move(opened).unwrap_err();
@@ -369,8 +366,7 @@ constexpr auto delimited(Cursor& cursor, Open open, Inner inner, Close close)
 
 template<typename First, typename Second>
 [[nodiscard]]
-constexpr auto choice(Cursor& cursor, First first, Second second)
-    -> decltype(first(cursor)) {
+constexpr auto choice(Cursor& cursor, First first, Second second) -> decltype(first(cursor)) {
     auto first_result = attempt(cursor, first);
     if (first_result.is_ok()) return first_result;
 

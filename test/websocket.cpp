@@ -3,9 +3,11 @@
 #include <future>
 #include <gtest/gtest.h>
 #include <string>
+#include <string_view>
 #include <thread>
 
 import ncrequest;
+import rstd.cppstd;
 
 namespace
 {
@@ -63,17 +65,18 @@ TEST(websocket, LocalEchoText) {
         [&message_promise, &got_message](rstd::slice<rstd::byte> data, bool) {
             if (got_message.exchange(true)) return;
 
-            std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()), data.len());
+            std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
+                            data.len().to_primitive());
             message_promise.set_value(std::move(out));
         });
     client.set_on_error_callback([&error_promise, &got_error](rstd::ref<rstd::str> data) {
         if (got_error.exchange(true)) return;
 
-        std::string out(reinterpret_cast<const char*>(data.data()), data.size());
+        std::string out(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
         error_promise.set_value(std::move(out));
     });
 
-    auto connected = rstd::async::block_on(client.connect(url));
+    auto connected = rstd::async::block_on(client.connect(rstd::cppstd::as_str(url)));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());

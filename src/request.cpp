@@ -25,9 +25,10 @@ auto ncrequest::global_init(std::pmr::memory_resource* resource) -> Result<rstd:
 }
 
 Request::Request() noexcept
-    : m_opts { req_opt::Timeout { .low_speed = 30, .connect_timeout = 180, .transfer_timeout = 0 },
+    : m_opts { req_opt::Timeout {
+                   .low_speed = i64(30), .connect_timeout = i64(180), .transfer_timeout = i64() },
                req_opt::Proxy {},
-               req_opt::Tcp { .keepalive = false, .keepidle = 120, .keepintvl = 60 },
+               req_opt::Tcp { .keepalive = false, .keepidle = i64(120), .keepintvl = i64(60) },
                req_opt::SSL { .verify_certificate = true },
                req_opt::Read {},
                req_opt::Share {} } {}
@@ -36,21 +37,17 @@ Request::~Request() noexcept {}
 Request::Request(Request&&) noexcept            = default;
 Request& Request::operator=(Request&&) noexcept = default;
 
-auto Request::from_url(rstd::ref<rstd::str> input)
-    -> rstd::Result<Request, http::UrlError> {
+auto Request::from_url(rstd::ref<rstd::str> input) -> rstd::Result<Request, http::UrlError> {
     auto parsed = http::Url::parse_http(input);
     if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
     return rstd::Ok(Request { rstd::move(parsed).unwrap() });
 }
 
-std::string_view Request::url() const {
-    return rstd::cppstd::as_string_view(m_url.as_ref());
-}
+std::string_view Request::url() const { return rstd::cppstd::as_string_view(m_url.as_ref()); }
 
 auto Request::url_info() const -> const http::Url& { return m_url; }
 
-auto Request::try_set_url(rstd::ref<rstd::str> input)
-    -> rstd::Result<rstd::empty, http::UrlError> {
+auto Request::try_set_url(rstd::ref<rstd::str> input) -> rstd::Result<rstd::empty, http::UrlError> {
     auto parsed = http::Url::parse_http(input);
     if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
     m_url = rstd::move(parsed).unwrap();
@@ -58,10 +55,10 @@ auto Request::try_set_url(rstd::ref<rstd::str> input)
 }
 
 std::string Request::header(std::string_view name) const {
-    auto value = m_header.get(name);
+    auto value = m_header.get(rstd::cppstd::as_str(name));
     if (value.is_none()) return {};
     auto bytes = (**value).as_bytes();
-    return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len() };
+    return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len().to_primitive() };
 }
 
 auto Request::header() const -> const http::Header& { return m_header; }
@@ -93,24 +90,12 @@ void Request::set_opt(const http::Header& header) { m_header = header.clone(); }
 
 void Request::set_opt(RequestOpt&& opt) {
     RSTD_MATCH(rstd::move(opt)) {
-        RSTD_CASE(Timeout, value) {
-            m_opts.get<req_opt::Timeout>() = rstd::move(value);
-        }
-        RSTD_CASE(Proxy, value) {
-            m_opts.get<req_opt::Proxy>() = rstd::move(value);
-        }
-        RSTD_CASE(Tcp, value) {
-            m_opts.get<req_opt::Tcp>() = rstd::move(value);
-        }
-        RSTD_CASE(SSL, value) {
-            m_opts.get<req_opt::SSL>() = rstd::move(value);
-        }
-        RSTD_CASE(Read, value) {
-            m_opts.get<req_opt::Read>() = rstd::move(value);
-        }
-        RSTD_CASE(Share, value) {
-            m_opts.get<req_opt::Share>() = rstd::move(value);
-        }
+        RSTD_CASE(Timeout, value) { m_opts.get<req_opt::Timeout>() = rstd::move(value); }
+        RSTD_CASE(Proxy, value) { m_opts.get<req_opt::Proxy>() = rstd::move(value); }
+        RSTD_CASE(Tcp, value) { m_opts.get<req_opt::Tcp>() = rstd::move(value); }
+        RSTD_CASE(SSL, value) { m_opts.get<req_opt::SSL>() = rstd::move(value); }
+        RSTD_CASE(Read, value) { m_opts.get<req_opt::Read>() = rstd::move(value); }
+        RSTD_CASE(Share, value) { m_opts.get<req_opt::Share>() = rstd::move(value); }
     }
 }
 
