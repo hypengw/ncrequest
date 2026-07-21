@@ -12,17 +12,9 @@ using namespace rstd::prelude;
 using rstd::string::String;
 using rstd::vec::Vec;
 
-#define NCREQUEST_OPERATION_VARIANTS(V) \
-    V(Get)                              \
-    V(Post)                             \
-    V(Delete)                           \
-    V(Head)
-
 export struct Operation {
-    RSTD_TAG_ENUM_BODY(Operation, NCREQUEST_OPERATION_VARIANTS)
+    RSTD_ENUM(Operation, (Get), (Post), (Delete), (Head))
 };
-
-#undef NCREQUEST_OPERATION_VARIANTS
 
 export class Method : public DefaultInClass<Method, Clone> {
 public:
@@ -129,18 +121,12 @@ private:
     Option<HeaderValue> reason_;
 };
 
-#define NCREQUEST_START_LINE_VARIANTS(V) \
-    V(Request, (RequestLine value;))     \
-    V(Response, (StatusLine value;))
-
 export class StartLine : public DefaultInClass<StartLine, Clone> {
-    RSTD_ENUM_BODY(StartLine, NCREQUEST_START_LINE_VARIANTS)
+    RSTD_ENUM(StartLine, (Request, (RequestLine value;)), (Response, (StatusLine value;)))
 
     [[nodiscard]]
     auto clone() const -> StartLine;
 };
-
-#undef NCREQUEST_START_LINE_VARIANTS
 
 export class MessageHead : public DefaultInClass<MessageHead, Clone> {
 public:
@@ -169,15 +155,9 @@ private:
     Header    headers_;
 };
 
-#define NCREQUEST_HTTP1_HEAD_EVENT_VARIANTS(V) \
-    V(NeedMore, ())                            \
-    V(Complete, (MessageHead head; usize consumed;))
-
 export class Http1HeadEvent {
-    RSTD_ENUM_BODY(Http1HeadEvent, NCREQUEST_HTTP1_HEAD_EVENT_VARIANTS)
+    RSTD_ENUM(Http1HeadEvent, (NeedMore), (Complete, (MessageHead head; usize consumed;)))
 };
-
-#undef NCREQUEST_HTTP1_HEAD_EVENT_VARIANTS
 
 export class Http1HeadParser {
 public:
@@ -202,15 +182,9 @@ private:
     bool              complete_ = false;
 };
 
-#define NCREQUEST_HTTP1_FIELD_SECTION_EVENT_VARIANTS(V) \
-    V(NeedMore, ())                                     \
-    V(Complete, (Header fields; usize consumed;))
-
 export class Http1FieldSectionEvent {
-    RSTD_ENUM_BODY(Http1FieldSectionEvent, NCREQUEST_HTTP1_FIELD_SECTION_EVENT_VARIANTS)
+    RSTD_ENUM(Http1FieldSectionEvent, (NeedMore), (Complete, (Header fields; usize consumed;)))
 };
-
-#undef NCREQUEST_HTTP1_FIELD_SECTION_EVENT_VARIANTS
 
 export class Http1FieldSectionParser {
 public:

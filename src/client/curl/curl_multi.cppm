@@ -21,15 +21,9 @@ export struct CurlOptions {
     bool enable_http_multiplex { false };
 };
 
-#define NCREQUEST_CURL_MULTI_ERROR_VARIANTS(V) \
-    V(Easy, (CURLcode code;))                  \
-    V(Multi, (CURLMcode code;))
-
 export struct CurlMultiError {
-    RSTD_ENUM_BODY(CurlMultiError, NCREQUEST_CURL_MULTI_ERROR_VARIANTS)
+    RSTD_ENUM(CurlMultiError, (Easy, (CURLcode code;)), (Multi, (CURLMcode code;)))
 };
-
-#undef NCREQUEST_CURL_MULTI_ERROR_VARIANTS
 
 export using CurlMultiResult = rstd::Result<empty, CurlMultiError>;
 

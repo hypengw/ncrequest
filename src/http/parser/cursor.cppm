@@ -9,35 +9,12 @@ export namespace ncrequest::http::parser
 
 using namespace rstd::prelude;
 
-#define NCREQUEST_PARSE_EXPECTATION_VARIANTS(V) \
-    V(Byte)                                     \
-    V(Literal)                                  \
-    V(AsciiClass)                               \
-    V(PercentEncoding)                          \
-    V(Scheme)                                   \
-    V(Host)                                     \
-    V(IpLiteral)                                \
-    V(Ipv4Address)                              \
-    V(Ipv6Address)                              \
-    V(Port)                                     \
-    V(Path)                                     \
-    V(Query)                                    \
-    V(Fragment)                                 \
-    V(Method)                                   \
-    V(RequestTarget)                            \
-    V(HttpVersion)                              \
-    V(StatusCode)                               \
-    V(ReasonPhrase)                             \
-    V(HeaderName)                               \
-    V(HeaderValue)                              \
-    V(CrLf)                                     \
-    V(End)
-
 struct Expectation {
-    RSTD_TAG_ENUM_BODY(Expectation, NCREQUEST_PARSE_EXPECTATION_VARIANTS)
+    RSTD_ENUM(Expectation, (Byte), (Literal), (AsciiClass), (PercentEncoding), (Scheme), (Host),
+              (IpLiteral), (Ipv4Address), (Ipv6Address), (Port), (Path), (Query), (Fragment),
+              (Method), (RequestTarget), (HttpVersion), (StatusCode), (ReasonPhrase), (HeaderName),
+              (HeaderValue), (CrLf), (End))
 };
-
-#undef NCREQUEST_PARSE_EXPECTATION_VARIANTS
 
 struct Span {
     usize begin {};

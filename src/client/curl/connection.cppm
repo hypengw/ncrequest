@@ -55,13 +55,10 @@ enum class Action
     UnPauseSend,
 };
 
-#define NCREQUEST_SESSION_MESSAGE_VARIANTS(V) \
-    V(Stop, ())                               \
-    V(ConnectAction, (Arc<Connection> con; Action action;))
-
-RSTD_ENUM_WITH_DEFAULT(Message, NCREQUEST_SESSION_MESSAGE_VARIANTS, Stop)
-
-#undef NCREQUEST_SESSION_MESSAGE_VARIANTS
+class Message final {
+    RSTD_ENUM_DEFAULT(Message, (Stop), (Stop),
+                      (ConnectAction, (Arc<Connection> con; Action action;)))
+};
 } // namespace session_message
 
 export using SessionMessage = session_message::Message;

@@ -40,17 +40,12 @@ export struct ClientError {
     std::string   message;
 };
 
-#define NCREQUEST_ERROR_VARIANTS(V)                     \
-    V(Client, (ClientError error;))                     \
-    V(Io, (rstd::io::error::Error error;))              \
-    V(Protocol, (ProtocolError kind; const char* msg;)) \
-    V(Unsupported, (const char* msg;))                  \
-    V(Canceled, ())                                     \
-    V(InvalidState, (const char* msg;))
-
 export struct Error {
-    RSTD_ENUM_BODY_WITH_DEFAULT(Error, NCREQUEST_ERROR_VARIANTS, InvalidState,
-                                "uncategorized ncrequest error")
+    RSTD_ENUM_DEFAULT(Error, (InvalidState, "uncategorized ncrequest error"),
+                      (Client, (ClientError error;)), (Io, (rstd::io::error::Error error;)),
+                      (Protocol, (ProtocolError kind; const char* msg;)),
+                      (Unsupported, (const char* msg;)), (Canceled),
+                      (InvalidState, (const char* msg;)))
 
     auto kind() const noexcept -> ErrorKind {
         switch (tag()) {
@@ -67,8 +62,6 @@ export struct Error {
 
 export template<typename T>
 using Result = rstd::Result<T, Error>;
-
-#undef NCREQUEST_ERROR_VARIANTS
 
 constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char* {
     switch (kind) {

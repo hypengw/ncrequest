@@ -61,17 +61,10 @@ auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor>
     return Some(rstd::async::AnyExecutor::from_executor(QtExecutor { target }));
 }
 
-#define NCREQUEST_QT_BODY_EVENT_VARIANTS(V) \
-    V(Header, (http::MessageHead value;))   \
-    V(Chunk, (rstd::bytes::Bytes value;))   \
-    V(Finished, ())                         \
-    V(Failed, (Error value;))
-
 struct BodyEvent {
-    RSTD_ENUM_BODY(BodyEvent, NCREQUEST_QT_BODY_EVENT_VARIANTS)
+    RSTD_ENUM(BodyEvent, (Header, (http::MessageHead value;)), (Chunk, (rstd::bytes::Bytes value;)),
+              (Finished), (Failed, (Error value;)))
 };
-
-#undef NCREQUEST_QT_BODY_EVENT_VARIANTS
 
 struct DirectReplyState {
     QPointer<QNetworkReply> reply;

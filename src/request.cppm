@@ -3,8 +3,8 @@ module;
 #define REQ_OPT_PROP(Type, Name, Init)    \
     Type Name Init;                       \
     auto&     set_##Name(const Type& v) { \
-        Name = v;                     \
-        return *this;                 \
+        Name = v;                         \
+        return *this;                     \
     }
 
 export module ncrequest:request;
@@ -68,32 +68,22 @@ export struct Share : rstd::DefaultInClass<Share, rstd::clone::Clone> {
 
 } // namespace req_opt
 
-export using RequestOpts =
-    rstd::tuple<req_opt::Timeout, req_opt::Proxy, req_opt::Tcp, req_opt::SSL, req_opt::Read,
-                req_opt::Share>;
+export using RequestOpts = rstd::tuple<req_opt::Timeout, req_opt::Proxy, req_opt::Tcp, req_opt::SSL,
+                                       req_opt::Read, req_opt::Share>;
 
 export template<typename T>
-concept RequestOption =
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Timeout> ||
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Proxy> ||
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Tcp> ||
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::SSL> ||
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Read> ||
-    rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Share>;
-
-#define NCREQUEST_REQUEST_OPT_VARIANTS(V)  \
-    V(Timeout, (req_opt::Timeout value;))  \
-    V(Proxy, (req_opt::Proxy value;))      \
-    V(Tcp, (req_opt::Tcp value;))          \
-    V(SSL, (req_opt::SSL value;))          \
-    V(Read, (req_opt::Read value;))        \
-    V(Share, (req_opt::Share value;))
+concept RequestOption = rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Timeout> ||
+                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Proxy> ||
+                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Tcp> ||
+                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::SSL> ||
+                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Read> ||
+                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Share>;
 
 export struct RequestOpt {
-    RSTD_ENUM_BODY(RequestOpt, NCREQUEST_REQUEST_OPT_VARIANTS)
+    RSTD_ENUM(RequestOpt, (Timeout, (req_opt::Timeout value;)), (Proxy, (req_opt::Proxy value;)),
+              (Tcp, (req_opt::Tcp value;)), (SSL, (req_opt::SSL value;)),
+              (Read, (req_opt::Read value;)), (Share, (req_opt::Share value;)))
 };
-
-#undef NCREQUEST_REQUEST_OPT_VARIANTS
 
 export auto global_init(std::pmr::memory_resource* resource = nullptr) -> Result<rstd::empty>;
 } // namespace ncrequest
@@ -109,8 +99,7 @@ public:
     Request& operator=(Request&&) noexcept;
 
     [[nodiscard]]
-    static auto from_url(rstd::ref<rstd::str>)
-        -> rstd::Result<Request, http::UrlError>;
+    static auto from_url(rstd::ref<rstd::str>) -> rstd::Result<Request, http::UrlError>;
 
     auto url() const -> std::string_view;
     auto url_info() const -> const http::Url&;
@@ -147,7 +136,7 @@ public:
 private:
     http::Url    m_url;
     http::Header m_header;
-    RequestOpts m_opts;
+    RequestOpts  m_opts;
 };
 
 } // namespace ncrequest

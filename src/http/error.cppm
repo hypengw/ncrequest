@@ -9,71 +9,29 @@ namespace ncrequest::http
 
 using namespace rstd::prelude;
 
-#define NCREQUEST_URL_ERROR_KIND_VARIANTS(V) \
-    V(InvalidSyntax)                         \
-    V(InvalidCharacter)                      \
-    V(InvalidPercentEncoding)                \
-    V(InvalidIpAddress)                      \
-    V(InvalidPort)                           \
-    V(UnexpectedEnd)                         \
-    V(MissingScheme)                         \
-    V(UnsupportedScheme)                     \
-    V(MissingAuthority)                      \
-    V(MissingHost)
-
 export struct UrlErrorKind {
-    RSTD_TAG_ENUM_BODY(UrlErrorKind, NCREQUEST_URL_ERROR_KIND_VARIANTS)
+    RSTD_ENUM(UrlErrorKind, (InvalidSyntax), (InvalidCharacter), (InvalidPercentEncoding),
+              (InvalidIpAddress), (InvalidPort), (UnexpectedEnd), (MissingScheme),
+              (UnsupportedScheme), (MissingAuthority), (MissingHost))
 };
-
-#undef NCREQUEST_URL_ERROR_KIND_VARIANTS
-
-#define NCREQUEST_HEADER_ERROR_KIND_VARIANTS(V) \
-    V(InvalidName)                              \
-    V(InvalidValue)                             \
-    V(InvalidLineBreak)                         \
-    V(InvalidSyntax)
 
 export struct HeaderErrorKind {
-    RSTD_TAG_ENUM_BODY(HeaderErrorKind, NCREQUEST_HEADER_ERROR_KIND_VARIANTS)
+    RSTD_ENUM(HeaderErrorKind, (InvalidName), (InvalidValue), (InvalidLineBreak), (InvalidSyntax))
 };
-
-#undef NCREQUEST_HEADER_ERROR_KIND_VARIANTS
-
-#define NCREQUEST_QUERY_ERROR_KIND_VARIANTS(V) \
-    V(InvalidPercentEncoding)                  \
-    V(InvalidUtf8)
 
 export struct QueryErrorKind {
-    RSTD_TAG_ENUM_BODY(QueryErrorKind, NCREQUEST_QUERY_ERROR_KIND_VARIANTS)
+    RSTD_ENUM(QueryErrorKind, (InvalidPercentEncoding), (InvalidUtf8))
 };
-
-#undef NCREQUEST_QUERY_ERROR_KIND_VARIANTS
-
-#define NCREQUEST_COOKIE_ERROR_KIND_VARIANTS(V) \
-    V(EmptyName)                                \
-    V(InvalidName)                              \
-    V(InvalidValue)                             \
-    V(InvalidAttribute)                         \
-    V(InvalidSyntax)
 
 export struct CookieErrorKind {
-    RSTD_TAG_ENUM_BODY(CookieErrorKind, NCREQUEST_COOKIE_ERROR_KIND_VARIANTS)
+    RSTD_ENUM(CookieErrorKind, (EmptyName), (InvalidName), (InvalidValue), (InvalidAttribute),
+              (InvalidSyntax))
 };
-
-#undef NCREQUEST_COOKIE_ERROR_KIND_VARIANTS
-
-#define NCREQUEST_HTTP_PARSE_ERROR_KIND_VARIANTS(V) \
-    V(InvalidStartLine)                             \
-    V(InvalidHeaderLine)                            \
-    V(InvalidSyntax)                                \
-    V(HeaderTooLarge)                               \
-    V(UnexpectedEof)
 
 export struct HttpParseErrorKind {
-    RSTD_TAG_ENUM_BODY(HttpParseErrorKind, NCREQUEST_HTTP_PARSE_ERROR_KIND_VARIANTS)
+    RSTD_ENUM(HttpParseErrorKind, (InvalidStartLine), (InvalidHeaderLine), (InvalidSyntax),
+              (HeaderTooLarge), (UnexpectedEof))
 };
-
-#undef NCREQUEST_HTTP_PARSE_ERROR_KIND_VARIANTS
 
 export class UrlError {
 public:

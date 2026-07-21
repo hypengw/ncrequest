@@ -25,15 +25,9 @@ struct StatusLine {
     Span reason;
 };
 
-#define NCREQUEST_HTTP1_START_LINE_VARIANTS(V) \
-    V(Request, (RequestLine value;))           \
-    V(Response, (StatusLine value;))
-
 struct StartLine {
-    RSTD_ENUM_BODY(StartLine, NCREQUEST_HTTP1_START_LINE_VARIANTS)
+    RSTD_ENUM(StartLine, (Request, (RequestLine value;)), (Response, (StatusLine value;)))
 };
-
-#undef NCREQUEST_HTTP1_START_LINE_VARIANTS
 
 struct FieldLine {
     Span name;

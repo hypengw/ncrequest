@@ -31,30 +31,15 @@ class WebSocketBackend::Impl {
 
     struct StopCommand {};
 
-#define NCREQUEST_CURL_WS_COMMAND_VARIANTS(V) \
-    V(Connect, (ConnectCommand value;))       \
-    V(Send, (SendCommand value;))             \
-    V(Disconnect, (DisconnectCommand value;)) \
-    V(Stop, ())
-
     struct Command {
-        RSTD_ENUM_BODY(Command, NCREQUEST_CURL_WS_COMMAND_VARIANTS)
+        RSTD_ENUM(Command, (Connect, (ConnectCommand value;)), (Send, (SendCommand value;)),
+                  (Disconnect, (DisconnectCommand value;)), (Stop))
     };
-
-#undef NCREQUEST_CURL_WS_COMMAND_VARIANTS
-
-#define NCREQUEST_CURL_WS_LOOP_EVENT_VARIANTS(V) \
-    V(QueueClosed, ())                           \
-    V(Command, (Command value;))                 \
-    V(Readable, ())                              \
-    V(Writable, ())                              \
-    V(IoError, (rstd::io::error::Error error;))
 
     struct LoopEvent {
-        RSTD_ENUM_BODY(LoopEvent, NCREQUEST_CURL_WS_LOOP_EVENT_VARIANTS)
+        RSTD_ENUM(LoopEvent, (QueueClosed), (Command, (Command value;)), (Readable), (Writable),
+                  (IoError, (rstd::io::error::Error error;)))
     };
-
-#undef NCREQUEST_CURL_WS_LOOP_EVENT_VARIANTS
 
     class CommandQueue {
         struct Fields {
