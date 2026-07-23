@@ -209,9 +209,9 @@ auto Url::parse_http(ref<str> input) -> rstd::Result<Url, UrlError> {
         bool numeric = false;
         bool dotted  = false;
         for (auto value : host_value) {
-            if (u8::from_byte(value) == u8('.')) {
+            if (value == u8('.')) {
                 dotted = true;
-            } else if (! parser::ascii::digit(u8::from_byte(value))) {
+            } else if (! parser::ascii::digit(value)) {
                 numeric = false;
                 dotted  = false;
                 break;
