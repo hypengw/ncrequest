@@ -162,9 +162,9 @@ public:
         auto size() const { return m_buf.size(); }
         auto data() const { return m_buf.data(); }
 
-        auto commit(slice<byte> in) {
+        auto commit(slice<u8> in) {
             auto copied = in.len();
-            m_buf.put_bytes(in);
+            m_buf.put_slice(in);
             m_transferred += copied;
             check_full();
             return copied;
@@ -182,12 +182,11 @@ public:
             return copied;
         }
 
-        auto consume(mut_ref<byte[]> out) {
+        auto consume(mut_ref<u8[]> out) {
             auto copied = rstd::min(out.len(), m_buf.size());
             if (copied == usize()) return usize();
 
-            auto source = rstd::as_bytes(m_buf.as_slice());
-            rstd::mem::memcpy(out.as_raw_ptr(), source.as_raw_ptr(), copied);
+            rstd::mem::memcpy(out.as_raw_ptr(), m_buf.as_slice().as_raw_ptr(), copied);
             m_buf.advance(copied);
             check_full();
             return copied;
@@ -195,7 +194,7 @@ public:
 
         auto commit(rstd::bytes::Bytes& in) {
             auto chunk  = in.chunk();
-            auto copied = commit(rstd::as_bytes(chunk));
+            auto copied = commit(chunk);
             in.advance(copied);
             return copied;
         }
@@ -427,7 +426,7 @@ private:
     static rstd::size_t header_callback(char* ptr, rstd::size_t size, rstd::size_t nmemb,
                                         Connection* self) {
         auto total_size = usize(size * nmemb);
-        auto header = slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
+        auto header = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
         auto lock   = RawMutexGuard { self->m_mutex };
 
         if (self->m_body_started) {
@@ -478,7 +477,7 @@ private:
 
         self->try_header_waiter_locked();
         self->m_recv_buf.commit(
-            slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size));
+            slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size));
         self->try_read_waiter_locked();
         return total_size.to_primitive();
     }
@@ -496,7 +495,7 @@ private:
             return static_cast<rstd::size_t>(CURL_READFUNC_PAUSE);
         }
 
-        auto output = mut_ref<byte[]>::from_raw_parts(reinterpret_cast<byte*>(ptr), total_size);
+        auto output = mut_ref<u8[]>::from_raw_parts(reinterpret_cast<byte*>(ptr), total_size);
         auto copied = self->m_send_buf.consume(output);
         self->try_write_waiter_locked();
         return copied.to_primitive();
@@ -505,7 +504,8 @@ private:
     void finish(CURLcode ec) {
         auto lock = RawMutexGuard { m_mutex };
         if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
-            auto parsed = m_trailer_parser.push(rstd::str_::as_bytes("\r\n"));
+            using namespace rstd::literals;
+            auto parsed = m_trailer_parser.push("\r\n"_bytes);
             if (parsed.is_err()) {
                 m_header_error = Some(rstd::move(parsed).unwrap_err());
             } else {

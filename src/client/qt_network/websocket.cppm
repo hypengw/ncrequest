@@ -16,7 +16,7 @@ public:
     constexpr static u64 MaxBufferSize { 16 * 1024 };
     using ConnectedCallback    = client::Callback<void()>;
     using DisconnectedCallback = client::Callback<void()>;
-    using MessageCallback      = client::Callback<void(slice<byte>, bool last)>;
+    using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
     using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketBackend(
@@ -92,7 +92,7 @@ public:
 
     void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
 
-    void send(slice<byte> message) {
+    void send(slice<u8> message) {
         auto* socket = m_socket.data();
         if (! m_connected || socket == nullptr) return;
         socket->sendBinaryMessage(QByteArray(reinterpret_cast<const char*>(message.as_raw_ptr()),
@@ -137,7 +137,7 @@ private:
                 if (! m_on_message) return;
                 auto bytes = message.toUtf8();
                 m_on_message(
-                    slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(bytes.constData()),
+                    slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(bytes.constData()),
                                                 static_cast<usize>(bytes.size())),
                     true);
             }));
@@ -146,7 +146,7 @@ private:
             socket, &QWebSocket::binaryMessageReceived, socket, [this](const QByteArray& message) {
                 if (! m_on_message) return;
                 m_on_message(
-                    slice<byte>::from_raw_parts(reinterpret_cast<const byte*>(message.constData()),
+                    slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(message.constData()),
                                                 static_cast<usize>(message.size())),
                     true);
             }));
@@ -178,8 +178,9 @@ private:
     void emit_error(const QString& message) {
         if (! m_on_error) return;
         auto text = message.toUtf8();
-        m_on_error(ref<str>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
-                                            static_cast<usize>(text.size())));
+        auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
+                                               static_cast<usize>(text.size()));
+        m_on_error(rstd::from_utf8_unchecked(bytes));
     }
 
     void disconnect_signals() {

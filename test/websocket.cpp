@@ -12,6 +12,8 @@ import rstd.cppstd;
 namespace
 {
 
+using namespace rstd::literals;
+
 auto local_ws_url() -> std::string {
     auto* value = std::getenv("NCREQUEST_TEST_WS_URL");
     if (value == nullptr || *value == '\0') return {};
@@ -35,7 +37,7 @@ auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> b
 TEST(websocket, ConstructDisconnected) {
     auto client = ncrequest::WebSocketClient {};
     EXPECT_FALSE(client.is_connected());
-    client.send("ignored while disconnected");
+    client.send("ignored while disconnected"_str);
     client.disconnect();
 }
 
@@ -62,7 +64,7 @@ TEST(websocket, LocalEchoText) {
     });
 
     client.set_on_message_callback(
-        [&message_promise, &got_message](rstd::slice<rstd::byte> data, bool) {
+        [&message_promise, &got_message](rstd::slice<rstd::u8> data, bool) {
             if (got_message.exchange(true)) return;
 
             std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
@@ -76,12 +78,13 @@ TEST(websocket, LocalEchoText) {
         error_promise.set_value(std::move(out));
     });
 
-    auto connected = rstd::async::block_on(client.connect(rstd::cppstd::as_str(url)));
+    auto connected = rstd::async::block_on(
+        client.connect(rstd::move(rstd::cppstd::as_str(url)).unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
-    client.send("curl websocket payload");
+    client.send("curl websocket payload"_str);
     ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)))
         << (wait_future(error, std::chrono::milliseconds(0)) ? error.get() : "message timed out");
     EXPECT_EQ(message.get(), "curl websocket payload");

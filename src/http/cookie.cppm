@@ -18,7 +18,7 @@ public:
     static auto parse(ref<str> input) -> Result<Cookie, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<byte> input) -> Result<Cookie, CookieError>;
+    static auto parse_bytes(slice<u8> input) -> Result<Cookie, CookieError>;
 
     [[nodiscard]]
     auto name() const noexcept -> ref<str>;
@@ -70,7 +70,7 @@ public:
     static auto parse(ref<str> input) -> Result<CookieHeader, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<byte> input) -> Result<CookieHeader, CookieError>;
+    static auto parse_bytes(slice<u8> input) -> Result<CookieHeader, CookieError>;
 
     void add(Cookie cookie);
 
@@ -145,7 +145,7 @@ public:
     static auto parse(ref<str> input) -> Result<SetCookie, CookieError>;
 
     [[nodiscard]]
-    static auto parse_bytes(slice<byte> input) -> Result<SetCookie, CookieError>;
+    static auto parse_bytes(slice<u8> input) -> Result<SetCookie, CookieError>;
 
     [[nodiscard]]
     auto cookie() const noexcept -> const Cookie&;

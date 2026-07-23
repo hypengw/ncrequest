@@ -15,11 +15,9 @@ namespace
 
 void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
     auto url_bytes = rstd::vec::Vec<u8>::make();
-    auto url_view  = req.url();
-    url_bytes.extend_from_bytes(rstd::str_::as_bytes(rstd::cppstd::as_str(url_view)));
+    url_bytes.extend_from_slice(rstd::str_::as_bytes(req.url_info().as_ref()));
     auto url = rstd::ffi::CString::from_vec_unchecked(rstd::move(url_bytes));
-    easy.setopt(CURLoption::CURLOPT_URL,
-                reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
+    easy.setopt(CURLoption::CURLOPT_URL, url.as_ptr());
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
 

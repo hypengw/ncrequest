@@ -13,6 +13,8 @@ export import :client_http_backend;
 namespace ncrequest
 {
 
+using namespace rstd::literals;
+
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
 using SelectedResponseBackend = client::qt_network::ResponseBackend;
 #else
@@ -31,9 +33,9 @@ public:
 
     auto set_cookies() const -> rstd::Result<rstd::vec::Vec<http::SetCookie>, http::CookieError> {
         auto cookies = rstd::vec::Vec<http::SetCookie>::make();
-        auto values  = this->header().values("set-cookie");
+        auto values  = this->header().values("set-cookie"_str);
         for (auto value = values.next(); value.is_some(); value = values.next()) {
-            auto parsed = http::SetCookie::parse_bytes(rstd::as_bytes((**value).as_bytes()));
+            auto parsed = http::SetCookie::parse_bytes((**value).as_bytes());
             if (parsed.is_err()) {
                 return rstd::Err(rstd::move(parsed).unwrap_err());
             }

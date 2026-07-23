@@ -124,7 +124,6 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
     for (auto field = fields.next(); field.is_some(); field = fields.next()) {
         auto name        = (**field).name().as_ref();
         auto value       = (**field).value().as_bytes();
-        auto value_bytes = rstd::as_bytes(value);
         if (req.header().values(name).count() > usize(1)) {
             return Err(
                 Error::Unsupported("Qt Network cannot preserve repeated request header fields"));
@@ -132,8 +131,8 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
         raw_headers.append(
             { QByteArray(reinterpret_cast<const char*>(name.data()),
                          static_cast<qsizetype>(name.size().to_primitive())),
-              QByteArray(reinterpret_cast<const char*>(value_bytes.as_raw_ptr()),
-                         static_cast<qsizetype>(value_bytes.len().to_primitive())) });
+              QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
+                         static_cast<qsizetype>(value.len().to_primitive())) });
     }
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
@@ -206,7 +205,7 @@ auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
     auto payload = QByteArray {};
     if (body.is_some()) {
         auto bytes = rstd::move(body).unwrap();
-        auto raw   = rstd::as_bytes(bytes.as_slice());
+        auto raw   = bytes.as_slice();
         payload    = QByteArray(reinterpret_cast<const char*>(raw.as_raw_ptr()),
                                 static_cast<qsizetype>(raw.len().to_primitive()));
     }
@@ -280,16 +279,23 @@ auto read_header(QNetworkReply* reply)
     auto headers = http::Header {};
 
     for (auto const& pair : reply->headers().toListOfPairs()) {
-        auto name_text = rstd::ref<rstd::str>::from_raw_parts(
+        auto name_bytes = rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(pair.first.constData()),
             static_cast<rstd::usize>(pair.first.size()));
-        auto name = http::HeaderName::parse(name_text);
+        auto name_text = rstd::str_::from_utf8(name_bytes);
+        if (name_text.is_err()) {
+            return rstd::Err(http::HttpParseError {
+                http::HttpParseErrorKind::InvalidHeaderLine(),
+                name_text.unwrap_err().valid_up_to(),
+            });
+        }
+        auto name = http::HeaderName::parse(rstd::move(name_text).unwrap());
         if (name.is_err()) {
             return rstd::Err(http::HttpParseError { http::HttpParseErrorKind::InvalidHeaderLine(),
                                                     name.unwrap_err().offset() });
         }
 
-        auto value = http::HeaderValue::from_bytes(rstd::slice<rstd::byte>::from_raw_parts(
+        auto value = http::HeaderValue::from_bytes(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(pair.second.constData()),
             static_cast<rstd::usize>(pair.second.size())));
         if (value.is_err()) {
@@ -350,7 +356,7 @@ void publish_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
         auto chunk = reply->read(reply->bytesAvailable());
         if (chunk.isEmpty()) break;
 
-        auto bytes = rstd::bytes::Bytes::copy_from_bytes(rstd::slice<rstd::byte>::from_raw_parts(
+        auto bytes = rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(chunk.constData()),
             static_cast<rstd::usize>(chunk.size())));
         state->push_body_event(BodyEvent::Chunk(rstd::move(bytes)));

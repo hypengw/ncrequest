@@ -56,7 +56,7 @@ void SessionShare::load(ref<rstd::path::Path> path) {
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     // append filename
     x.setopt(CURLoption::CURLOPT_COOKIEFILE,
-             reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
+             owned_filename.as_ptr());
     // actually load
     x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
 }
@@ -69,7 +69,7 @@ void SessionShare::save(ref<rstd::path::Path> path) const {
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     x.setopt(CURLoption::CURLOPT_COOKIEJAR,
-             reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
+             owned_filename.as_ptr());
     // save when x destruct
 }
 

@@ -15,7 +15,7 @@ public:
     constexpr static u64 MaxBufferSize { 16 * 1024 }; // 16KB
     using ConnectedCallback    = client::Callback<void()>;
     using DisconnectedCallback = client::Callback<void()>;
-    using MessageCallback      = client::Callback<void(slice<byte>, bool last)>;
+    using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
     using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
 
     explicit WebSocketBackend(
@@ -30,7 +30,7 @@ public:
     bool is_connected() const;
 
     void send(ref<str> message);
-    void send(slice<byte> message);
+    void send(slice<u8> message);
 
     void set_on_connected_callback(ConnectedCallback callback);
     void set_on_disconnected_callback(DisconnectedCallback callback);

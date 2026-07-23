@@ -83,10 +83,10 @@ class Cursor {
 public:
     explicit constexpr Cursor(ref<str> input) noexcept: input_(rstd::str_::as_bytes(input)) {}
 
-    explicit constexpr Cursor(rstd::slice<byte> input) noexcept: input_(input) {}
+    explicit constexpr Cursor(rstd::slice<u8> input) noexcept: input_(input) {}
 
     [[nodiscard]]
-    constexpr auto input() const noexcept -> rstd::slice<byte> {
+    constexpr auto input() const noexcept -> rstd::slice<u8> {
         return input_;
     }
 
@@ -108,8 +108,7 @@ public:
     [[nodiscard]]
     constexpr auto peek() const noexcept -> Option<u8> {
         if (at_end()) return None();
-        auto value = rstd::byte_value(input_[offset_]);
-        return Some(rstd::move(value));
+        return Some(input_[offset_]);
     }
 
     [[nodiscard]]
@@ -131,13 +130,13 @@ public:
     }
 
     [[nodiscard]]
-    constexpr auto slice(Span span) const noexcept -> rstd::slice<byte> {
-        return rstd::slice<byte>::from_raw_parts(input_.as_raw_ptr() + span.begin.to_primitive(),
+    constexpr auto slice(Span span) const noexcept -> rstd::slice<u8> {
+        return rstd::slice<u8>::from_raw_parts(input_.as_raw_ptr() + span.begin.to_primitive(),
                                                  span.size());
     }
 
 private:
-    rstd::slice<byte> input_;
+    rstd::slice<u8> input_;
     usize             offset_ {};
 };
 
@@ -207,7 +206,7 @@ inline auto take_literal(Cursor& cursor, ref<str> literal) noexcept -> ParseResu
             cursor.restore(mark);
             return Err(ParseFailure { Expectation::Literal(), mark.offset + i, false, true });
         }
-        if (*next != rstd::byte_value(literal.data()[i.to_primitive()])) {
+        if (*next != literal[i]) {
             cursor.restore(mark);
             return Err(ParseFailure { Expectation::Literal(), mark.offset + i });
         }

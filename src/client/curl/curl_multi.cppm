@@ -129,7 +129,10 @@ public:
             auto list = rstd::move(list_).unwrap();
             auto head = list;
             while (list) {
-                out.push(rstd::string::String::make(list->data));
+                auto text = rstd::ffi::CStr::from_ptr(list->data).to_str();
+                if (text.is_ok()) {
+                    out.push(rstd::string::String::make(rstd::move(text).unwrap()));
+                }
                 list = list->next;
             }
             curl_slist_free_all(head);
@@ -146,7 +149,7 @@ public:
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         // append filename
         x.setopt(CURLoption::CURLOPT_COOKIEFILE,
-                 reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
+                 owned_filename.as_ptr());
         // actually load
         x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
     }
@@ -159,7 +162,7 @@ public:
         CurlEasy x;
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         x.setopt(CURLoption::CURLOPT_COOKIEJAR,
-                 reinterpret_cast<const char*>(owned_filename.to_bytes_with_nul().p));
+                 owned_filename.as_ptr());
         // save when x destruct
     }
 

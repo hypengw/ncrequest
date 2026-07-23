@@ -55,9 +55,9 @@ auto HeaderValue::parse(ref<str> input) -> rstd::Result<HeaderValue, HeaderError
     return from_bytes(rstd::str_::as_bytes(input));
 }
 
-auto HeaderValue::from_bytes(slice<byte> input) -> rstd::Result<HeaderValue, HeaderError> {
+auto HeaderValue::from_bytes(slice<u8> input) -> rstd::Result<HeaderValue, HeaderError> {
     for (usize offset {}; offset < input.len(); ++offset) {
-        auto value = rstd::byte_value(input[offset]);
+        auto value = input[offset];
         if (! valid_value_byte(value)) {
             auto raw  = value.to_primitive();
             auto kind = raw == '\r' || raw == '\n' ? HeaderErrorKind::InvalidLineBreak()
@@ -65,13 +65,13 @@ auto HeaderValue::from_bytes(slice<byte> input) -> rstd::Result<HeaderValue, Hea
             return Err(HeaderError { rstd::move(kind), offset });
         }
     }
-    return Ok(HeaderValue { Vec<u8>::copy_from_bytes(input) });
+    return Ok(HeaderValue { Vec<u8>::from(input) });
 }
 
 auto HeaderValue::as_bytes() const noexcept -> slice<u8> { return value_.as_slice(); }
 
 auto HeaderValue::as_str() const noexcept -> Option<ref<str>> {
-    return rstd::str_::from_utf8(as_bytes());
+    return rstd::str_::from_utf8(as_bytes()).ok();
 }
 
 auto HeaderValue::clone() const -> HeaderValue { return HeaderValue { value_.clone() }; }

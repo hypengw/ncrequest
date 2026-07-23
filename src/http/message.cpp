@@ -23,16 +23,15 @@ auto header_line_error(parser::ParseFailure failure, usize base) -> HttpParseErr
 
 auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
     -> rstd::Result<StartLine, HttpParseError> {
-    auto bytes = rstd::as_bytes(input);
     RSTD_MATCH(rstd::move(parsed)) {
         RSTD_CASE(Request, value) {
-            auto method_text = ref<str>::from_raw_parts(
-                bytes.as_raw_ptr() + value.method.begin.to_primitive(), value.method.size());
+            auto method_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+                input.as_raw_ptr() + value.method.begin.to_primitive(), value.method.size()));
             auto method = Method::parse(method_text);
             if (method.is_err()) return Err(rstd::move(method).unwrap_err());
 
-            auto target_text = ref<str>::from_raw_parts(
-                bytes.as_raw_ptr() + value.target.begin.to_primitive(), value.target.size());
+            auto target_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+                input.as_raw_ptr() + value.target.begin.to_primitive(), value.target.size()));
             return Ok(StartLine::Request(RequestLine { rstd::move(method).unwrap(),
                                                        String::make(target_text),
                                                        Version { value.major, value.minor } }));
@@ -40,8 +39,8 @@ auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
         RSTD_CASE(Response, value) {
             auto status = StatusCode::make(value.status);
             if (status.is_err()) return Err(rstd::move(status).unwrap_err());
-            auto reason_bytes = slice<byte>::from_raw_parts(
-                bytes.as_raw_ptr() + value.reason.begin.to_primitive(), value.reason.size());
+            auto reason_bytes = slice<u8>::from_raw_parts(
+                input.as_raw_ptr() + value.reason.begin.to_primitive(), value.reason.size());
             auto reason = HeaderValue::from_bytes(reason_bytes);
             if (reason.is_err()) {
                 return Err(HttpParseError { HttpParseErrorKind::InvalidStartLine(),
@@ -57,17 +56,16 @@ auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
 
 auto make_field(slice<u8> input, parser::http1::FieldLine parsed, usize base)
     -> rstd::Result<HeaderField, HttpParseError> {
-    auto bytes     = rstd::as_bytes(input);
-    auto name_text = ref<str>::from_raw_parts(bytes.as_raw_ptr() + parsed.name.begin.to_primitive(),
-                                              parsed.name.size());
+    auto name_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+        input.as_raw_ptr() + parsed.name.begin.to_primitive(), parsed.name.size()));
     auto name      = HeaderName::parse(name_text);
     if (name.is_err()) {
         return Err(HttpParseError { HttpParseErrorKind::InvalidHeaderLine(),
                                     base + parsed.name.begin + name.unwrap_err().offset() });
     }
 
-    auto value_bytes = slice<byte>::from_raw_parts(
-        bytes.as_raw_ptr() + parsed.value.begin.to_primitive(), parsed.value.size());
+    auto value_bytes = slice<u8>::from_raw_parts(
+        input.as_raw_ptr() + parsed.value.begin.to_primitive(), parsed.value.size());
     auto value = HeaderValue::from_bytes(value_bytes);
     if (value.is_err()) {
         return Err(HttpParseError { HttpParseErrorKind::InvalidHeaderLine(),
@@ -171,7 +169,7 @@ auto StartLine::clone() const -> StartLine {
 MessageHead::MessageHead(StartLine start, Header headers) noexcept
     : start_(rstd::move(start)), headers_(rstd::move(headers)) {}
 
-auto MessageHead::parse(slice<byte> input) -> rstd::Result<MessageHead, HttpParseError> {
+auto MessageHead::parse(slice<u8> input) -> rstd::Result<MessageHead, HttpParseError> {
     auto parser = Http1HeadParser {};
     auto parsed = parser.push(input);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -203,15 +201,15 @@ auto MessageHead::clone() const -> MessageHead {
     return MessageHead { start_.clone(), headers_.clone() };
 }
 
-auto Http1HeadParser::push(slice<byte> input) -> rstd::Result<Http1HeadEvent, HttpParseError> {
+auto Http1HeadParser::push(slice<u8> input) -> rstd::Result<Http1HeadEvent, HttpParseError> {
     if (complete_) {
         return Err(HttpParseError { HttpParseErrorKind::InvalidSyntax(), line_start_ });
     }
-    buffer_.extend_from_bytes(input);
+    buffer_.extend_from_slice(input);
 
     while (scan_ + usize(1) < buffer_.len()) {
-        if (buffer_[scan_].to_primitive() != '\r' ||
-            buffer_[scan_ + usize(1)].to_primitive() != '\n') {
+        if (static_cast<u8>(buffer_[scan_]).to_primitive() != '\r' ||
+            static_cast<u8>(buffer_[scan_ + usize(1)]).to_primitive() != '\n') {
             ++scan_;
             continue;
         }
@@ -227,7 +225,7 @@ auto Http1HeadParser::push(slice<byte> input) -> rstd::Result<Http1HeadEvent, Ht
         scan_       = line_end;
 
         if (start_.is_none()) {
-            auto parsed = parser::http1::parse_start_line(rstd::as_bytes(line));
+            auto parsed = parser::http1::parse_start_line(line);
             if (parsed.is_err()) return Err(start_line_error(rstd::move(parsed).unwrap_err()));
             auto start = make_start_line(line, rstd::move(parsed).unwrap());
             if (start.is_err()) return Err(rstd::move(start).unwrap_err());
@@ -241,7 +239,7 @@ auto Http1HeadParser::push(slice<byte> input) -> rstd::Result<Http1HeadEvent, Ht
                 MessageHead { rstd::move(start_).unwrap(), rstd::move(headers_) }, line_start_));
         }
 
-        auto parsed = parser::http1::parse_field_line(rstd::as_bytes(line));
+        auto parsed = parser::http1::parse_field_line(line);
         if (parsed.is_err()) {
             return Err(header_line_error(rstd::move(parsed).unwrap_err(), base));
         }
@@ -259,16 +257,16 @@ auto Http1HeadParser::finish() -> rstd::Result<MessageHead, HttpParseError> {
     return Err(HttpParseError { HttpParseErrorKind::UnexpectedEof(), buffer_.len() });
 }
 
-auto Http1FieldSectionParser::push(slice<byte> input)
+auto Http1FieldSectionParser::push(slice<u8> input)
     -> rstd::Result<Http1FieldSectionEvent, HttpParseError> {
     if (complete_) {
         return Err(HttpParseError { HttpParseErrorKind::InvalidSyntax(), line_start_ });
     }
-    buffer_.extend_from_bytes(input);
+    buffer_.extend_from_slice(input);
 
     while (scan_ + usize(1) < buffer_.len()) {
-        if (buffer_[scan_].to_primitive() != '\r' ||
-            buffer_[scan_ + usize(1)].to_primitive() != '\n') {
+        if (static_cast<u8>(buffer_[scan_]).to_primitive() != '\r' ||
+            static_cast<u8>(buffer_[scan_ + usize(1)]).to_primitive() != '\n') {
             ++scan_;
             continue;
         }
@@ -288,7 +286,7 @@ auto Http1FieldSectionParser::push(slice<byte> input)
             return Ok(Http1FieldSectionEvent::Complete(rstd::move(fields_), line_start_));
         }
 
-        auto parsed = parser::http1::parse_field_line(rstd::as_bytes(line));
+        auto parsed = parser::http1::parse_field_line(line);
         if (parsed.is_err()) {
             return Err(header_line_error(rstd::move(parsed).unwrap_err(), base));
         }

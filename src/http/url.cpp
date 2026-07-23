@@ -6,6 +6,7 @@ namespace ncrequest::http
 {
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 using rstd::string::String;
 
 namespace
@@ -17,7 +18,7 @@ auto equals_ascii_case_insensitive(ref<str> left, const char* right) noexcept ->
 
     for (usize i {}; i < left.size(); ++i) {
         auto index = i.to_primitive();
-        auto lhs   = static_cast<unsigned char>(left.data()[index]);
+        auto lhs   = left[usize(index)].to_primitive();
         auto rhs   = static_cast<unsigned char>(right[index]);
         if (lhs >= 'A' && lhs <= 'Z') lhs = static_cast<unsigned char>(lhs + ('a' - 'A'));
         if (rhs >= 'A' && rhs <= 'Z') rhs = static_cast<unsigned char>(rhs + ('a' - 'A'));
@@ -35,14 +36,14 @@ auto starts_with_at(ref<str> input, usize offset, ref<str> prefix) noexcept -> b
 }
 
 void append_range(String& output, ref<str> input, usize begin, usize end) {
-    output.push_str(ref<str>::from_raw_parts(input.data() + begin.to_primitive(), end - begin));
+    output.push_str(*rstd::str_::get(input, begin, end));
 }
 
 void remove_last_segment(String& output) {
     auto size = output.size();
     while (size > usize()) {
         --size;
-        if (output.data()[size.to_primitive()] == '/') {
+        if (u8::from_byte(output.data()[size.to_primitive()]) == u8('/')) {
             output.truncate(size);
             return;
         }
@@ -55,34 +56,34 @@ auto remove_dot_segments(ref<str> input) -> String {
     usize offset {};
 
     while (offset < input.size()) {
-        if (starts_with_at(input, offset, "../")) {
+        if (starts_with_at(input, offset, "../"_str)) {
             offset += usize(3);
             continue;
         }
-        if (starts_with_at(input, offset, "./")) {
+        if (starts_with_at(input, offset, "./"_str)) {
             offset += usize(2);
             continue;
         }
-        if (starts_with_at(input, offset, "/./")) {
+        if (starts_with_at(input, offset, "/./"_str)) {
             offset += usize(2);
             continue;
         }
-        if (starts_with_at(input, offset, "/.") && offset + usize(2) == input.size()) {
-            output.push_back('/');
+        if (starts_with_at(input, offset, "/."_str) && offset + usize(2) == input.size()) {
+            output.push_ascii(u8('/'));
             break;
         }
-        if (starts_with_at(input, offset, "/../")) {
+        if (starts_with_at(input, offset, "/../"_str)) {
             offset += usize(3);
             remove_last_segment(output);
             continue;
         }
-        if (starts_with_at(input, offset, "/..") && offset + usize(3) == input.size()) {
+        if (starts_with_at(input, offset, "/.."_str) && offset + usize(3) == input.size()) {
             remove_last_segment(output);
-            output.push_back('/');
+            output.push_ascii(u8('/'));
             break;
         }
-        if ((starts_with_at(input, offset, ".") && offset + usize(1) == input.size()) ||
-            (starts_with_at(input, offset, "..") && offset + usize(2) == input.size())) {
+        if ((starts_with_at(input, offset, "."_str) && offset + usize(1) == input.size()) ||
+            (starts_with_at(input, offset, ".."_str) && offset + usize(2) == input.size())) {
             break;
         }
 
@@ -101,7 +102,7 @@ auto merge_paths(const Url& base, ref<str> reference_path) -> String {
     auto merged    = String::make();
     auto base_path = base.path();
     if (base.authority().is_some() && base_path.size() == usize()) {
-        merged.push_back('/');
+        merged.push_ascii(u8('/'));
         merged.push_str(reference_path);
         return merged;
     }
@@ -208,9 +209,9 @@ auto Url::parse_http(ref<str> input) -> rstd::Result<Url, UrlError> {
         bool numeric = false;
         bool dotted  = false;
         for (auto value : host_value) {
-            if (value == '.') {
+            if (u8::from_byte(value) == u8('.')) {
                 dotted = true;
-            } else if (! parser::ascii::digit(rstd::byte_value(value))) {
+            } else if (! parser::ascii::digit(u8::from_byte(value))) {
                 numeric = false;
                 dotted  = false;
                 break;
@@ -247,7 +248,7 @@ auto Url::as_ref() const noexcept -> ref<str> { return source_.as_str(); }
 auto Url::component(Component value) const noexcept -> Option<ref<str>> {
     if (! value.present) return None();
     auto source = source_.as_str();
-    return Some(ref<str>::from_raw_parts(source.data() + value.offset.to_primitive(), value.size));
+    return rstd::str_::get(source, value.offset, value.offset + value.size);
 }
 
 auto Url::scheme() const noexcept -> Option<ref<str>> { return component(scheme_); }
@@ -258,7 +259,7 @@ auto Url::port() const noexcept -> Option<ref<str>> { return component(port_); }
 
 auto Url::path() const noexcept -> ref<str> {
     auto source = source_.as_str();
-    return ref<str>::from_raw_parts(source.data() + path_.offset.to_primitive(), path_.size);
+    return *rstd::str_::get(source, path_.offset, path_.offset + path_.size);
 }
 
 auto Url::query() const noexcept -> Option<ref<str>> { return component(query_); }
@@ -268,13 +269,13 @@ auto Url::request_target() const -> String {
     auto target    = String::make();
     auto path_view = path();
     if (path_view.size() == usize() && authority_.present) {
-        target.push_back('/');
+        target.push_ascii(u8('/'));
     } else {
         target.push_str(path_view);
     }
     auto query_view = query();
     if (query_view.is_some()) {
-        target.push_back('?');
+        target.push_ascii(u8('?'));
         target.push_str(*query_view);
     }
     return target;
@@ -310,20 +311,21 @@ auto Url::resolve(const Url& reference) const -> rstd::Result<Url, UrlError> {
 
     if (target_scheme.is_some()) {
         target.push_str(*target_scheme);
-        target.push_back(':');
+        target.push_ascii(u8(':'));
     }
     if (target_authority.is_some()) {
-        target.push_str("//");
+        target.push_ascii(u8('/'));
+        target.push_ascii(u8('/'));
         target.push_str(*target_authority);
     }
     target.push_str(target_path.as_str());
     if (target_query.is_some()) {
-        target.push_back('?');
+        target.push_ascii(u8('?'));
         target.push_str(*target_query);
     }
     auto target_fragment = reference.fragment();
     if (target_fragment.is_some()) {
-        target.push_back('#');
+        target.push_ascii(u8('#'));
         target.push_str(*target_fragment);
     }
     return Url::parse(target.as_str());

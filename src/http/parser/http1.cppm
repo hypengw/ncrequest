@@ -10,6 +10,7 @@ export namespace ncrequest::http::parser::http1
 {
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 struct RequestLine {
     Span method;
@@ -78,7 +79,7 @@ auto parse_crlf(Cursor& cursor) -> ParseResult<Span> {
 }
 
 auto parse_version(Cursor& cursor) -> ParseResult<Version> {
-    auto literal = take_literal(cursor, "HTTP/");
+    auto literal = take_literal(cursor, "HTTP/"_str);
     if (literal.is_err()) {
         auto error = rstd::move(literal).unwrap_err();
         return Err(ParseFailure {
@@ -107,49 +108,55 @@ auto parse_version(Cursor& cursor) -> ParseResult<Version> {
     return Ok(Version { u8(major->to_primitive() - '0'), u8(minor->to_primitive() - '0') });
 }
 
-auto equals(slice<byte> input, Span span, const char* expected) noexcept -> bool {
+auto equals(slice<u8> input, Span span, const char* expected) noexcept -> bool {
     auto size = usize(rstd::strlen(expected));
     if (span.size() != size) return false;
     for (usize offset {}; offset < size; ++offset) {
-        if (input[span.begin + offset] != static_cast<byte>(expected[offset.to_primitive()])) {
+        if (input[span.begin + offset] != u8(expected[offset.to_primitive()])) {
             return false;
         }
     }
     return true;
 }
 
-auto valid_connect_target(slice<byte> input, Span target) noexcept -> bool {
+auto valid_connect_target(slice<u8> input, Span target) noexcept -> bool {
     usize colon = target.end;
-    if (input[target.begin] == '[') {
+    if (input[target.begin] == u8('[')) {
         usize close = target.begin + usize(1);
-        while (close < target.end && input[close] != ']') ++close;
+        while (close < target.end && input[close] != u8(']')) ++close;
         if (close == target.end || close + usize(1) >= target.end ||
-            input[close + usize(1)] != ':') {
+            input[close + usize(1)] != u8(':')) {
             return false;
         }
         colon = close + usize(1);
     } else {
         for (usize offset = target.begin; offset < target.end; ++offset) {
-            if (input[offset] == ':') colon = offset;
+            if (input[offset] == u8(':')) colon = offset;
         }
         if (colon == target.begin || colon == target.end) return false;
     }
     if (colon + usize(1) == target.end) return false;
     for (usize offset = colon + usize(1); offset < target.end; ++offset) {
-        if (! ascii::digit(rstd::byte_value(input[offset]))) return false;
+        if (! ascii::digit(input[offset])) return false;
     }
     return true;
 }
 
-auto validate_request_target(slice<byte> input, Span method, Span target) -> ParseResult<empty> {
-    if (target.size() == usize(1) && input[target.begin] == '*') return Ok(empty {});
+auto validate_request_target(slice<u8> input, Span method, Span target) -> ParseResult<empty> {
+    auto target_bytes = slice<u8>::from_raw_parts(
+        input.as_raw_ptr() + target.begin.to_primitive(), target.size());
+    auto target_text = rstd::str_::from_utf8(target_bytes);
+    if (target_text.is_err()) {
+        return Err(ParseFailure { Expectation::RequestTarget(),
+                                  target.begin + target_text.unwrap_err().valid_up_to(), true });
+    }
+
+    if (target.size() == usize(1) && input[target.begin] == u8('*')) return Ok(empty {});
     if (equals(input, method, "CONNECT") && valid_connect_target(input, target)) {
         return Ok(empty {});
     }
 
-    auto value =
-        ref<str>::from_raw_parts(input.as_raw_ptr() + target.begin.to_primitive(), target.size());
-    auto parsed = uri::parse(value);
+    auto parsed = uri::parse(rstd::move(target_text).unwrap());
     if (parsed.is_err()) {
         auto error = rstd::move(parsed).unwrap_err();
         return Err(ParseFailure { Expectation::RequestTarget(),
@@ -163,7 +170,7 @@ auto validate_request_target(slice<byte> input, Span method, Span target) -> Par
         return Err(ParseFailure {
             Expectation::RequestTarget(), target.begin + uri.fragment.span.begin, true });
     }
-    if (input[target.begin] == '/') {
+    if (input[target.begin] == u8('/')) {
         if (! uri.scheme.present && ! uri.authority.present) return Ok(empty {});
     } else if (uri.scheme.present) {
         return Ok(empty {});
@@ -171,7 +178,7 @@ auto validate_request_target(slice<byte> input, Span method, Span target) -> Par
     return Err(ParseFailure { Expectation::RequestTarget(), target.begin, true });
 }
 
-auto parse_request_line(slice<byte> input) -> ParseResult<StartLine> {
+auto parse_request_line(slice<u8> input) -> ParseResult<StartLine> {
     auto cursor = Cursor { input };
     auto method = take_while1(cursor, ascii::tchar);
     if (method.is_err()) {
@@ -215,7 +222,7 @@ auto parse_request_line(slice<byte> input) -> ParseResult<StartLine> {
     }));
 }
 
-auto parse_status_line(slice<byte> input) -> ParseResult<StartLine> {
+auto parse_status_line(slice<u8> input) -> ParseResult<StartLine> {
     auto cursor  = Cursor { input };
     auto version = parse_version(cursor);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
@@ -273,17 +280,18 @@ auto parse_status_line(slice<byte> input) -> ParseResult<StartLine> {
 } // namespace detail
 
 [[nodiscard]]
-auto parse_start_line(slice<byte> input) -> ParseResult<StartLine> {
-    constexpr byte prefix[] = { 'H', 'T', 'T', 'P', '/' };
+auto parse_start_line(slice<u8> input) -> ParseResult<StartLine> {
+    constexpr auto prefix =
+        rstd::array<u8, 5> { u8('H'), u8('T'), u8('T'), u8('P'), u8('/') };
     bool           status   = input.len() >= usize(5);
     for (usize offset {}; status && offset < usize(5); ++offset) {
-        status = input[offset] == prefix[offset.to_primitive()];
+        status = input[offset] == prefix[offset];
     }
     return status ? detail::parse_status_line(input) : detail::parse_request_line(input);
 }
 
 [[nodiscard]]
-auto parse_field_line(slice<byte> input) -> ParseResult<FieldLine> {
+auto parse_field_line(slice<u8> input) -> ParseResult<FieldLine> {
     auto cursor = Cursor { input };
     auto name   = take_while1(cursor, ascii::tchar);
     if (name.is_err()) {
@@ -309,7 +317,7 @@ auto parse_field_line(slice<byte> input) -> ParseResult<FieldLine> {
     }
     auto value = cursor.span_from(value_begin);
     while (value.end > value.begin &&
-           detail::is_ows(rstd::byte_value(input[value.end - usize(1)]))) {
+           detail::is_ows(input[value.end - usize(1)])) {
         --value.end;
     }
 

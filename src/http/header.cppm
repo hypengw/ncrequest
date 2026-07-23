@@ -41,7 +41,7 @@ public:
     static auto parse(ref<str> input) -> Result<HeaderValue, HeaderError>;
 
     [[nodiscard]]
-    static auto from_bytes(slice<byte> input) -> Result<HeaderValue, HeaderError>;
+    static auto from_bytes(slice<u8> input) -> Result<HeaderValue, HeaderError>;
 
     [[nodiscard]]
     auto as_bytes() const noexcept -> slice<u8>;

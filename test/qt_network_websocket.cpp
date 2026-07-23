@@ -15,6 +15,8 @@ import rstd.cppstd;
 namespace
 {
 
+using namespace rstd::literals;
+
 auto local_ws_url() -> std::string {
     auto* value = std::getenv("NCREQUEST_TEST_WS_URL");
     if (value == nullptr || *value == '\0') return {};
@@ -59,7 +61,7 @@ auto wait_completion(rstd::async::Completion<bool> completion) {
 TEST(qt_network_websocket, ConstructDisconnected) {
     auto client = ncrequest::qt_network::WebSocketClient {};
     EXPECT_FALSE(client.is_connected());
-    client.send("ignored while disconnected");
+    client.send("ignored while disconnected"_str);
     client.disconnect();
 }
 
@@ -78,18 +80,19 @@ TEST(qt_network_websocket, LocalEchoText) {
     client.set_on_disconnected_callback([&disconnected_promise] {
         disconnected_promise.set_value();
     });
-    client.set_on_message_callback([&message_promise](rstd::slice<rstd::byte> data, bool) {
+    client.set_on_message_callback([&message_promise](rstd::slice<rstd::u8> data, bool) {
         std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
                         data.len().to_primitive());
         message_promise.set_value(std::move(out));
     });
 
-    auto connected = wait_completion(client.connect(rstd::cppstd::as_str(url)));
+    auto connected = wait_completion(
+        client.connect(rstd::move(rstd::cppstd::as_str(url)).unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
-    client.send("qt websocket payload");
+    client.send("qt websocket payload"_str);
     ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)));
     EXPECT_EQ(message.get(), "qt websocket payload");
 

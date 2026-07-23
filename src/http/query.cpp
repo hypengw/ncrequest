@@ -61,7 +61,7 @@ auto decode(ref<str> input, bool plus_as_space) -> rstd::Result<String, QueryErr
 
     auto decoded = String::from_utf8(rstd::move(bytes));
     if (decoded.is_err()) {
-        auto decoded_offset = decoded.unwrap_err().valid_up_to();
+        auto decoded_offset = decoded.unwrap_err().utf8_error().valid_up_to();
         auto source_offset =
             decoded_offset < source_offsets.len() ? source_offsets[decoded_offset] : input.size();
         return Err(QueryError { QueryErrorKind::InvalidUtf8(), source_offset });
@@ -75,13 +75,13 @@ auto encode(ref<str> input, bool space_as_plus) -> String {
         auto value = input[offset];
         auto raw   = value.to_primitive();
         if (parser::ascii::unreserved(value)) {
-            output.push_back(value);
+            output.push_ascii(value);
         } else if (space_as_plus && raw == ' ') {
-            output.push_back('+');
+            output.push_ascii(u8('+'));
         } else {
-            output.push_back('%');
-            output.push_back(hex_digits[raw >> 4]);
-            output.push_back(hex_digits[raw & 0x0f]);
+            output.push_ascii(u8('%'));
+            output.push_ascii(u8(hex_digits[raw >> 4]));
+            output.push_ascii(u8(hex_digits[raw & 0x0f]));
         }
     }
     return output;
@@ -153,11 +153,9 @@ auto QueryParams::parse_with_mode(ref<str> input, bool form)
 
         usize separator = pair_begin;
         while (separator < pair_end && input[separator].to_primitive() != '=') ++separator;
-        auto name_text   = ref<str>::from_raw_parts(input.data() + pair_begin.to_primitive(),
-                                                    separator - pair_begin);
+        auto name_text   = *rstd::str_::get(input, pair_begin, separator);
         auto value_begin = separator < pair_end ? separator + usize(1) : pair_end;
-        auto value_text  = ref<str>::from_raw_parts(input.data() + value_begin.to_primitive(),
-                                                    pair_end - value_begin);
+        auto value_text  = *rstd::str_::get(input, value_begin, pair_end);
 
         auto name = form ? decode_form_component(name_text) : decode_component(name_text);
         if (name.is_err()) {
@@ -228,13 +226,13 @@ auto QueryParams::encode_form() const -> String { return encode_with_mode(true);
 auto QueryParams::encode_with_mode(bool form) const -> String {
     auto output = String::make();
     for (usize offset {}; offset < pairs_.len(); ++offset) {
-        if (offset != usize()) output.push_back('&');
+        if (offset != usize()) output.push_ascii(u8('&'));
         auto name  = form ? encode_form_component(pairs_[offset].name())
                           : encode_component(pairs_[offset].name());
         auto value = form ? encode_form_component(pairs_[offset].value())
                           : encode_component(pairs_[offset].value());
         output.push_str(name.as_str());
-        output.push_back('=');
+        output.push_ascii(u8('='));
         output.push_str(value.as_str());
     }
     return output;

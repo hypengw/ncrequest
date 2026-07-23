@@ -17,6 +17,8 @@ import rstd.cppstd;
 namespace
 {
 
+using namespace rstd::literals;
+
 struct FetchResult {
     bool        got_response { false };
     bool        got_body { false };
@@ -53,7 +55,8 @@ auto local_http_url(std::string_view base, std::string_view path) -> std::string
 }
 
 auto make_request(std::string_view url) -> ncrequest::Request {
-    return rstd::move(ncrequest::Request::from_url(rstd::cppstd::as_str(url))).unwrap();
+    auto value = rstd::move(rstd::cppstd::as_str(url)).unwrap();
+    return rstd::move(ncrequest::Request::from_url(value)).unwrap();
 }
 
 auto large_body() -> std::string {
@@ -67,9 +70,9 @@ auto large_body() -> std::string {
 }
 
 auto bytes_from_string(const std::string& body) -> rstd::bytes::Bytes {
-    auto bytes = rstd::slice<rstd::byte>::from_raw_parts(
+    auto bytes = rstd::slice<rstd::u8>::from_raw_parts(
         reinterpret_cast<const rstd::byte*>(body.data()), rstd::usize(body.size()));
-    return rstd::bytes::Bytes::copy_from_bytes(bytes);
+    return rstd::bytes::Bytes::copy_from_slice(bytes);
 }
 
 auto response_code(const ncrequest::Arc<ncrequest::qt_network::Response>& response) -> int {
@@ -98,7 +101,7 @@ auto fetch_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::str
     }
 
     result.code            = response_code(response);
-    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.has_test_header = response->header().has_field("x-ncrequest-test"_str);
     result.body            = text.unwrap();
     result.got_body        = true;
     co_return result;
@@ -124,7 +127,7 @@ auto post_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::stri
     }
 
     result.code            = response_code(response);
-    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.has_test_header = response->header().has_field("x-ncrequest-test"_str);
     result.body            = text.unwrap();
     result.got_body        = true;
     co_return result;
@@ -210,7 +213,7 @@ auto share_roundtrip(ncrequest::Arc<ncrequest::qt_network::Session> session, std
         co_return result;
     }
     result.code            = response_code(response);
-    result.has_test_header = response->header().has_field("x-ncrequest-test");
+    result.has_test_header = response->header().has_field("x-ncrequest-test"_str);
     result.body            = rstd::move(echo_body).unwrap();
     result.got_body        = true;
     co_return result;

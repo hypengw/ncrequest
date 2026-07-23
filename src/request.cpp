@@ -55,7 +55,9 @@ auto Request::try_set_url(rstd::ref<rstd::str> input) -> rstd::Result<rstd::empt
 }
 
 std::string Request::header(std::string_view name) const {
-    auto value = m_header.get(rstd::cppstd::as_str(name));
+    auto name_text = rstd::cppstd::as_str(name);
+    if (name_text.is_err()) return {};
+    auto value = m_header.get(rstd::move(name_text).unwrap());
     if (value.is_none()) return {};
     auto bytes = (**value).as_bytes();
     return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len().to_primitive() };

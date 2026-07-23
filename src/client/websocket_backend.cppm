@@ -6,7 +6,7 @@ namespace ncrequest::client
 
 export template<typename T>
 concept WebSocketBackend =
-    requires(T client, const T const_client, ref<str> url, slice<byte> bytes,
+    requires(T client, const T const_client, ref<str> url, slice<u8> bytes,
              typename T::ConnectedCallback connected,
              typename T::DisconnectedCallback disconnected, typename T::MessageCallback message,
              typename T::ErrorCallback error) {

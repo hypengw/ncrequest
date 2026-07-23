@@ -6,6 +6,7 @@ namespace ncrequest::http
 {
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 using rstd::string::String;
 using rstd::vec::Vec;
 
@@ -51,15 +52,15 @@ auto same_ascii_case(ref<str> left, ref<str> right) noexcept -> bool {
     return true;
 }
 
-auto copy_ascii(slice<byte> input, parser::Span span) -> String {
+auto copy_ascii(slice<u8> input, parser::Span span) -> String {
     auto bytes =
-        slice<byte>::from_raw_parts(input.as_raw_ptr() + span.begin.to_primitive(), span.size());
-    return String::from_utf8_unchecked(Vec<u8>::copy_from_bytes(bytes));
+        slice<u8>::from_raw_parts(input.as_raw_ptr() + span.begin.to_primitive(), span.size());
+    return String::from_utf8_unchecked(Vec<u8>::from(bytes));
 }
 
-auto trim_ows(slice<byte> input, parser::Span span) noexcept -> parser::Span {
-    while (span.begin < span.end && ows(rstd::byte_value(input[span.begin]))) ++span.begin;
-    while (span.end > span.begin && ows(rstd::byte_value(input[span.end - usize(1)]))) --span.end;
+auto trim_ows(slice<u8> input, parser::Span span) noexcept -> parser::Span {
+    while (span.begin < span.end && ows(input[span.begin])) ++span.begin;
+    while (span.end > span.begin && ows(input[span.end - usize(1)])) --span.end;
     return span;
 }
 
@@ -113,7 +114,7 @@ auto Cookie::parse(ref<str> input) -> rstd::Result<Cookie, CookieError> {
     return parse_bytes(rstd::str_::as_bytes(input));
 }
 
-auto Cookie::parse_bytes(slice<byte> input) -> rstd::Result<Cookie, CookieError> {
+auto Cookie::parse_bytes(slice<u8> input) -> rstd::Result<Cookie, CookieError> {
     auto cursor = parser::Cursor { input };
     auto parsed = parse_cookie_pair(cursor);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -133,10 +134,10 @@ auto Cookie::is_quoted() const noexcept -> bool { return quoted_; }
 auto Cookie::encode() const -> String {
     auto output = String::make();
     output.push_str(name());
-    output.push_back('=');
-    if (quoted_) output.push_back('"');
+    output.push_ascii(u8('='));
+    if (quoted_) output.push_ascii(u8('"'));
     output.push_str(value());
-    if (quoted_) output.push_back('"');
+    if (quoted_) output.push_ascii(u8('"'));
     return output;
 }
 
@@ -155,14 +156,14 @@ auto CookieHeader::parse(ref<str> input) -> rstd::Result<CookieHeader, CookieErr
     return parse_bytes(rstd::str_::as_bytes(input));
 }
 
-auto CookieHeader::parse_bytes(slice<byte> input) -> rstd::Result<CookieHeader, CookieError> {
+auto CookieHeader::parse_bytes(slice<u8> input) -> rstd::Result<CookieHeader, CookieError> {
     auto result = CookieHeader {};
     auto outer  = trim_ows(input, parser::Span { usize(), input.len() });
     if (outer.is_empty()) {
         return Err(CookieError { CookieErrorKind::EmptyName(), outer.begin });
     }
     auto payload =
-        slice<byte>::from_raw_parts(input.as_raw_ptr() + outer.begin.to_primitive(), outer.size());
+        slice<u8>::from_raw_parts(input.as_raw_ptr() + outer.begin.to_primitive(), outer.size());
     auto cursor = parser::Cursor { payload };
 
     for (;;) {
@@ -207,7 +208,7 @@ auto CookieHeader::iter() const noexcept -> CookieIter {
 auto CookieHeader::encode() const -> String {
     auto output = String::make();
     for (usize offset {}; offset < cookies_.len(); ++offset) {
-        if (offset != usize()) output.push_str("; ");
+        if (offset != usize()) output.push_str("; "_str);
         auto encoded = cookies_[offset].encode();
         output.push_str(encoded.as_str());
     }
@@ -255,7 +256,7 @@ auto SetCookie::parse(ref<str> input) -> rstd::Result<SetCookie, CookieError> {
     return parse_bytes(rstd::str_::as_bytes(input));
 }
 
-auto SetCookie::parse_bytes(slice<byte> input) -> rstd::Result<SetCookie, CookieError> {
+auto SetCookie::parse_bytes(slice<u8> input) -> rstd::Result<SetCookie, CookieError> {
     auto cursor = parser::Cursor { input };
     auto parsed = parse_cookie_pair(cursor);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -277,13 +278,13 @@ auto SetCookie::parse_bytes(slice<byte> input) -> rstd::Result<SetCookie, Cookie
         }
 
         usize separator = attribute.begin;
-        while (separator < attribute.end && input[separator] != '=') ++separator;
+        while (separator < attribute.end && input[separator] != u8('=')) ++separator;
         auto name = trim_ows(input, parser::Span { attribute.begin, separator });
         if (name.is_empty()) {
             return Err(CookieError { CookieErrorKind::InvalidAttribute(), name.begin });
         }
         for (usize offset = name.begin; offset < name.end; ++offset) {
-            if (! valid_attribute_byte(rstd::byte_value(input[offset]))) {
+            if (! valid_attribute_byte(input[offset])) {
                 return Err(CookieError { CookieErrorKind::InvalidAttribute(), offset });
             }
         }
@@ -292,7 +293,7 @@ auto SetCookie::parse_bytes(slice<byte> input) -> rstd::Result<SetCookie, Cookie
         if (separator < attribute.end) {
             auto value_span = trim_ows(input, parser::Span { separator + usize(1), attribute.end });
             for (usize offset = value_span.begin; offset < value_span.end; ++offset) {
-                if (! valid_attribute_byte(rstd::byte_value(input[offset]))) {
+                if (! valid_attribute_byte(input[offset])) {
                     return Err(CookieError { CookieErrorKind::InvalidAttribute(), offset });
                 }
             }
@@ -319,18 +320,18 @@ auto SetCookie::attributes() const noexcept -> CookieAttributeIter {
     return CookieAttributeIter { attributes_.begin(), attributes_.end() };
 }
 
-auto SetCookie::secure() const noexcept -> bool { return attribute("secure").is_some(); }
+auto SetCookie::secure() const noexcept -> bool { return attribute("secure"_str).is_some(); }
 
-auto SetCookie::http_only() const noexcept -> bool { return attribute("httponly").is_some(); }
+auto SetCookie::http_only() const noexcept -> bool { return attribute("httponly"_str).is_some(); }
 
 auto SetCookie::encode() const -> String {
     auto output = cookie_.encode();
     for (auto const& attribute : attributes_) {
-        output.push_str("; ");
+        output.push_str("; "_str);
         output.push_str(attribute.name());
         auto value = attribute.value();
         if (value.is_some()) {
-            output.push_back('=');
+            output.push_ascii(u8('='));
             output.push_str(*value);
         }
     }

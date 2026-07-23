@@ -133,7 +133,7 @@ public:
     MessageHead(StartLine start, Header headers) noexcept;
 
     [[nodiscard]]
-    static auto parse(slice<byte> input) -> Result<MessageHead, HttpParseError>;
+    static auto parse(slice<u8> input) -> Result<MessageHead, HttpParseError>;
 
     [[nodiscard]]
     auto start() const noexcept -> const StartLine&;
@@ -168,7 +168,7 @@ public:
     auto operator=(Http1HeadParser&&) noexcept -> Http1HeadParser& = default;
 
     [[nodiscard]]
-    auto push(slice<byte> input) -> Result<Http1HeadEvent, HttpParseError>;
+    auto push(slice<u8> input) -> Result<Http1HeadEvent, HttpParseError>;
 
     [[nodiscard]]
     auto finish() -> Result<MessageHead, HttpParseError>;
@@ -195,7 +195,7 @@ public:
     auto operator=(Http1FieldSectionParser&&) noexcept -> Http1FieldSectionParser& = default;
 
     [[nodiscard]]
-    auto push(slice<byte> input) -> Result<Http1FieldSectionEvent, HttpParseError>;
+    auto push(slice<u8> input) -> Result<Http1FieldSectionEvent, HttpParseError>;
 
     [[nodiscard]]
     auto finish() -> Result<Header, HttpParseError>;
@@ -251,11 +251,17 @@ struct Impl<fmt::Display, ncrequest::http::Method> : ImplBase<ncrequest::http::M
 export template<>
 struct Impl<fmt::Display, ncrequest::http::Version> : ImplBase<ncrequest::http::Version> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        const byte value[] = { 'H', 'T',
-                               'T', 'P',
-                               '/', static_cast<byte>('0' + this->self().major().to_primitive()),
-                               '.', static_cast<byte>('0' + this->self().minor().to_primitive()) };
-        return formatter.write_raw(value, sizeof(value));
+        auto value = rstd::array<u8, 8> {
+            u8('H'),
+            u8('T'),
+            u8('T'),
+            u8('P'),
+            u8('/'),
+            u8('0' + this->self().major().to_primitive()),
+            u8('.'),
+            u8('0' + this->self().minor().to_primitive()),
+        };
+        return formatter.write_raw(value.data(), value.len().to_primitive());
     }
 };
 
@@ -263,10 +269,12 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::StatusCode> : ImplBase<ncrequest::http::StatusCode> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto       value   = this->self().value().to_primitive();
-        const byte bytes[] = { static_cast<byte>('0' + value / 100),
-                               static_cast<byte>('0' + value / 10 % 10),
-                               static_cast<byte>('0' + value % 10) };
-        return formatter.write_raw(bytes, sizeof(bytes));
+        auto bytes = rstd::array<u8, 3> {
+            u8('0' + value / 100),
+            u8('0' + value / 10 % 10),
+            u8('0' + value % 10),
+        };
+        return formatter.write_raw(bytes.data(), bytes.len().to_primitive());
     }
 };
 

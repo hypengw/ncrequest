@@ -144,7 +144,7 @@ auto parse_dec_octet(Cursor& cursor) -> ParseResult<Span> {
         ++count;
         cursor.advance(usize(1));
     }
-    if ((count > usize(1) && cursor.input()[begin.offset] == '0') || value > usize(255)) {
+    if ((count > usize(1) && cursor.input()[begin.offset] == u8('0')) || value > usize(255)) {
         cursor.restore(begin);
         return failure(Expectation::Ipv4Address(), cursor);
     }
@@ -167,8 +167,8 @@ auto has_ipv4_tail(const Cursor& cursor) noexcept -> bool {
     auto input = cursor.input();
     for (usize i = cursor.offset(); i < input.len(); ++i) {
         auto value = input[i];
-        if (value == '.') return true;
-        if (value == ':' || value == ']') return false;
+        if (value == u8('.')) return true;
+        if (value == u8(':') || value == u8(']')) return false;
     }
     return false;
 }
@@ -422,7 +422,7 @@ auto parse_hier_part(Cursor& cursor, UriReference& output, bool relative) -> Par
     auto begin = cursor.mark();
     auto next  = cursor.peek();
     if (next.is_some() && next->to_primitive() == '/' && cursor.remaining() >= usize(2) &&
-        cursor.input()[cursor.offset() + usize(1)] == '/') {
+        cursor.input()[cursor.offset() + usize(1)] == u8('/')) {
         cursor.advance(usize(2));
         auto authority = parse_authority(cursor, output);
         if (authority.is_err()) return Err(rstd::move(authority).unwrap_err());

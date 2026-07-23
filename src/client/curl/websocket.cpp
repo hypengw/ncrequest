@@ -284,7 +284,7 @@ public:
 
     void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
 
-    void send(slice<byte> in) {
+    void send(slice<u8> in) {
         auto msg = rstd::rc::allocate_make_rc<byte[]>(m_alloc, in.len(), byte {});
         rstd::mem::memcpy(msg.get(), in.as_raw_ptr(), in.len());
         (void)m_commands.push(Command::Send(SendCommand { rstd::move(msg) }));
@@ -407,7 +407,7 @@ private:
         auto result =
             curl_easy_setopt(m_curl,
                              CURLoption::CURLOPT_URL,
-                             reinterpret_cast<const char*>(url.to_bytes_with_nul().as_raw_ptr()));
+                             url.as_ptr());
         if (result == CURLcode::CURLE_OK) {
             result = curl_easy_setopt(m_curl, CURLoption::CURLOPT_CONNECT_ONLY, 2L);
         }
@@ -480,7 +480,7 @@ private:
 
             auto last = meta == nullptr || (! (meta->flags & CURLWS_CONT) && meta->bytesleft == 0);
             if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
-                emit_message(slice<byte>::from_raw_parts(m_read_buffer.data(), usize(m_read_len)),
+                emit_message(slice<u8>::from_raw_parts(m_read_buffer.data(), usize(m_read_len)),
                              last);
                 m_read_len = 0;
             }
@@ -599,7 +599,7 @@ private:
         if (callback) callback();
     }
 
-    void emit_message(slice<byte> data, bool last) {
+    void emit_message(slice<u8> data, bool last) {
         auto callback = message_callback();
         if (callback) callback(data, last);
     }
@@ -653,7 +653,7 @@ bool WebSocketBackend::is_connected() const { return m_impl->is_connected(); }
 
 void WebSocketBackend::send(ref<str> message) { m_impl->send(message); }
 
-void WebSocketBackend::send(slice<byte> message) { m_impl->send(message); }
+void WebSocketBackend::send(slice<u8> message) { m_impl->send(message); }
 
 void WebSocketBackend::set_on_connected_callback(ConnectedCallback cb) {
     m_impl->set_on_connected_callback(rstd::move(cb));
