@@ -240,3 +240,39 @@ private:
     rstd::Option<rstd::sync::MutexGuard<empty>> m_share_guard;
 };
 } // namespace ncrequest
+
+namespace rstd
+{
+
+export template<>
+struct Impl<fmt::Display, ncrequest::CurlMultiError> : ImplBase<ncrequest::CurlMultiError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        auto&       error = this->self();
+        const char* message;
+        switch (error.tag()) {
+        case ncrequest::CurlMultiError::Tag::Easy:
+            message = curl::curl_easy_strerror(error.as_Easy().code);
+            break;
+        case ncrequest::CurlMultiError::Tag::Multi:
+            message = curl::curl_multi_strerror(error.as_Multi().code);
+            break;
+        }
+        if (message == nullptr) message = "curl multi error";
+        return formatter.write_raw(message, rstd::strlen(message));
+    }
+};
+
+export template<>
+struct Impl<fmt::Debug, ncrequest::CurlMultiError> : ImplBase<ncrequest::CurlMultiError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<error::Error, ncrequest::CurlMultiError>
+    : DefaultInImpl<error::Error, ncrequest::CurlMultiError> {};
+
+static_assert(Impled<ncrequest::CurlMultiError, error::Error>);
+
+} // namespace rstd

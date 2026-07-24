@@ -77,16 +77,38 @@ constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char
 } // namespace ncrequest
 
 template<>
+struct rstd::Impl<rstd::fmt::Display, ncrequest::ClientError>
+    : rstd::ImplBase<ncrequest::ClientError> {
+    auto fmt(fmt::Formatter& f) const -> bool {
+        auto& message = this->self().message;
+        return f.write_raw(message.data(), message.size());
+    }
+};
+
+template<>
+struct rstd::Impl<rstd::fmt::Debug, ncrequest::ClientError>
+    : rstd::ImplBase<ncrequest::ClientError> {
+    auto fmt(fmt::Formatter& f) const -> bool {
+        return rstd::as<rstd::fmt::Display>(this->self()).fmt(f);
+    }
+};
+
+template<>
+struct rstd::Impl<rstd::error::Error, ncrequest::ClientError>
+    : rstd::DefaultInImpl<rstd::error::Error, ncrequest::ClientError> {};
+
+template<>
 struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
     auto fmt(fmt::Formatter& f) const -> bool {
         auto& e = this->self();
         switch (e.tag()) {
         case ncrequest::Error::Tag::Client: {
-            auto& msg = e.as_Client().error.message;
-            return f.write_raw(msg.data(), msg.size());
+            constexpr char message[] = "client request failed";
+            return f.write_raw(message, sizeof(message) - 1);
         }
         case ncrequest::Error::Tag::Io: {
-            return rstd::as<rstd::fmt::Display>(e.as_Io().error).fmt(f);
+            constexpr char message[] = "I/O request failed";
+            return f.write_raw(message, sizeof(message) - 1);
         }
         case ncrequest::Error::Tag::Protocol: {
             auto& payload = e.as_Protocol();
@@ -121,14 +143,35 @@ struct rstd::Impl<rstd::fmt::Debug, ncrequest::Error> : rstd::ImplBase<ncrequest
 };
 
 template<>
-struct rstd::Impl<rstd::error::Error, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {};
+struct rstd::Impl<rstd::error::Error, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
+    auto source() const noexcept -> rstd::Option<rstd::error::ErrorRef> {
+        auto& error = this->self();
+        switch (error.tag()) {
+        case ncrequest::Error::Tag::Client:
+            return rstd::Some(rstd::dyn<rstd::error::Error>::from_ref(error.as_Client().error));
+        case ncrequest::Error::Tag::Io:
+            return rstd::Some(rstd::dyn<rstd::error::Error>::from_ref(error.as_Io().error));
+        default: return rstd::None();
+        }
+    }
+};
+
+static_assert(rstd::Impled<ncrequest::ClientError, rstd::error::Error>);
+static_assert(rstd::Impled<ncrequest::Error, rstd::error::Error>);
+
+template<>
+struct rstd::Impl<rstd::convert::From<ncrequest::ClientError>, ncrequest::Error> {
+    static auto from(ncrequest::ClientError error) -> ncrequest::Error {
+        return ncrequest::Error::Client(rstd::move(error));
+    }
+};
 
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 template<>
 struct rstd::Impl<rstd::convert::From<curl::CURLcode>, ncrequest::Error> {
     static auto from(curl::CURLcode e) -> ncrequest::Error {
         auto* message = curl::curl_easy_strerror(e);
-        return ncrequest::Error::Client(ncrequest::ClientError {
+        return rstd::into(ncrequest::ClientError {
             .backend = ncrequest::ClientBackend::Curl,
             .code    = static_cast<rstd::i32>(e),
             .message = message != nullptr ? message : "curl client error",

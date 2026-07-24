@@ -241,15 +241,71 @@ struct Impl<fmt::Display, ncrequest::http::CookieError> : ImplBase<ncrequest::ht
     }
 };
 
+export template<>
+struct Impl<fmt::Debug, ncrequest::http::UrlError> : ImplBase<ncrequest::http::UrlError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<fmt::Debug, ncrequest::http::HeaderError> : ImplBase<ncrequest::http::HeaderError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<fmt::Debug, ncrequest::http::HttpParseError>
+    : ImplBase<ncrequest::http::HttpParseError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<fmt::Debug, ncrequest::http::QueryError> : ImplBase<ncrequest::http::QueryError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<fmt::Debug, ncrequest::http::CookieError> : ImplBase<ncrequest::http::CookieError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+export template<>
+struct Impl<error::Error, ncrequest::http::UrlError>
+    : DefaultInImpl<error::Error, ncrequest::http::UrlError> {};
+
+export template<>
+struct Impl<error::Error, ncrequest::http::HeaderError>
+    : DefaultInImpl<error::Error, ncrequest::http::HeaderError> {};
+
+export template<>
+struct Impl<error::Error, ncrequest::http::HttpParseError>
+    : DefaultInImpl<error::Error, ncrequest::http::HttpParseError> {};
+
+export template<>
+struct Impl<error::Error, ncrequest::http::QueryError>
+    : DefaultInImpl<error::Error, ncrequest::http::QueryError> {};
+
+export template<>
+struct Impl<error::Error, ncrequest::http::CookieError>
+    : DefaultInImpl<error::Error, ncrequest::http::CookieError> {};
+
 } // namespace rstd
 
 namespace ncrequest::http
 {
 
-static_assert(Impled<UrlError, rstd::fmt::Display>);
-static_assert(Impled<HeaderError, rstd::fmt::Display>);
-static_assert(Impled<HttpParseError, rstd::fmt::Display>);
-static_assert(Impled<QueryError, rstd::fmt::Display>);
-static_assert(Impled<CookieError, rstd::fmt::Display>);
+static_assert(Impled<UrlError, rstd::error::Error>);
+static_assert(Impled<HeaderError, rstd::error::Error>);
+static_assert(Impled<HttpParseError, rstd::error::Error>);
+static_assert(Impled<QueryError, rstd::error::Error>);
+static_assert(Impled<CookieError, rstd::error::Error>);
 
 } // namespace ncrequest::http

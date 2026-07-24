@@ -1400,6 +1400,18 @@ TEST(http, HttpErrorDisplayTraitsDescribeStableKinds) {
               "HTTP field section is too large");
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", query)), "invalid UTF-8 in query");
     EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", cookie)), "invalid cookie attribute");
+
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{:?}", url)),
+              "HTTP URL has an unsupported scheme");
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(url).source().is_none());
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(header).source().is_none());
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(message).source().is_none());
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(query).source().is_none());
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(cookie).source().is_none());
+
+    auto erased = Box<rstd::dyn<rstd::error::Error>>::make(rstd::move(url));
+    EXPECT_TRUE(rstd::error::is<UrlError>(erased.as_ref()));
+    EXPECT_TRUE(rstd::move(erased).downcast<UrlError>().is_ok());
 }
 
 TEST(http, RstdAsyncPollFuture) {
@@ -1415,8 +1427,20 @@ TEST(http, ErrorModelVariants) {
     EXPECT_EQ(curl_error.as_Client().error.backend, ncrequest::ClientBackend::Curl);
     EXPECT_EQ(curl_error.as_Client().error.code,
               static_cast<rstd::i32>(curl::CURLcode::CURLE_COULDNT_CONNECT));
+    auto client_source = rstd::as<rstd::error::Error>(curl_error).source();
+    ASSERT_TRUE(client_source.is_some());
+    EXPECT_TRUE(rstd::error::is<ncrequest::ClientError>(*client_source));
+    EXPECT_EQ(client_source->as_raw_ptr(), &curl_error.as_Client().error);
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", curl_error)), "client request failed");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", *client_source)),
+              curl::curl_easy_strerror(curl::CURLcode::CURLE_COULDNT_CONNECT));
+
+    auto multi_error = ncrequest::CurlMultiError::Multi(curl::CURLMcode::CURLM_BAD_HANDLE);
+    EXPECT_TRUE(rstd::as<rstd::error::Error>(multi_error).source().is_none());
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", multi_error)),
+              curl::curl_multi_strerror(curl::CURLMcode::CURLM_BAD_HANDLE));
 #else
-    auto client = ncrequest::Error::Client(ncrequest::ClientError {
+    ncrequest::Error client = rstd::into(ncrequest::ClientError {
         .backend = ncrequest::ClientBackend::QtNetwork,
         .code    = i32(7),
         .message = "client error",
@@ -1425,6 +1449,12 @@ TEST(http, ErrorModelVariants) {
     ASSERT_TRUE(client.is_Client());
     EXPECT_EQ(client.as_Client().error.backend, ncrequest::ClientBackend::QtNetwork);
     EXPECT_EQ(client.as_Client().error.code.to_primitive(), 7);
+    auto client_source = rstd::as<rstd::error::Error>(client).source();
+    ASSERT_TRUE(client_source.is_some());
+    EXPECT_TRUE(rstd::error::is<ncrequest::ClientError>(*client_source));
+    EXPECT_EQ(client_source->as_raw_ptr(), &client.as_Client().error);
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", client)), "client request failed");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", *client_source)), "client error");
 #endif
 
     auto io = rstd::io::error::Error::from_kind(
@@ -1434,6 +1464,12 @@ TEST(http, ErrorModelVariants) {
     ASSERT_TRUE(io_error.is_Io());
     EXPECT_EQ(io_error.as_Io().error.kind(),
               (rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::TimedOut }));
+    auto io_source = rstd::as<rstd::error::Error>(io_error).source();
+    ASSERT_TRUE(io_source.is_some());
+    EXPECT_TRUE(rstd::error::is<rstd::io::error::Error>(*io_source));
+    EXPECT_EQ(io_source->as_raw_ptr(), &io_error.as_Io().error);
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", io_error)), "I/O request failed");
+    EXPECT_EQ(rstd::cppstd::to_string(rstd::format("{}", *io_source)), "timed out");
 
     auto canceled = ncrequest::Error::Canceled();
     EXPECT_EQ(canceled.kind(), ncrequest::ErrorKind::Canceled);
