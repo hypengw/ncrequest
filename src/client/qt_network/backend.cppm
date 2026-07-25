@@ -45,17 +45,6 @@ public:
     auto is_closed() -> bool { return m_target.isNull(); }
 };
 
-} // namespace ncrequest::client::qt_network
-
-template<>
-struct rstd::Impl<rstd::async::Executor, ncrequest::client::qt_network::QtExecutor>
-    : rstd::LinkClassMethod<rstd::async::Executor, ncrequest::client::qt_network::QtExecutor> {};
-
-namespace ncrequest::client::qt_network
-{
-
-using namespace ncrequest::qt;
-
 auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor> {
     if (target == nullptr) return None<rstd::async::AnyExecutor>();
     return Some(rstd::async::AnyExecutor::from_executor(QtExecutor { target }));
