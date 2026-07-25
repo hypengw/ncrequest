@@ -79,7 +79,7 @@ public:
             auto value = (**field).value().as_bytes();
 
             auto bytes = rstd::vec::Vec<u8>::with_capacity(name.size() + value.len() + usize(2));
-            bytes.extend_from_slice(rstd::str_::as_bytes(name));
+            bytes.extend_from_slice(name.as_bytes());
             bytes.extend_from_slice(": "_bytes);
             bytes.extend_from_slice(value);
             auto header = rstd::ffi::CString::from_vec_unchecked(rstd::move(bytes));

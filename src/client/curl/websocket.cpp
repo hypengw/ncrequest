@@ -282,7 +282,7 @@ public:
 
     auto is_connected() const -> bool { return m_connected.load(Ordering::Acquire); }
 
-    void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
+    void send(ref<str> message) { send(message.as_bytes()); }
 
     void send(slice<u8> in) {
         auto msg = rstd::rc::allocate_make_rc<byte[]>(m_alloc, in.len(), byte {});

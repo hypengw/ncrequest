@@ -704,7 +704,7 @@ TEST(http, ParserCursorCompositionAndErrors) {
     EXPECT_EQ(prefix.unwrap().end.to_primitive(), 3u);
     EXPECT_EQ(cursor.offset().to_primitive(), 3u);
     auto prefix_bytes = cursor.slice(parser::Span { usize(), usize(3) });
-    auto prefix_text  = rstd::from_utf8_unchecked(prefix_bytes);
+    auto prefix_text  = rstd::str_::from_utf8_unchecked(prefix_bytes);
     EXPECT_EQ(rstd::cppstd::as_string_view(prefix_text), "alp");
 
     auto incomplete = parser::take_literal(cursor, "habet"_str);
@@ -1258,7 +1258,7 @@ TEST(http, Http1HeadParserComposesAcrossArbitraryChunks) {
         std::string(ncrequest::http::Http1HeadParser::MaxHeaderBytes.to_primitive() + 1, 'x');
     auto oversized_parser = ncrequest::http::Http1HeadParser {};
     auto oversized_result =
-        oversized_parser.push(rstd::str_::as_bytes(as_rstd_str(oversized)));
+        oversized_parser.push(as_rstd_str(oversized).as_bytes());
     ASSERT_TRUE(oversized_result.is_err());
     EXPECT_TRUE(oversized_result.unwrap_err().kind().is_HeaderTooLarge());
     EXPECT_EQ(oversized_result.unwrap_err().offset().to_primitive(),
@@ -1269,7 +1269,7 @@ TEST(http, Http1HeadParserComposesAcrossArbitraryChunks) {
                             'x');
     auto large_body_parser = ncrequest::http::Http1HeadParser {};
     auto large_body_result =
-        large_body_parser.push(rstd::str_::as_bytes(as_rstd_str(large_body_input)));
+        large_body_parser.push(as_rstd_str(large_body_input).as_bytes());
     ASSERT_TRUE(large_body_result.is_ok());
     EXPECT_TRUE(large_body_result.unwrap().is_Complete());
 }
@@ -1322,7 +1322,7 @@ TEST(http, MessageHeadParsesRequestTargetFormsAndTraits) {
 
     for (auto const& example : examples) {
         auto parsed = ncrequest::http::MessageHead::parse(
-            rstd::str_::as_bytes(as_rstd_str(example.line)));
+            as_rstd_str(example.line).as_bytes());
         ASSERT_TRUE(parsed.is_ok()) << example.line;
         auto head = rstd::move(parsed).unwrap();
         ASSERT_TRUE(head.start().is_Request()) << example.line;

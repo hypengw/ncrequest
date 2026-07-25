@@ -36,7 +36,7 @@ auto starts_with_at(ref<str> input, usize offset, ref<str> prefix) noexcept -> b
 }
 
 void append_range(String& output, ref<str> input, usize begin, usize end) {
-    output.push_str(*rstd::str_::get(input, begin, end));
+    output.push_str(*input.get(begin, end));
 }
 
 void remove_last_segment(String& output) {
@@ -248,7 +248,7 @@ auto Url::as_ref() const noexcept -> ref<str> { return source_.as_str(); }
 auto Url::component(Component value) const noexcept -> Option<ref<str>> {
     if (! value.present) return None();
     auto source = source_.as_str();
-    return rstd::str_::get(source, value.offset, value.offset + value.size);
+    return source.get(value.offset, value.offset + value.size);
 }
 
 auto Url::scheme() const noexcept -> Option<ref<str>> { return component(scheme_); }
@@ -259,7 +259,7 @@ auto Url::port() const noexcept -> Option<ref<str>> { return component(port_); }
 
 auto Url::path() const noexcept -> ref<str> {
     auto source = source_.as_str();
-    return *rstd::str_::get(source, path_.offset, path_.offset + path_.size);
+    return *source.get(path_.offset, path_.offset + path_.size);
 }
 
 auto Url::query() const noexcept -> Option<ref<str>> { return component(query_); }

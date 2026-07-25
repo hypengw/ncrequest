@@ -128,7 +128,7 @@ auto is_expired(const QNetworkCookie& cookie, const QDateTime& now) -> bool {
 }
 
 void append_text(rstd::vec::Vec<u8>& output, ref<str> text) {
-    output.extend_from_slice(rstd::str_::as_bytes(text));
+    output.extend_from_slice(text.as_bytes());
 }
 
 void append_bytes(rstd::vec::Vec<u8>& output, const QByteArray& bytes) {

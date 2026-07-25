@@ -212,7 +212,7 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::Cookie> : ImplBase<ncrequest::http::Cookie> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        auto bytes   = str_::as_bytes(encoded.as_str());
+        auto bytes   = encoded.as_str().as_bytes();
         return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
@@ -221,7 +221,7 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::CookieHeader> : ImplBase<ncrequest::http::CookieHeader> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        auto bytes   = str_::as_bytes(encoded.as_str());
+        auto bytes   = encoded.as_str().as_bytes();
         return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };
@@ -230,7 +230,7 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::SetCookie> : ImplBase<ncrequest::http::SetCookie> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto encoded = this->self().encode();
-        auto bytes   = str_::as_bytes(encoded.as_str());
+        auto bytes   = encoded.as_str().as_bytes();
         return formatter.write_raw(bytes.as_raw_ptr(), bytes.len().to_primitive());
     }
 };

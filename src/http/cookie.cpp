@@ -111,7 +111,7 @@ Cookie::Cookie(String name, String value, bool quoted) noexcept
     : name_(rstd::move(name)), value_(rstd::move(value)), quoted_(quoted) {}
 
 auto Cookie::parse(ref<str> input) -> rstd::Result<Cookie, CookieError> {
-    return parse_bytes(rstd::str_::as_bytes(input));
+    return parse_bytes(input.as_bytes());
 }
 
 auto Cookie::parse_bytes(slice<u8> input) -> rstd::Result<Cookie, CookieError> {
@@ -153,7 +153,7 @@ auto CookieIter::next() noexcept -> Option<Item> {
 }
 
 auto CookieHeader::parse(ref<str> input) -> rstd::Result<CookieHeader, CookieError> {
-    return parse_bytes(rstd::str_::as_bytes(input));
+    return parse_bytes(input.as_bytes());
 }
 
 auto CookieHeader::parse_bytes(slice<u8> input) -> rstd::Result<CookieHeader, CookieError> {
@@ -253,7 +253,7 @@ SetCookie::SetCookie(Cookie cookie, Vec<CookieAttribute> attributes) noexcept
     : cookie_(rstd::move(cookie)), attributes_(rstd::move(attributes)) {}
 
 auto SetCookie::parse(ref<str> input) -> rstd::Result<SetCookie, CookieError> {
-    return parse_bytes(rstd::str_::as_bytes(input));
+    return parse_bytes(input.as_bytes());
 }
 
 auto SetCookie::parse_bytes(slice<u8> input) -> rstd::Result<SetCookie, CookieError> {

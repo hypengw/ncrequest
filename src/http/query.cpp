@@ -153,9 +153,9 @@ auto QueryParams::parse_with_mode(ref<str> input, bool form)
 
         usize separator = pair_begin;
         while (separator < pair_end && input[separator].to_primitive() != '=') ++separator;
-        auto name_text   = *rstd::str_::get(input, pair_begin, separator);
+        auto name_text   = *input.get(pair_begin, separator);
         auto value_begin = separator < pair_end ? separator + usize(1) : pair_end;
-        auto value_text  = *rstd::str_::get(input, value_begin, pair_end);
+        auto value_text  = *input.get(value_begin, pair_end);
 
         auto name = form ? decode_form_component(name_text) : decode_component(name_text);
         if (name.is_err()) {

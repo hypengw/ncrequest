@@ -25,12 +25,12 @@ auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
     -> rstd::Result<StartLine, HttpParseError> {
     RSTD_MATCH(rstd::move(parsed)) {
         RSTD_CASE(Request, value) {
-            auto method_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+            auto method_text = rstd::str_::from_utf8_unchecked(slice<u8>::from_raw_parts(
                 input.as_raw_ptr() + value.method.begin.to_primitive(), value.method.size()));
             auto method = Method::parse(method_text);
             if (method.is_err()) return Err(rstd::move(method).unwrap_err());
 
-            auto target_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+            auto target_text = rstd::str_::from_utf8_unchecked(slice<u8>::from_raw_parts(
                 input.as_raw_ptr() + value.target.begin.to_primitive(), value.target.size()));
             return Ok(StartLine::Request(RequestLine { rstd::move(method).unwrap(),
                                                        String::make(target_text),
@@ -56,7 +56,7 @@ auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
 
 auto make_field(slice<u8> input, parser::http1::FieldLine parsed, usize base)
     -> rstd::Result<HeaderField, HttpParseError> {
-    auto name_text = rstd::from_utf8_unchecked(slice<u8>::from_raw_parts(
+    auto name_text = rstd::str_::from_utf8_unchecked(slice<u8>::from_raw_parts(
         input.as_raw_ptr() + parsed.name.begin.to_primitive(), parsed.name.size()));
     auto name      = HeaderName::parse(name_text);
     if (name.is_err()) {

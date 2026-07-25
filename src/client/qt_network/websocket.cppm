@@ -90,7 +90,7 @@ public:
 
     bool is_connected() const { return m_connected && m_socket != nullptr; }
 
-    void send(ref<str> message) { send(rstd::str_::as_bytes(message)); }
+    void send(ref<str> message) { send(message.as_bytes()); }
 
     void send(slice<u8> message) {
         auto* socket = m_socket.data();
@@ -180,7 +180,7 @@ private:
         auto text = message.toUtf8();
         auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
                                                static_cast<usize>(text.size()));
-        m_on_error(rstd::from_utf8_unchecked(bytes));
+        m_on_error(rstd::str_::from_utf8_unchecked(bytes));
     }
 
     void disconnect_signals() {

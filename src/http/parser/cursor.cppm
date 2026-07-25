@@ -81,7 +81,7 @@ using ParseResult = Result<T, ParseFailure>;
 
 class Cursor {
 public:
-    explicit constexpr Cursor(ref<str> input) noexcept: input_(rstd::str_::as_bytes(input)) {}
+    explicit constexpr Cursor(ref<str> input) noexcept: input_(input.as_bytes()) {}
 
     explicit constexpr Cursor(rstd::slice<u8> input) noexcept: input_(input) {}
 

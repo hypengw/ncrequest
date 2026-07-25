@@ -52,7 +52,7 @@ auto HeaderName::clone() const -> HeaderName { return HeaderName { value_.clone(
 HeaderValue::HeaderValue(Vec<u8> value) noexcept: value_(rstd::move(value)) {}
 
 auto HeaderValue::parse(ref<str> input) -> rstd::Result<HeaderValue, HeaderError> {
-    return from_bytes(rstd::str_::as_bytes(input));
+    return from_bytes(input.as_bytes());
 }
 
 auto HeaderValue::from_bytes(slice<u8> input) -> rstd::Result<HeaderValue, HeaderError> {
