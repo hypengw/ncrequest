@@ -569,6 +569,16 @@ auto run_http(Start&& start) {
     return rstd::async::block_on(start(rstd::move(session)));
 }
 
+template<typename Start>
+auto run_http_multi_thread(Start&& start) {
+    auto runtime = rstd::async::RuntimeBuilder::multi_thread()
+                       .worker_threads(rstd::usize(2))
+                       .build()
+                       .unwrap();
+    auto session = ncrequest::Session::make();
+    return runtime.block_on(start(rstd::move(session)));
+}
+
 auto rstd_wait_yield() -> ncrequest::coro<int> {
     co_await rstd::async::yield_now();
     co_return 42;
@@ -1600,6 +1610,22 @@ TEST(http, LocalHttpGetText) {
     }
 
     auto result = run_http([url = local_http_url(base, "/text")](auto session) {
+        return fetch_text(rstd::move(session), url);
+    });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_TRUE(result.has_test_header);
+    EXPECT_EQ(result.body, "ncrequest python http server body\n");
+}
+
+TEST(http, LocalHttpGetTextRstdMultiThreadRuntime) {
+    auto base = local_http_base_url();
+    if (base.empty()) {
+        GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
+    }
+
+    auto result = run_http_multi_thread([url = local_http_url(base, "/text")](auto session) {
         return fetch_text(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
