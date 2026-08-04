@@ -1,0 +1,84 @@
+[package]
+name = "ncrequest"
+version = "0.1.0"
+module = "ncrequest"
+
+[library]
+archive = "ncrequest"
+discovery = "explicit"
+sources = [
+  "src/http/parser/cursor.cppm",
+  "src/http/parser/ascii.cppm",
+  "src/http/parser/uri.cppm",
+  "src/http/parser/http1.cppm",
+  "src/http/parser/mod.cppm",
+  "src/type.cppm",
+  "src/error.cppm",
+  "src/session_share.cppm",
+  "src/request.cppm",
+  "src/client/callback.cppm",
+  "src/client/http_backend.cppm",
+  "src/client/websocket_backend.cppm",
+  "src/response.cppm",
+  "src/session.cppm",
+  "src/http/error.cppm",
+  "src/http/url.cppm",
+  "src/http/header.cppm",
+  "src/http/query.cppm",
+  "src/http/cookie.cppm",
+  "src/http/message.cppm",
+  "src/http.cppm",
+  "src/websocket.cppm",
+  "src/coro/base.cppm",
+  "src/coro/mod.cppm",
+  "src/mod.cppm",
+  "src/client/curl/session_share.cppm",
+  "src/client/curl/curl_easy.cppm",
+  "src/client/curl/curl_multi.cppm",
+  "src/client/curl/curl.cppm",
+  "src/client/curl/init.cppm",
+  "src/client/curl/mod.cppm",
+  "src/client/curl/connection.cppm",
+  "src/client/curl/response.cppm",
+  "src/client/curl/session.cppm",
+  "src/client/curl/websocket.cppm",
+  "src/http/url.cpp",
+  "src/http/header.cpp",
+  "src/http/query.cpp",
+  "src/http/cookie.cpp",
+  "src/http/message.cpp",
+  "src/request.cpp",
+  "src/session_share.cpp",
+  "src/client/curl/init.cpp",
+  "src/client/curl/response.cpp",
+  "src/client/curl/session.cpp",
+  "src/client/curl/websocket.cpp",
+]
+
+[usage]
+public-definitions = [
+  "NCREQUEST_CLIENT_BACKEND_CURL",
+  "NCREQUEST_USE_RSTD_CORO",
+]
+public-options = ["-fsized-deallocation"]
+private-include-directories = ["src"]
+private-options = [
+  "-fPIC",
+  "-Wall",
+  "-Wextra",
+  "-Wpedantic",
+  "-Werror=mismatched-tags",
+]
+
+[dependencies.rstd-std]
+path = "../rstd"
+visibility = "public"
+
+[dependencies.rstd-cppstd]
+path = "../rstd"
+visibility = "public"
+
+[dependencies.libcurl]
+pkg-config = "libcurl"
+version = ">= 7.86.0"
+visibility = "private"

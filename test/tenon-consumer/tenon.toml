@@ -1,0 +1,12 @@
+[package]
+name = "ncrequest-tenon-consumer"
+version = "0.1.0"
+
+[executable]
+name = "ncrequest-tenon-consumer"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[dependencies.ncrequest]
+path = "../.."
+visibility = "private"
