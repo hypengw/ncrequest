@@ -78,7 +78,7 @@ visibility = "public"
 path = "../rstd"
 visibility = "public"
 
-[dependencies.libcurl]
-pkg-config = "libcurl"
+[external-dependencies.pkg-config.libcurl]
+module = "libcurl"
 version = ">= 7.86.0"
 visibility = "private"
