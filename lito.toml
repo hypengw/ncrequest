@@ -60,9 +60,9 @@ public-definitions = [
   "NCREQUEST_CLIENT_BACKEND_CURL",
   "NCREQUEST_USE_RSTD_CORO",
 ]
-public-options = ["-fsized-deallocation"]
 private-include-directories = ["src"]
-private-options = [
+options = [
+  "-fsized-deallocation",
   "-fPIC",
   "-Wall",
   "-Wextra",
