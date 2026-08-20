@@ -252,14 +252,10 @@ export template<>
 struct Impl<fmt::Display, ncrequest::http::Version> : ImplBase<ncrequest::http::Version> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto value = rstd::array<u8, 8> {
-            u8('H'),
-            u8('T'),
-            u8('T'),
-            u8('P'),
-            u8('/'),
-            u8('0' + this->self().major().to_primitive()),
-            u8('.'),
-            u8('0' + this->self().minor().to_primitive()),
+            u8('H'), u8('T'),
+            u8('T'), u8('P'),
+            u8('/'), u8('0' + this->self().major().to_primitive()),
+            u8('.'), u8('0' + this->self().minor().to_primitive()),
         };
         return formatter.write_raw(value.data(), value.len().to_primitive());
     }
@@ -268,7 +264,7 @@ struct Impl<fmt::Display, ncrequest::http::Version> : ImplBase<ncrequest::http::
 export template<>
 struct Impl<fmt::Display, ncrequest::http::StatusCode> : ImplBase<ncrequest::http::StatusCode> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        auto       value   = this->self().value().to_primitive();
+        auto value = this->self().value().to_primitive();
         auto bytes = rstd::array<u8, 3> {
             u8('0' + value / 100),
             u8('0' + value / 10 % 10),

@@ -17,7 +17,7 @@ public:
     ~SessionBackend();
 
     explicit SessionBackend(std::pmr::memory_resource* = std::pmr::get_default_resource(),
-                            CurlOptions options = {});
+                            CurlOptions options        = {});
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {

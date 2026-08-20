@@ -404,10 +404,7 @@ private:
 
         auto url = rstd::ffi::CString::from_vec_unchecked(
             rstd::into<rstd::vec::Vec<u8>>(rstd::move(command.url)));
-        auto result =
-            curl_easy_setopt(m_curl,
-                             CURLoption::CURLOPT_URL,
-                             url.as_ptr());
+        auto result = curl_easy_setopt(m_curl, CURLoption::CURLOPT_URL, url.as_ptr());
         if (result == CURLcode::CURLE_OK) {
             result = curl_easy_setopt(m_curl, CURLoption::CURLOPT_CONNECT_ONLY, 2L);
         }

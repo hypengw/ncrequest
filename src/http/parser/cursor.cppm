@@ -132,12 +132,12 @@ public:
     [[nodiscard]]
     constexpr auto slice(Span span) const noexcept -> rstd::slice<u8> {
         return rstd::slice<u8>::from_raw_parts(input_.as_raw_ptr() + span.begin.to_primitive(),
-                                                 span.size());
+                                               span.size());
     }
 
 private:
     rstd::slice<u8> input_;
-    usize             offset_ {};
+    usize           offset_ {};
 };
 
 using Predicate = bool (*)(u8) noexcept;

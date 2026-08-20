@@ -148,8 +148,7 @@ public:
         CurlEasy x;
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
         // append filename
-        x.setopt(CURLoption::CURLOPT_COOKIEFILE,
-                 owned_filename.as_ptr());
+        x.setopt(CURLoption::CURLOPT_COOKIEFILE, owned_filename.as_ptr());
         // actually load
         x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
     }
@@ -161,8 +160,7 @@ public:
 
         CurlEasy x;
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
-        x.setopt(CURLoption::CURLOPT_COOKIEJAR,
-                 owned_filename.as_ptr());
+        x.setopt(CURLoption::CURLOPT_COOKIEJAR, owned_filename.as_ptr());
         // save when x destruct
     }
 

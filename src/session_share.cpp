@@ -28,7 +28,7 @@ public:
 };
 
 SessionShare::SessionShare(Arc<Private> state): d_ptr(rstd::move(state)) {}
-SessionShare::SessionShare(SessionShare&&) noexcept = default;
+SessionShare::SessionShare(SessionShare&&) noexcept                    = default;
 auto SessionShare::operator=(SessionShare&&) noexcept -> SessionShare& = default;
 
 SessionShare::SessionShare(): d_ptr(Arc<Private>::make()) {
@@ -36,9 +36,7 @@ SessionShare::SessionShare(): d_ptr(Arc<Private>::make()) {
         d_ptr->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
     curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
     curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
-    curl_share_setopt(d_ptr->share,
-                      CURLSHoption::CURLSHOPT_USERDATA,
-                      d_ptr.as_ptr().as_raw_ptr());
+    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_USERDATA, d_ptr.as_ptr().as_raw_ptr());
 }
 SessionShare::~SessionShare() {}
 
@@ -55,8 +53,7 @@ void SessionShare::load(ref<rstd::path::Path> path) {
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
     // append filename
-    x.setopt(CURLoption::CURLOPT_COOKIEFILE,
-             owned_filename.as_ptr());
+    x.setopt(CURLoption::CURLOPT_COOKIEFILE, owned_filename.as_ptr());
     // actually load
     x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
 }
@@ -68,8 +65,7 @@ void SessionShare::save(ref<rstd::path::Path> path) const {
 
     CurlEasy x;
     x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
-    x.setopt(CURLoption::CURLOPT_COOKIEJAR,
-             owned_filename.as_ptr());
+    x.setopt(CURLoption::CURLOPT_COOKIEJAR, owned_filename.as_ptr());
     // save when x destruct
 }
 

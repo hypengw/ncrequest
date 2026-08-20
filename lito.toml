@@ -1,11 +1,11 @@
 [package]
 name = "ncrequest"
 version = "0.1.0"
-module = "ncrequest"
 
-[library]
+[lib]
+name = "ncrequest"
+module = "ncrequest"
 archive = "ncrequest"
-discovery = "explicit"
 sources = [
   "src/http/parser/cursor.cppm",
   "src/http/parser/ascii.cppm",
@@ -62,20 +62,16 @@ public-definitions = [
 ]
 private-include-directories = ["src"]
 options = [
-  "-fsized-deallocation",
-  "-fPIC",
-  "-Wall",
   "-Wextra",
-  "-Wpedantic",
   "-Werror=mismatched-tags",
 ]
 
 [dependencies.rstd-std]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "public"
 
 [dependencies.rstd-cppstd]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "public"
 
 [external-dependencies.pkg-config.libcurl]

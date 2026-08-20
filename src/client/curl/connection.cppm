@@ -426,8 +426,8 @@ private:
     static rstd::size_t header_callback(char* ptr, rstd::size_t size, rstd::size_t nmemb,
                                         Connection* self) {
         auto total_size = usize(size * nmemb);
-        auto header = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
-        auto lock   = RawMutexGuard { self->m_mutex };
+        auto header     = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
+        auto lock       = RawMutexGuard { self->m_mutex };
 
         if (self->m_body_started) {
             self->m_trailer_started = true;

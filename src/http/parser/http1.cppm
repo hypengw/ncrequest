@@ -143,12 +143,13 @@ auto valid_connect_target(slice<u8> input, Span target) noexcept -> bool {
 }
 
 auto validate_request_target(slice<u8> input, Span method, Span target) -> ParseResult<empty> {
-    auto target_bytes = slice<u8>::from_raw_parts(
-        input.as_raw_ptr() + target.begin.to_primitive(), target.size());
+    auto target_bytes =
+        slice<u8>::from_raw_parts(input.as_raw_ptr() + target.begin.to_primitive(), target.size());
     auto target_text = rstd::str_::from_utf8(target_bytes);
     if (target_text.is_err()) {
         return Err(ParseFailure { Expectation::RequestTarget(),
-                                  target.begin + target_text.unwrap_err().valid_up_to(), true });
+                                  target.begin + target_text.unwrap_err().valid_up_to(),
+                                  true });
     }
 
     if (target.size() == usize(1) && input[target.begin] == u8('*')) return Ok(empty {});
@@ -281,9 +282,8 @@ auto parse_status_line(slice<u8> input) -> ParseResult<StartLine> {
 
 [[nodiscard]]
 auto parse_start_line(slice<u8> input) -> ParseResult<StartLine> {
-    constexpr auto prefix =
-        rstd::array<u8, 5> { u8('H'), u8('T'), u8('T'), u8('P'), u8('/') };
-    bool           status   = input.len() >= usize(5);
+    constexpr auto prefix = rstd::array<u8, 5> { u8('H'), u8('T'), u8('T'), u8('P'), u8('/') };
+    bool           status = input.len() >= usize(5);
     for (usize offset {}; status && offset < usize(5); ++offset) {
         status = input[offset] == prefix[offset];
     }
@@ -316,8 +316,7 @@ auto parse_field_line(slice<u8> input) -> ParseResult<FieldLine> {
         cursor.advance(usize(1));
     }
     auto value = cursor.span_from(value_begin);
-    while (value.end > value.begin &&
-           detail::is_ows(input[value.end - usize(1)])) {
+    while (value.end > value.begin && detail::is_ows(input[value.end - usize(1)])) {
         --value.end;
     }
 

@@ -27,7 +27,7 @@ auto make_start_line(slice<u8> input, parser::http1::StartLine parsed)
         RSTD_CASE(Request, value) {
             auto method_text = rstd::str_::from_utf8_unchecked(slice<u8>::from_raw_parts(
                 input.as_raw_ptr() + value.method.begin.to_primitive(), value.method.size()));
-            auto method = Method::parse(method_text);
+            auto method      = Method::parse(method_text);
             if (method.is_err()) return Err(rstd::move(method).unwrap_err());
 
             auto target_text = rstd::str_::from_utf8_unchecked(slice<u8>::from_raw_parts(

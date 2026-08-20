@@ -19,8 +19,7 @@ public:
 
     template<typename F>
         requires(! rstd::mtp::same_as<rstd::mtp::rm_cvf<F>, Callback>)
-    Callback(F function)
-        : m_state(Some(Arc<State>::make(Function::make(rstd::move(function))))) {}
+    Callback(F function): m_state(Some(Arc<State>::make(Function::make(rstd::move(function))))) {}
 
     Callback(const Callback&)                    = delete;
     auto operator=(const Callback&) -> Callback& = delete;

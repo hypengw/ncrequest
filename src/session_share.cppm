@@ -17,7 +17,7 @@ public:
     SessionShare(SessionShare&&) noexcept;
     auto operator=(SessionShare&&) noexcept -> SessionShare&;
 
-    SessionShare(const SessionShare&) = delete;
+    SessionShare(const SessionShare&)                    = delete;
     auto operator=(const SessionShare&) -> SessionShare& = delete;
 
     void load(ref<Path> path);

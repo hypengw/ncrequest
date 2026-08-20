@@ -52,8 +52,7 @@ private:
         }
     }
 
-    auto send(const Request& req, http::Operation operation,
-              rstd::Option<rstd::bytes::Bytes> body)
+    auto send(const Request& req, http::Operation operation, rstd::Option<rstd::bytes::Bytes> body)
         -> coro<Result<Arc<Response>>> {
         auto res = co_await this->start_request(req, operation, rstd::move(body));
         if (res.is_err()) {

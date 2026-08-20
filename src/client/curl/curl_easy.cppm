@@ -83,7 +83,7 @@ public:
             bytes.extend_from_slice(": "_bytes);
             bytes.extend_from_slice(value);
             auto header = rstd::ffi::CString::from_vec_unchecked(rstd::move(bytes));
-            m_headers = curl_slist_append(m_headers, header.as_ptr());
+            m_headers   = curl_slist_append(m_headers, header.as_ptr());
         }
         if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);
     }
