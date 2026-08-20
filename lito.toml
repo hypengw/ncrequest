@@ -2,10 +2,46 @@
 name = "ncrequest"
 version = "0.1.0"
 
+[features.qt]
+default = false
+
+[source-groups.curl]
+sources = [
+  "src/client/curl/session_share.cppm",
+  "src/client/curl/curl_easy.cppm",
+  "src/client/curl/curl_multi.cppm",
+  "src/client/curl/curl.cppm",
+  "src/client/curl/init.cppm",
+  "src/client/curl/mod.cppm",
+  "src/client/curl/connection.cppm",
+  "src/client/curl/response.cppm",
+  "src/client/curl/session.cppm",
+  "src/client/curl/websocket.cppm",
+  "src/client/curl/init.cpp",
+  "src/client/curl/response.cpp",
+  "src/client/curl/session.cpp",
+  "src/client/curl/websocket.cpp",
+  "src/session_share.cpp",
+]
+
+[source-groups.qt]
+sources = [
+  "src/client/qt_network/qt.cppm",
+  "src/client/qt_network/session_share.cppm",
+  "src/client/qt_network/backend.cppm",
+  "src/client/qt_network/websocket.cppm",
+  "src/client/qt_network/mod.cppm",
+  "src/client/qt_network/session_share.cpp",
+]
+
 [lib]
 name = "ncrequest"
 module = "ncrequest"
 archive = "ncrequest"
+when = [
+  { condition = "!feature.qt", source-groups = ["curl"] },
+  { condition = "feature.qt", source-groups = ["qt"] },
+]
 sources = [
   "src/http/parser/cursor.cppm",
   "src/http/parser/ascii.cppm",
@@ -32,39 +68,33 @@ sources = [
   "src/coro/base.cppm",
   "src/coro/mod.cppm",
   "src/mod.cppm",
-  "src/client/curl/session_share.cppm",
-  "src/client/curl/curl_easy.cppm",
-  "src/client/curl/curl_multi.cppm",
-  "src/client/curl/curl.cppm",
-  "src/client/curl/init.cppm",
-  "src/client/curl/mod.cppm",
-  "src/client/curl/connection.cppm",
-  "src/client/curl/response.cppm",
-  "src/client/curl/session.cppm",
-  "src/client/curl/websocket.cppm",
   "src/http/url.cpp",
   "src/http/header.cpp",
   "src/http/query.cpp",
   "src/http/cookie.cpp",
   "src/http/message.cpp",
   "src/request.cpp",
-  "src/session_share.cpp",
-  "src/client/curl/init.cpp",
-  "src/client/curl/response.cpp",
-  "src/client/curl/session.cpp",
-  "src/client/curl/websocket.cpp",
 ]
 
 [usage]
-public-definitions = [
-  "NCREQUEST_CLIENT_BACKEND_CURL",
-  "NCREQUEST_USE_RSTD_CORO",
-]
+public-definitions = ["NCREQUEST_USE_RSTD_CORO"]
 private-include-directories = ["src"]
 options = [
   "-Wextra",
   "-Werror=mismatched-tags",
 ]
+
+[[when]]
+condition = "!feature.qt"
+
+[when.usage]
+public-definitions = ["NCREQUEST_CLIENT_BACKEND_CURL"]
+
+[[when]]
+condition = "feature.qt"
+
+[when.usage]
+public-definitions = ["NCREQUEST_CLIENT_BACKEND_QT_NETWORK"]
 
 [dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
@@ -75,6 +105,17 @@ git = "https://github.com/litocpp/rstd.git"
 visibility = "public"
 
 [external-dependencies.pkg-config.libcurl]
+condition = "!feature.qt"
 module = "libcurl"
 version = ">= 7.86.0"
 visibility = "private"
+
+[external-dependencies.cmake.qt6]
+condition = "feature.qt"
+package = "Qt6"
+components = ["Core", "Network", "WebSockets"]
+targets = [
+  { name = "Qt6::Core", visibility = "public" },
+  { name = "Qt6::Network", visibility = "public" },
+  { name = "Qt6::WebSockets", visibility = "public" },
+]

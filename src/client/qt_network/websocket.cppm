@@ -138,7 +138,7 @@ private:
                 auto bytes = message.toUtf8();
                 m_on_message(
                     slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(bytes.constData()),
-                                                static_cast<usize>(bytes.size())),
+                                              static_cast<usize>(bytes.size())),
                     true);
             }));
 
@@ -147,7 +147,7 @@ private:
                 if (! m_on_message) return;
                 m_on_message(
                     slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(message.constData()),
-                                                static_cast<usize>(message.size())),
+                                              static_cast<usize>(message.size())),
                     true);
             }));
 
@@ -177,7 +177,7 @@ private:
 
     void emit_error(const QString& message) {
         if (! m_on_error) return;
-        auto text = message.toUtf8();
+        auto text  = message.toUtf8();
         auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
                                                static_cast<usize>(text.size()));
         m_on_error(rstd::str_::from_utf8_unchecked(bytes));

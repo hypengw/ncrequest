@@ -111,17 +111,16 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
     raw_headers.reserve(static_cast<qsizetype>(req.header().len().to_primitive()));
     auto fields = req.header().iter();
     for (auto field = fields.next(); field.is_some(); field = fields.next()) {
-        auto name        = (**field).name().as_ref();
-        auto value       = (**field).value().as_bytes();
+        auto name  = (**field).name().as_ref();
+        auto value = (**field).value().as_bytes();
         if (req.header().values(name).count() > usize(1)) {
             return Err(
                 Error::Unsupported("Qt Network cannot preserve repeated request header fields"));
         }
-        raw_headers.append(
-            { QByteArray(reinterpret_cast<const char*>(name.data()),
-                         static_cast<qsizetype>(name.size().to_primitive())),
-              QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
-                         static_cast<qsizetype>(value.len().to_primitive())) });
+        raw_headers.append({ QByteArray(reinterpret_cast<const char*>(name.data()),
+                                        static_cast<qsizetype>(name.size().to_primitive())),
+                             QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
+                                        static_cast<qsizetype>(value.len().to_primitive())) });
     }
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 

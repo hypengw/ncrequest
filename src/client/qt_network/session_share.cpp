@@ -44,7 +44,7 @@ auto cookie_fields(slice<u8> line) -> rstd::Option<CookieFields> {
         if (tab == line.len()) return None<CookieFields>();
         fields.values[i.to_primitive()] = slice<u8>::from_raw_parts(line.as_raw_ptr(), tab);
         line = slice<u8>::from_raw_parts(line.as_raw_ptr() + tab.to_primitive() + 1,
-                                           line.len() - tab - usize(1));
+                                         line.len() - tab - usize(1));
     }
     fields.values[6] = line;
     return Some(rstd::move(fields));
@@ -68,7 +68,7 @@ auto parse_cookie(slice<u8> line) -> rstd::Option<QNetworkCookie> {
     if (starts_with(line, HttpOnlyPrefix)) {
         http_only = true;
         line = slice<u8>::from_raw_parts(line.as_raw_ptr() + HttpOnlyPrefix.len().to_primitive(),
-                                           line.len() - HttpOnlyPrefix.len());
+                                         line.len() - HttpOnlyPrefix.len());
     } else if (line.len() == usize() || line[usize()] == u8('#')) {
         return None<QNetworkCookie>();
     }
@@ -204,7 +204,7 @@ void SessionShare::load(ref<rstd::path::Path> path) {
         while (newline < bytes.len() && values[newline].to_primitive() != '\n') ++newline;
         auto end = newline;
         if (end > begin && values[end - usize(1)].to_primitive() == '\r') --end;
-        auto line = slice<u8>::from_raw_parts(bytes.data() + begin.to_primitive(), end - begin);
+        auto line   = slice<u8>::from_raw_parts(bytes.data() + begin.to_primitive(), end - begin);
         auto parsed = parse_cookie(line);
         if (parsed.is_some()) {
             auto cookie = rstd::move(parsed).unwrap();
@@ -240,8 +240,7 @@ void SessionShare::save(ref<rstd::path::Path> path) const {
 
         if (cookie.isHttpOnly()) output.extend_from_slice(HttpOnlyPrefix);
         append_bytes(output, domain);
-        append_text(output,
-                    cookie.domain().startsWith('.') ? "\tTRUE\t"_str : "\tFALSE\t"_str);
+        append_text(output, cookie.domain().startsWith('.') ? "\tTRUE\t"_str : "\tFALSE\t"_str);
         if (path.isEmpty()) {
             append_text(output, "/"_str);
         } else {
