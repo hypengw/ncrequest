@@ -9,4 +9,3 @@ sources = ["src/main.cpp"]
 
 [dependencies.ncrequest]
 path = "../.."
-visibility = "private"

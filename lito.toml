@@ -97,25 +97,24 @@ condition = "feature.qt"
 public-definitions = ["NCREQUEST_CLIENT_BACKEND_QT_NETWORK"]
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "public"
+version = "0.1.0"
+pub = true
 
 [dependencies.rstd-cppstd]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "public"
+version = "0.1.0"
+pub = true
 
 [external-dependencies.pkg-config.libcurl]
 condition = "!feature.qt"
 module = "libcurl"
 version = ">= 7.86.0"
-visibility = "private"
 
 [external-dependencies.cmake.qt6]
 condition = "feature.qt"
 package = "Qt6"
 components = ["Core", "Network", "WebSockets"]
 targets = [
-  { name = "Qt6::Core", visibility = "public" },
-  { name = "Qt6::Network", visibility = "public" },
-  { name = "Qt6::WebSockets", visibility = "public" },
+  { name = "Qt6::Core", pub = true },
+  { name = "Qt6::Network", pub = true },
+  { name = "Qt6::WebSockets", pub = true },
 ]
