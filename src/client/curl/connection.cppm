@@ -2,10 +2,10 @@ module;
 #include <rstd/enum.hpp>
 
 export module ncrequest:client_curl_connection;
-export import ncrequest.type;
+export import rstd;
 export import ncrequest.curl;
 export import ncrequest.coro;
-export import :http;
+export import lihttpto;
 export import :request;
 export import :error;
 export import :client_callback;
@@ -17,12 +17,13 @@ using rstd::async::Completion;
 using rstd::async::CompletionHandle;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
+using rstd::sync::Arc;
 using rstd::sync::Condvar;
 using rstd::sync::Mutex;
 using rstd::sync::MutexGuard;
+using rstd::sync::Weak;
 using rstd::sync::atomic::Atomic;
 using rstd::sync::atomic::Ordering;
-using std::pmr::polymorphic_allocator;
 
 namespace ncrequest::client::curl
 {
@@ -72,8 +73,11 @@ class Message final {
 
 export using SessionMessage = session_message::Message;
 
-export class SessionChannel : public NoCopy {
+export class SessionChannel {
 public:
+    SessionChannel(const SessionChannel&)                    = delete;
+    auto operator=(const SessionChannel&) -> SessionChannel& = delete;
+
     using WakeCallback = client::Callback<void()>;
 
     SessionChannel(): m_fields(Fields {}) {}
@@ -130,8 +134,6 @@ export class Connection {
     friend class SessionBackend;
 
 public:
-    using allocator_type = polymorphic_allocator<char>;
-
     static constexpr usize RECV_LIMIT { 64 * 1024 };
     static constexpr usize SEND_LIMIT { 64 * 1024 };
 
@@ -155,11 +157,9 @@ public:
         }
     };
 
-    template<typename Allocator>
     class Buffer {
     public:
-        Buffer(usize limit, const Allocator& aloc)
-            : m_state(State::Empty), m_limit(limit), m_transferred(), m_alloc(aloc) {}
+        explicit Buffer(usize limit): m_state(State::Empty), m_limit(limit), m_transferred() {}
 
         enum class State : rstd::int32_t
         {
@@ -212,8 +212,6 @@ public:
             return copied;
         }
 
-        auto allocator() const { return m_alloc; }
-
     private:
         void check_full() {
             auto s = size();
@@ -225,19 +223,16 @@ public:
         Atomic<State> m_state;
         usize         m_limit;
         usize         m_transferred;
-        Allocator     m_alloc;
     };
 
-    static auto make(PreparedRequest request, Arc<SessionChannel> session_channel,
-                     allocator_type allocator) -> Arc<Connection> {
-        auto connection =
-            Arc<Connection>::make(rstd::move(request), rstd::move(session_channel), allocator);
+    static auto make(PreparedRequest request, Arc<SessionChannel> session_channel)
+        -> Arc<Connection> {
+        auto connection = Arc<Connection>::make(rstd::move(request), rstd::move(session_channel));
         connection->m_self = connection.downgrade();
         return connection;
     }
 
-    Connection(PreparedRequest request, Arc<SessionChannel> session_channel,
-               allocator_type allocator)
+    Connection(PreparedRequest request, Arc<SessionChannel> session_channel)
         : m_finish_ec(CURLcode::CURLE_OK),
           m_state(State::NotStarted),
           m_recv_paused(false),
@@ -245,8 +240,8 @@ public:
           m_request(rstd::move(request)),
           m_easy(Box<CurlEasy>::make()),
           m_session_channel(rstd::move(session_channel)),
-          m_recv_buf(RECV_LIMIT, allocator),
-          m_send_buf(SEND_LIMIT, allocator),
+          m_recv_buf(RECV_LIMIT),
+          m_send_buf(SEND_LIMIT),
           m_mutex(empty {}),
           m_self(Weak<Connection>::make()) {
         auto& easy = *m_easy;
@@ -280,7 +275,7 @@ public:
             return None<ref<lihttpto::Headers>>();
         return Some(ref<lihttpto::Headers>::from_raw_parts(&*m_trailers));
     }
-    void set_send_callback(const BodyReader::Callback& cb) { m_send_callback = cb; }
+    void set_send_callback(BodyReader::Callback cb) { m_send_callback = rstd::move(cb); }
 
     auto is_finished() const -> bool {
         auto lock = RawMutexGuard { m_mutex };
@@ -678,10 +673,10 @@ private:
     Option<lihttpto::HttpParseError>  m_header_error;
     bool                              m_header_done { false };
     bool                              m_trailer_started { false };
-    Buffer<allocator_type>            m_recv_buf;
+    Buffer                            m_recv_buf;
 
-    BodyReader::Callback   m_send_callback;
-    Buffer<allocator_type> m_send_buf;
+    BodyReader::Callback m_send_callback;
+    Buffer               m_send_buf;
 
     Option<RstdHeaderState> m_header_waiter;
     Option<RstdReadWaiter>  m_read_waiter;

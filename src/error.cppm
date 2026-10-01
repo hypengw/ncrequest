@@ -7,9 +7,10 @@ export import rstd.error;
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 export import ncrequest.curl;
 #endif
-export import cppstd;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
+using rstd::ffi::CStr;
 using IoError = rstd::io::error::Error;
 using rstd::error::ErrorRef;
 using rstd::fmt::Debug;
@@ -24,6 +25,7 @@ export enum class ProtocolError {
     HeaderTooLarge,
     BodyTooLarge,
     UnexpectedEof,
+    InvalidUtf8,
 };
 
 export enum class ErrorKind {
@@ -43,7 +45,7 @@ export enum class ClientBackend {
 export struct ClientError {
     ClientBackend backend;
     i32           code;
-    std::string   message;
+    String        message;
 };
 
 export struct Error {
@@ -76,6 +78,7 @@ constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char
     case ProtocolError::HeaderTooLarge: return "HTTP header too large";
     case ProtocolError::BodyTooLarge: return "HTTP body too large";
     case ProtocolError::UnexpectedEof: return "unexpected EOF";
+    case ProtocolError::InvalidUtf8: return "response text is not UTF-8";
     }
     return "protocol error";
 }
@@ -86,7 +89,7 @@ template<>
 struct rstd::Impl<Display, ncrequest::ClientError> : rstd::ImplBase<ncrequest::ClientError> {
     auto fmt(fmt::Formatter& f) const -> bool {
         auto& message = this->self().message;
-        return f.write_raw(message.data(), message.size());
+        return as<Display>(message).fmt(f);
     }
 };
 
@@ -124,8 +127,8 @@ struct rstd::Impl<Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> 
             return f.write_raw(msg, rstd::strlen(msg));
         }
         case ncrequest::Error::Tag::Canceled: {
-            constexpr std::string_view msg { "operation canceled" };
-            return f.write_raw(msg.data(), msg.size());
+            constexpr auto msg = "operation canceled"_str;
+            return f.write_str(msg);
         }
         case ncrequest::Error::Tag::InvalidState: {
             auto* msg = e.as_InvalidState().msg;
@@ -174,7 +177,10 @@ struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
         return rstd::into(ncrequest::ClientError {
             .backend = ncrequest::ClientBackend::Curl,
             .code    = static_cast<i32>(e),
-            .message = message != nullptr ? message : "curl client error",
+            .message =
+                String::make(CStr::from_ptr(message != nullptr ? message : "curl client error")
+                                 .to_str()
+                                 .unwrap()),
         });
     };
 };

@@ -1,6 +1,6 @@
 module;
 export module ncrequest.curl:easy;
-export import ncrequest.type;
+export import rstd;
 export import :curl;
 
 using namespace rstd::prelude;
@@ -20,8 +20,11 @@ struct curl_opt_traits<CURLoption::CURLOPT_SHARE> {
 };
 } // namespace detail
 
-export class CurlEasy : NoCopy {
+export class CurlEasy {
 public:
+    CurlEasy(const CurlEasy&)                    = delete;
+    auto operator=(const CurlEasy&) -> CurlEasy& = delete;
+
     CurlEasy() noexcept: easy(curl_easy_init()), m_headers(nullptr), m_share(nullptr) {
         // enable cookie engine
         setopt<CURLoption::CURLOPT_COOKIEFILE>("");

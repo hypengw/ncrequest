@@ -4,20 +4,18 @@
 #include <optional>
 #include <string_view>
 #include <utility>
-#include <gtest/gtest.h>
+#include <rstd/test/gtest.hpp>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <thread>
 
 import ncrequest.qt_network;
-import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using ncrequest::qt_network::WebSocketClient;
 using rstd::async::block_on;
 using rstd::async::Completion;
-using rstd::cppstd::as_str;
 using std::chrono::milliseconds;
 using std::chrono::seconds;
 using std::chrono::steady_clock;
@@ -95,8 +93,10 @@ TEST(qt_network_websocket, LocalEchoText) {
         message_promise.set_value(std::move(out));
     });
 
-    auto connected = wait_completion(
-        client.connect(rstd::move(as_str(url)).unwrap()));
+    auto connected = wait_completion(client.connect(
+        rstd::str_::from_utf8(
+            slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(url.data()), usize(url.size())))
+            .unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());

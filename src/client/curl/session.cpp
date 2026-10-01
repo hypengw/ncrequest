@@ -7,17 +7,15 @@ module;
 
 module ncrequest;
 import :client_curl_session;
-import cppstd;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using rstd::path::Path;
+using rstd::sync::Arc;
 using rstd::sync::Mutex;
 using rstd::thread::JoinHandle;
 using rstd::thread::spawn;
 using rstd::time::Duration;
-using std::pmr::memory_resource;
-using std::pmr::polymorphic_allocator;
 
 namespace ncrequest::client::curl
 {
@@ -42,7 +40,7 @@ class SessionBackend::Private {
     friend class SessionBackend;
 
 public:
-    Private(memory_resource* mem_pool, CurlOptions options) noexcept;
+    Private(CurlOptions options) noexcept;
     ~Private();
 
     void ensure_worker();
@@ -60,13 +58,10 @@ private:
     Arc<channel_type> m_channel;
     bool              m_stopped;
 
-    memory_resource* m_memory;
-
     Mutex<Option<JoinHandle<void>>> m_thread;
 };
 
-SessionBackend::SessionBackend(memory_resource* mem_pool, CurlOptions options)
-    : m_d(Box<Private>::make(mem_pool, options)) {}
+SessionBackend::SessionBackend(CurlOptions options): m_d(Box<Private>::make(options)) {}
 
 void SessionBackend::start() { m_d->ensure_worker(); }
 
@@ -75,8 +70,6 @@ SessionBackend::~SessionBackend() {
     m_d->join_worker();
     m_d->m_channel->set_wake_callback({});
 }
-
-auto SessionBackend::allocator() -> polymorphic_allocator<byte> { return { (m_d->m_memory) }; }
 
 auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<empty>> {
     auto& con      = rsp->connection();
@@ -101,11 +94,10 @@ auto SessionBackend::start_request(PreparedRequest req) -> coro<Result<ResponseB
     co_return Ok(rstd::move(*res));
 }
 
-SessionBackend::Private::Private(memory_resource* mem_pool, CurlOptions options) noexcept
+SessionBackend::Private::Private(CurlOptions options) noexcept
     : m_curl_multi(Box<CurlMulti>::make(options)),
       m_channel(Arc<channel_type>::make()),
       m_stopped(false),
-      m_memory(mem_pool),
       m_thread(Option<JoinHandle<void>> {}) {
     m_channel->set_wake_callback([this] {
         m_curl_multi->wakeup();

@@ -1,9 +1,9 @@
 export module ncrequest:client_http_backend;
 export import :request;
-export import :http;
+export import lihttpto;
 export import :error;
 export import ncrequest.coro;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;

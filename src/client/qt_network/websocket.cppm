@@ -3,8 +3,10 @@ module;
 
 export module ncrequest:client_qt_network_websocket;
 export import :qt;
-export import ncrequest.type;
+export import rstd;
 export import :client_callback;
+
+import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
@@ -18,7 +20,7 @@ using std::pmr::vector;
 namespace ncrequest::client::qt_network
 {
 
-export class WebSocketBackend : public NoCopy {
+export class WebSocketBackend {
 public:
     constexpr static u64 MaxBufferSize { 16 * 1024 };
     using ConnectedCallback    = client::Callback<void()>;

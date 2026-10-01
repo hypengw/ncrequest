@@ -1,9 +1,10 @@
 export module ncrequest:client_callback;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::mtp::rm_cvf;
 using rstd::mtp::same_as;
+using rstd::sync::Arc;
 using rstd::sync::Mutex;
 
 namespace ncrequest::client

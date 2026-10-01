@@ -2,26 +2,27 @@ export module ncrequest:client_curl_session;
 export import :request;
 export import :client_curl_response;
 export import :client_curl_connection;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using rstd::path::Path;
-using std::pmr::memory_resource;
-using std::pmr::polymorphic_allocator;
+using rstd::sync::Arc;
 
 namespace ncrequest::client::curl
 {
 
-export class SessionBackend : public NoCopy {
+export class SessionBackend {
 public:
+    SessionBackend(const SessionBackend&)                    = delete;
+    auto operator=(const SessionBackend&) -> SessionBackend& = delete;
+
     using channel_type = SessionChannel;
 
     class Private;
     ~SessionBackend();
 
-    explicit SessionBackend(memory_resource*    = std::pmr::get_default_resource(),
-                            CurlOptions options = {});
+    explicit SessionBackend(CurlOptions options = {});
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {
@@ -43,7 +44,6 @@ public:
 
     auto channel() -> channel_type&;
     auto channel_rc() -> Arc<channel_type>;
-    auto allocator() -> polymorphic_allocator<byte>;
 
 private:
     auto perform(Arc<ResponseBackend>&) -> coro<Result<empty>>;

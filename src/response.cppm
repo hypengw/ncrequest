@@ -1,6 +1,3 @@
-module;
-#include <string>
-
 export module ncrequest:response;
 
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
@@ -14,6 +11,7 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
+using rstd::sync::Arc;
 using rstd::sync::atomic::Atomic;
 
 namespace ncrequest
@@ -30,7 +28,7 @@ static_assert(client::HttpResponseBackend<SelectedResponseBackend>);
 export class Response;
 export class Session;
 
-export class ResponseBody : public NoCopy {
+export class ResponseBody {
     friend class Response;
     struct State {
         Arc<SelectedResponseBackend> backend;
@@ -102,6 +100,9 @@ export class ResponseBody : public NoCopy {
     }
 
 public:
+    ResponseBody(const ResponseBody&)                    = delete;
+    auto operator=(const ResponseBody&) -> ResponseBody& = delete;
+
     using Error = ncrequest::Error;
     static constexpr usize DefaultCollectLimit { 8 * 1024 * 1024 };
 
@@ -126,7 +127,7 @@ public:
 
 static_assert(lihttpto::BodySource<ResponseBody>);
 
-export class Response : public NoCopy {
+export class Response {
     friend class Session;
     struct ConstructionKey {};
     Arc<SelectedResponseBackend> backend_;
@@ -137,14 +138,13 @@ export class Response : public NoCopy {
         if (body.is_err()) co_return Err(rstd::move(body).unwrap_err());
         co_return co_await body->collect(limit);
     }
-    static auto collect_text(Result<ResponseBody> body, usize limit) -> coro<Result<std::string>> {
+    static auto collect_text(Result<ResponseBody> body, usize limit) -> coro<Result<String>> {
         auto data_result = co_await collect_body(rstd::move(body), limit);
         if (data_result.is_err()) co_return Err(rstd::move(data_result).unwrap_err());
-        auto        data = rstd::move(data_result).unwrap();
-        std::string out;
-        if (data.size() != usize())
-            out.assign(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
-        co_return Ok(rstd::move(out));
+        auto data = rstd::move(data_result).unwrap();
+        auto text = rstd::str_::from_utf8(data.as_slice());
+        if (text.is_err()) co_return Err(Error::Protocol(ProtocolError::InvalidUtf8, nullptr));
+        co_return Ok(String::make(text.unwrap()));
     }
     template<lihttpto::BodySink Sink>
     static auto transfer(Result<ResponseBody> body, Sink& sink)
@@ -163,6 +163,9 @@ export class Response : public NoCopy {
     }
 
 public:
+    Response(const Response&)                    = delete;
+    auto operator=(const Response&) -> Response& = delete;
+
     Response(ConstructionKey, SelectedResponseBackend backend, lihttpto::ResponseHead head)
         : backend_(Arc<SelectedResponseBackend>::make(rstd::move(backend))),
           head_(rstd::move(head)) {}
@@ -183,7 +186,7 @@ public:
     auto bytes(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<Bytes>> {
         return collect_body(take_body(), limit);
     }
-    auto text(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<std::string>> {
+    auto text(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<String>> {
         return collect_text(take_body(), limit);
     }
     template<lihttpto::BodySink Sink>

@@ -1,6 +1,6 @@
 #include <cstdlib>
 #include <functional>
-#include <gtest/gtest.h>
+#include <rstd/test/gtest.hpp>
 #include <QEventLoop>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -12,12 +12,12 @@
 
 import ncrequest.qt_network;
 import rstd;
-import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using ncrequest::qt_network::Response;
 using ncrequest::qt_network::Session;
+using rstd::sync::Arc;
 using Share = ncrequest::ShareOptions;
 using ncrequest::RequestOptions;
 using Timeout = ncrequest::TimeoutOptions;
@@ -26,7 +26,6 @@ using ncrequest::RequestBody;
 using rstd::async::block_on;
 using rstd::async::RuntimeBuilder;
 using rstd::bytes::Bytes;
-using rstd::cppstd::as_str;
 
 namespace
 {
@@ -67,7 +66,10 @@ auto local_http_url(std::string_view base, std::string_view path) -> std::string
 }
 
 auto make_request(std::string_view url) -> ncrequest::Request {
-    auto value = rstd::move(as_str(url)).unwrap();
+    auto value =
+        rstd::str_::from_utf8(
+            slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(url.data()), usize(url.size())))
+            .unwrap();
     return rstd::move(ncrequest::Request::from_url(value)).unwrap();
 }
 
@@ -82,19 +84,18 @@ auto large_body() -> std::string {
 }
 
 auto bytes_from_string(const std::string& body) -> Bytes {
-    auto bytes = slice<u8>::from_raw_parts(
-        reinterpret_cast<const byte*>(body.data()), usize(body.size()));
+    auto bytes =
+        slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(body.data()), usize(body.size()));
     return Bytes::copy_from_slice(bytes);
 }
 
-auto response_code(const ncrequest::Arc<Response>& response) -> int {
+auto response_code(const Arc<Response>& response) -> int {
     auto code = response->code();
     if (code.is_some()) return code.unwrap().to_primitive();
     return 0;
 }
 
-auto fetch_text(ncrequest::Arc<Session> session, std::string url)
-    -> ncrequest::coro<FetchResult> {
+auto fetch_text(Arc<Session> session, std::string url) -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
     auto        rsp = co_await session->get(req.try_clone().unwrap());
@@ -114,13 +115,13 @@ auto fetch_text(ncrequest::Arc<Session> session, std::string url)
 
     result.code            = response_code(response);
     result.has_test_header = response->header().contains("x-ncrequest-test"_str);
-    result.body            = text.unwrap();
-    result.got_body        = true;
+    result.body.assign(reinterpret_cast<const char*>(text->data()), text->len().to_primitive());
+    result.got_body = true;
     co_return result;
 }
 
-auto post_text(ncrequest::Arc<Session> session, std::string url,
-               std::string body) -> ncrequest::coro<FetchResult> {
+auto post_text(Arc<Session> session, std::string url, std::string body)
+    -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
     auto        rsp = co_await session->post(req.try_clone().unwrap(), bytes_from_string(body));
@@ -140,19 +141,18 @@ auto post_text(ncrequest::Arc<Session> session, std::string url,
 
     result.code            = response_code(response);
     result.has_test_header = response->header().contains("x-ncrequest-test"_str);
-    result.body            = text.unwrap();
-    result.got_body        = true;
+    result.body.assign(reinterpret_cast<const char*>(text->data()), text->len().to_primitive());
+    result.got_body = true;
     co_return result;
 }
 
-auto fetch_timeout(ncrequest::Arc<Session> session, std::string url)
-    -> ncrequest::coro<ErrorResult> {
+auto fetch_timeout(Arc<Session> session, std::string url) -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
-    auto        req                                             = make_request(url);
-    auto timeout_options = RequestOptions {};
-    auto timeout = Timeout {};
-    timeout.transfer_timeout = i64(100);
-    timeout_options.timeout = Some(timeout);
+    auto        req             = make_request(url);
+    auto        timeout_options = RequestOptions {};
+    auto        timeout         = Timeout {};
+    timeout.transfer_timeout    = i64(100);
+    timeout_options.timeout     = Some(timeout);
     req.set_options(rstd::move(timeout_options));
 
     auto rsp = co_await session->get(req.try_clone().unwrap());
@@ -175,12 +175,11 @@ auto fetch_timeout(ncrequest::Arc<Session> session, std::string url)
     co_return result;
 }
 
-auto fetch_with_share(ncrequest::Arc<Session> session, std::string url)
-    -> ncrequest::coro<ErrorResult> {
-    auto result = ErrorResult {};
-    auto req    = make_request(url);
-    auto options = RequestOptions {};
-    options.share = Some(Share {Some(ncrequest::SessionShare {})});
+auto fetch_with_share(Arc<Session> session, std::string url) -> ncrequest::coro<ErrorResult> {
+    auto result   = ErrorResult {};
+    auto req      = make_request(url);
+    auto options  = RequestOptions {};
+    options.share = Some(Share { Some(ncrequest::SessionShare {}) });
     req.set_options(rstd::move(options));
 
     auto response = co_await session->get(req.try_clone().unwrap());
@@ -194,13 +193,12 @@ auto fetch_with_share(ncrequest::Arc<Session> session, std::string url)
     co_return result;
 }
 
-auto share_roundtrip(ncrequest::Arc<Session> session, std::string base)
-    -> ncrequest::coro<FetchResult> {
+auto share_roundtrip(Arc<Session> session, std::string base) -> ncrequest::coro<FetchResult> {
     auto share = ncrequest::SessionShare {};
     auto set_request =
         make_request(local_http_url(base, "/cookie/set?name=owned_manager_cookie&value=shared"));
-    auto options = RequestOptions {};
-    options.share = Some(Share {Some(share.clone())});
+    auto options  = RequestOptions {};
+    options.share = Some(Share { Some(share.clone()) });
     set_request.set_options(options.clone());
     auto set_response = co_await session->get(set_request.try_clone().unwrap());
     if (set_response.is_err()) {
@@ -234,13 +232,13 @@ auto share_roundtrip(ncrequest::Arc<Session> session, std::string base)
     }
     result.code            = response_code(response);
     result.has_test_header = response->header().contains("x-ncrequest-test"_str);
-    result.body            = rstd::move(echo_body).unwrap();
-    result.got_body        = true;
+    result.body.assign(reinterpret_cast<const char*>(echo_body->data()),
+                       echo_body->len().to_primitive());
+    result.got_body = true;
     co_return result;
 }
 
-auto fetch_then_cancel(ncrequest::Arc<Session> session, std::string url)
-    -> ncrequest::coro<ErrorResult> {
+auto fetch_then_cancel(Arc<Session> session, std::string url) -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
     auto        req = make_request(url);
 
@@ -277,10 +275,9 @@ auto run_http_rstd(Start&& start) {
 
 template<typename Start>
 auto run_http_rstd_multi_thread(Start&& start) {
-    auto runtime_result =
-        RuntimeBuilder::multi_thread().worker_threads(usize(2)).build();
-    auto runtime = runtime_result.unwrap();
-    auto session = Session::make();
+    auto runtime_result = RuntimeBuilder::multi_thread().worker_threads(usize(2)).build();
+    auto runtime        = runtime_result.unwrap();
+    auto session        = Session::make();
     return runtime.block_on(start(rstd::move(session)));
 }
 

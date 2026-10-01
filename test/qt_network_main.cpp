@@ -1,12 +1,11 @@
-#include <gtest/gtest.h>
+import rstd.test;
 #include <QCoreApplication>
 
 import ncrequest;
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    testing::InitGoogleTest(&argc, argv);
     ncrequest::global_init();
 
-    return RUN_ALL_TESTS();
+    return rstd::test::run_registered().to_primitive();
 }

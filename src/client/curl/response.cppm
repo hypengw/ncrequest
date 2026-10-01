@@ -1,24 +1,26 @@
 export module ncrequest:client_curl_response;
 export import :request;
-export import :http;
+export import lihttpto;
 export import :client_curl_connection;
 export import :error;
 export import ncrequest.coro;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;
-using std::pmr::polymorphic_allocator;
+using rstd::sync::Arc;
 
 namespace ncrequest::client::curl
 {
 
 export class SessionBackend;
 
-export class ResponseBackend : public NoCopy {
+export class ResponseBackend {
     friend class SessionBackend;
 
 public:
-    using allocator_type = polymorphic_allocator<char>;
+    ResponseBackend(const ResponseBackend&)                    = delete;
+    auto operator=(const ResponseBackend&) -> ResponseBackend& = delete;
+
     class Inner;
     static constexpr usize ReadSize { 1024 * 16 };
 
@@ -44,7 +46,6 @@ public:
     auto pause_recv(bool) -> bool;
 
     void cancel();
-    auto allocator() const -> const allocator_type&;
 
 private:
     auto prepare_perform() -> Result<empty>;
@@ -67,8 +68,6 @@ private:
     bool m_finished;
 
     Arc<Connection> m_connect;
-
-    polymorphic_allocator<char> m_allocator;
 };
 
 } // namespace ncrequest::client::curl

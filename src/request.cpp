@@ -1,7 +1,5 @@
 module ncrequest;
 import :request;
-import cppstd;
-import rstd.cppstd;
 
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 import ncrequest.curl;
@@ -11,19 +9,15 @@ using namespace rstd::prelude;
 using namespace ncrequest;
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
-using rstd::cppstd::as_str;
-using rstd::cppstd::as_string_view;
-using std::pmr::memory_resource;
 
-auto ncrequest::global_init(memory_resource* resource) -> Result<empty> {
+auto ncrequest::global_init() -> Result<empty> {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
-    auto initialized = ncrequest::curl_init(resource);
+    auto initialized = ncrequest::curl_init();
     if (initialized.is_err()) {
         return Err(rstd::into<Error>(rstd::move(initialized).unwrap_err()));
     }
     return Ok(empty {});
 #else
-    (void)resource;
     return Ok(empty {});
 #endif
 }
@@ -73,7 +67,7 @@ auto Request::validate() const -> Result<empty> {
     return Ok(empty {});
 }
 
-std::string_view Request::url() const { return as_string_view(m_url.as_ref()); }
+auto Request::url() const -> ref<str> { return m_url.as_ref(); }
 
 auto Request::url_info() const -> const lihttpto::Url& { return m_url; }
 
@@ -84,13 +78,8 @@ auto Request::try_set_url(ref<str> input) -> rstd::Result<empty, lihttpto::UrlEr
     return Ok(empty {});
 }
 
-std::string Request::header(std::string_view name) const {
-    auto name_text = as_str(name);
-    if (name_text.is_err()) return {};
-    auto value = m_header.get(rstd::move(name_text).unwrap());
-    if (value.is_none()) return {};
-    auto bytes = (**value).as_slice();
-    return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len().to_primitive() };
+auto Request::header(ref<str> name) const -> Option<ref<lihttpto::HeaderValue>> {
+    return m_header.get(name);
 }
 
 auto Request::header() const -> const lihttpto::Headers& { return m_header; }

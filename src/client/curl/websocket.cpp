@@ -1,8 +1,5 @@
 module;
-#include <deque>
-#include <memory_resource>
 #include <rstd/enum.hpp>
-#include <vector>
 
 module ncrequest;
 import :client_curl_websocket;
@@ -10,7 +7,9 @@ import rstd;
 
 using namespace rstd::prelude;
 using namespace ::curl;
+using rstd::sync::Arc;
 using IoError = rstd::io::error::Error;
+using alloc::collections::VecDeque;
 using rstd::async::Completion;
 using rstd::async::CompletionHandle;
 using rstd::async::Interest;
@@ -28,10 +27,6 @@ using rstd::task::Poll;
 using rstd::task::Waker;
 using rstd::thread::JoinHandle;
 using rstd::thread::spawn;
-using std::pmr::deque;
-using std::pmr::memory_resource;
-using std::pmr::polymorphic_allocator;
-using std::pmr::vector;
 
 namespace ncrequest::client::curl
 {
@@ -259,16 +254,12 @@ class WebSocketBackend::Impl {
     };
 
 public:
-    Impl(Option<u64> max_buffer_size, memory_resource* mem_pool)
-        : m_alloc(mem_pool),
-          m_read_buffer(
-              static_cast<rstd::size_t>(max_buffer_size.unwrap_or(MaxBufferSize).to_primitive()),
-              m_alloc),
-          m_msgs(m_alloc),
-          m_curl(curl_easy_init()),
+    Impl(Option<u64> max_buffer_size)
+        : m_curl(curl_easy_init()),
           m_connected(false),
           m_stop_requested(false),
           m_callbacks(Callbacks {}) {
+        m_read_buffer.resize(as_cast<usize>(max_buffer_size.unwrap_or(MaxBufferSize)), u8());
         auto worker = spawn([this] {
             worker_main();
         });
@@ -340,8 +331,9 @@ private:
 
             auto registration = m_registration.is_some() ? Some(m_registration->clone())
                                                          : None<Arc<Registration>>();
-            auto event =
-                co_await NextEventFuture { *this, rstd::move(registration), ! m_msgs.empty() };
+            auto event = co_await NextEventFuture { *this,
+                                                    rstd::move(registration),
+                                                    (m_pending.is_some() || ! m_msgs.is_empty()) };
             if (! handle_event(rstd::move(event))) {
                 break;
             }
@@ -392,7 +384,7 @@ private:
         if (command.is_Send()) {
             auto value = rstd::move(command).as_Send().value;
             if (is_connected()) {
-                m_msgs.emplace_back(rstd::move(value.message));
+                m_msgs.push_back(rstd::move(value.message));
             }
             return true;
         }
@@ -467,7 +459,7 @@ private:
             rstd::size_t rlen {};
             auto*        meta   = static_cast<const struct curl_ws_frame*>(nullptr);
             auto*        data   = m_read_buffer.data() + m_read_len;
-            auto         size   = m_read_buffer.size() - m_read_len;
+            auto         size   = m_read_buffer.len().to_primitive() - m_read_len;
             auto         result = curl_ws_recv(m_curl, data, size, &rlen, &meta);
 
             m_read_len += rlen;
@@ -487,7 +479,7 @@ private:
             }
 
             auto last = meta == nullptr || (! (meta->flags & CURLWS_CONT) && meta->bytesleft == 0);
-            if (last || m_read_buffer.size() == m_read_len || rlen == 0) {
+            if (last || m_read_buffer.len().to_primitive() == m_read_len || rlen == 0) {
                 emit_message(slice<u8>::from_raw_parts(m_read_buffer.data(), usize(m_read_len)),
                              last);
                 m_read_len = 0;
@@ -500,8 +492,9 @@ private:
     auto flush_write() -> bool {
         if (! m_curl || ! is_connected()) return false;
 
-        while (! m_msgs.empty()) {
-            auto& msg = m_msgs.front();
+        while ((m_pending.is_some() || ! m_msgs.is_empty())) {
+            if (m_pending.is_none()) m_pending = m_msgs.pop_front();
+            auto& msg = *m_pending;
 
             for (;;) {
                 rstd::size_t sent {};
@@ -521,7 +514,7 @@ private:
                 }
 
                 m_sent_len = 0;
-                m_msgs.pop_front();
+                m_pending  = None();
                 break;
             }
         }
@@ -559,6 +552,7 @@ private:
         m_read_len = 0;
         m_sent_len = 0;
         m_msgs.clear();
+        m_pending = None();
     }
 
     void stop_worker() {
@@ -627,11 +621,11 @@ private:
         emit_error(m_error_message.as_str());
     }
 
-    polymorphic_allocator<byte> m_alloc;
-    vector<byte>                m_read_buffer;
-    rstd::size_t                m_read_len {};
-    deque<Bytes>                m_msgs;
-    rstd::size_t                m_sent_len {};
+    Vec<u8>         m_read_buffer;
+    rstd::size_t    m_read_len {};
+    VecDeque<Bytes> m_msgs;
+    rstd::size_t    m_sent_len {};
+    Option<Bytes>   m_pending;
 
     ::curl::CURL*             m_curl {};
     Option<Arc<Registration>> m_registration;
@@ -645,8 +639,8 @@ private:
     String m_error_message;
 };
 
-WebSocketBackend::WebSocketBackend(Option<u64> max_buffer_size, memory_resource* mem_pool)
-    : m_impl(Box<Impl>::make(rstd::move(max_buffer_size), mem_pool)) {}
+WebSocketBackend::WebSocketBackend(Option<u64> max_buffer_size)
+    : m_impl(Box<Impl>::make(rstd::move(max_buffer_size))) {}
 
 WebSocketBackend::~WebSocketBackend() = default;
 

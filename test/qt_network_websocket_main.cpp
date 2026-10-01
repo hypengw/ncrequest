@@ -1,8 +1,7 @@
 #include <QCoreApplication>
-#include <gtest/gtest.h>
+import rstd.test;
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    return rstd::test::run_registered().to_primitive();
 }

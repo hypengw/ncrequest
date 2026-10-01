@@ -3,7 +3,7 @@ module;
 
 export module ncrequest.curl:multi;
 export import :easy;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using namespace curl;
@@ -31,8 +31,11 @@ export struct CurlMultiError {
 
 export using CurlMultiResult = rstd::Result<empty, CurlMultiError>;
 
-export class CurlMulti : public NoCopy {
+export class CurlMulti {
 public:
+    CurlMulti(const CurlMulti&)                    = delete;
+    auto operator=(const CurlMulti&) -> CurlMulti& = delete;
+
     struct InfoMsg {
         CURLMSG  msg;
         CURL*    easy_handle;

@@ -1,8 +1,9 @@
 export module ncrequest:session_share;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::path::Path;
+using rstd::sync::Arc;
 
 namespace ncrequest
 {

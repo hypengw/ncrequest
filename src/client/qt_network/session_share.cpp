@@ -2,6 +2,7 @@ module;
 module ncrequest;
 import :qt;
 import :session_share_backend;
+import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
@@ -9,7 +10,9 @@ using namespace rstd::literals;
 using rstd::fs::read;
 using rstd::fs::write;
 using rstd::path::Path;
+using rstd::sync::Arc;
 using rstd::sync::Mutex;
+using rstd::sync::Weak;
 
 namespace ncrequest
 {

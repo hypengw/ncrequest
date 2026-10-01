@@ -1,7 +1,7 @@
 export module ncrequest:options;
 export import :error;
 export import :session_share;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::path::Path;
@@ -53,8 +53,9 @@ export struct ProxyOptions {
         SOCKS4A = 6,
         SOCKS5H = 7
     };
-    Type        type { Type::HTTP };
-    std::string content;
+    Type   type { Type::HTTP };
+    String content;
+    auto   clone() const -> ProxyOptions { return { type, content.clone() }; }
 };
 
 export struct TcpOptions {
@@ -84,7 +85,7 @@ export struct RequestOptions {
         auto out = RequestOptions {};
         if (endpoint.is_some()) out.endpoint = Some(endpoint->clone());
         if (timeout.is_some()) out.timeout = Some(TimeoutOptions(*timeout));
-        if (proxy.is_some()) out.proxy = Some(ProxyOptions(*proxy));
+        if (proxy.is_some()) out.proxy = Some(proxy->clone());
         if (tcp.is_some()) out.tcp = Some(TcpOptions(*tcp));
         if (tls.is_some()) out.tls = Some(TlsOptions(*tls));
         if (share.is_some()) out.share = Some(share->clone());
@@ -112,7 +113,7 @@ public:
         values.endpoint =
             request.endpoint.is_some() ? request.endpoint->clone() : session.endpoint.clone();
         values.timeout = request.timeout.is_some() ? *request.timeout : session.timeout;
-        values.proxy   = request.proxy.is_some() ? *request.proxy : session.proxy;
+        values.proxy   = request.proxy.is_some() ? request.proxy->clone() : session.proxy.clone();
         values.tcp     = request.tcp.is_some() ? *request.tcp : session.tcp;
         values.tls     = request.tls.is_some() ? *request.tls : session.tls;
         values.share   = request.share.is_some() ? request.share->clone() : session.share.clone();
@@ -122,7 +123,7 @@ public:
         if (values.tcp.keepidle < i64() || values.tcp.keepintvl < i64())
             return Err(Error::InvalidState("TCP intervals cannot be negative"));
         if (values.endpoint.socket_path().is_some()) {
-            if (! values.proxy.content.empty())
+            if (! values.proxy.content.is_empty())
                 return Err(Error::InvalidState("Unix socket endpoint conflicts with proxy"));
             if (values.tcp.keepalive)
                 return Err(

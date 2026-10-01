@@ -1,5 +1,7 @@
 export module ncrequest:client_websocket_backend;
-export import ncrequest.type;
+export import rstd;
+
+using namespace rstd::prelude;
 
 using rstd::async::Completion;
 using rstd::mtp::convertible_to;

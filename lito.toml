@@ -43,7 +43,6 @@ when = [
   { condition = "feature.qt", source-groups = ["qt"] },
 ]
 sources = [
-  "src/type.cppm",
   "src/error.cppm",
   "src/session_share.cppm",
   "src/request.cppm",
@@ -54,7 +53,6 @@ sources = [
   "src/client/websocket_backend.cppm",
   "src/response.cppm",
   "src/session.cppm",
-  "src/http.cppm",
   "src/websocket.cppm",
   "src/coro/base.cppm",
   "src/coro/mod.cppm",
@@ -88,7 +86,6 @@ pub = true
 
 [dependencies.rstd-cppstd]
 version = "0.1.2"
-pub = true
 
 [external-dependencies.pkg-config.libcurl]
 condition = "!feature.qt"
@@ -108,3 +105,20 @@ targets = [
 [dependencies.lihttpto]
 path = "../lihttpto"
 pub = true
+
+[source-groups.test-curl]
+sources = ["test/websocket.cpp"]
+
+[source-groups.test-qt]
+sources = ["test/qt_network.cpp", "test/qt_network_websocket.cpp"]
+
+[[test]]
+name = "ncrequest-tests"
+sources = ["test/main.cpp", "test/http.cpp"]
+when = [
+  { condition = "!feature.qt", source-groups = ["test-curl"] },
+  { condition = "feature.qt", source-groups = ["test-qt"] },
+]
+
+[dev-dependencies.rstd-test]
+version = "0.1.2"

@@ -1,19 +1,18 @@
 export module ncrequest:request;
-export import :http;
+export import lihttpto;
 export import :error;
 export import :options;
 export import :request_body;
 export import :session_share;
-export import ncrequest.type;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;
-using std::pmr::memory_resource;
 
 namespace ncrequest
 {
 
-export auto global_init(memory_resource* resource = nullptr) -> Result<empty>;
+export auto global_init() -> Result<empty>;
 
 export class Request {
 public:
@@ -40,12 +39,12 @@ public:
         return *this;
     }
 
-    auto url() const -> std::string_view;
+    auto url() const -> ref<str>;
     auto url_info() const -> const lihttpto::Url&;
     auto try_set_url(ref<str>) -> rstd::Result<empty, lihttpto::UrlError>;
 
     auto header() const -> const lihttpto::Headers&;
-    auto header(std::string_view name) const -> std::string;
+    auto header(ref<str> name) const -> Option<ref<lihttpto::HeaderValue>>;
     auto update_header(const lihttpto::Headers&) -> Request&;
     auto try_set_header(ref<str> name, ref<str> value)
         -> rstd::Result<empty, lihttpto::HeaderError>;

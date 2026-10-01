@@ -11,6 +11,7 @@ export import :client_http_backend;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
+using rstd::sync::Arc;
 using rstd::sync::atomic::Atomic;
 
 namespace ncrequest
@@ -24,7 +25,7 @@ using SelectedSessionBackend = client::curl::SessionBackend;
 
 static_assert(client::HttpSessionBackend<SelectedSessionBackend, SelectedResponseBackend>);
 
-export class Session : public NoCopy {
+export class Session {
     struct ConstructionKey {};
     struct State {
         SessionOptions         options;
@@ -43,6 +44,9 @@ export class Session : public NoCopy {
     Arc<State> state_;
 
 public:
+    Session(const Session&)                    = delete;
+    auto operator=(const Session&) -> Session& = delete;
+
     Session(): state_(Arc<State>::make()) { start_backend(state_->backend); }
     explicit Session(SessionOptions options): state_(Arc<State>::make(rstd::move(options))) {
         start_backend(state_->backend);

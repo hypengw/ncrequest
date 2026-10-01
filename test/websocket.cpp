@@ -1,18 +1,16 @@
 #include <atomic>
 #include <chrono>
 #include <future>
-#include <gtest/gtest.h>
+#include <rstd/test/gtest.hpp>
 #include <string>
 #include <string_view>
 #include <thread>
 
 import ncrequest;
-import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::async::block_on;
-using rstd::cppstd::as_str;
 using std::chrono::milliseconds;
 using std::chrono::seconds;
 using std::chrono::steady_clock;
@@ -70,14 +68,13 @@ TEST(websocket, LocalEchoText) {
         disconnected_promise.set_value();
     });
 
-    client.set_on_message_callback(
-        [&message_promise, &got_message](slice<u8> data, bool) {
-            if (got_message.exchange(true)) return;
+    client.set_on_message_callback([&message_promise, &got_message](slice<u8> data, bool) {
+        if (got_message.exchange(true)) return;
 
-            std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
-                            data.len().to_primitive());
-            message_promise.set_value(std::move(out));
-        });
+        std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
+                        data.len().to_primitive());
+        message_promise.set_value(std::move(out));
+    });
     client.set_on_error_callback([&error_promise, &got_error](ref<str> data) {
         if (got_error.exchange(true)) return;
 
@@ -85,8 +82,10 @@ TEST(websocket, LocalEchoText) {
         error_promise.set_value(std::move(out));
     });
 
-    auto connected = block_on(
-        client.connect(rstd::move(as_str(url)).unwrap()));
+    auto connected = block_on(client.connect(
+        rstd::str_::from_utf8(
+            slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(url.data()), usize(url.size())))
+            .unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());

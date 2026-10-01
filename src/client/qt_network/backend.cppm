@@ -5,24 +5,27 @@ module;
 export module ncrequest:client_qt_network;
 export import :qt;
 export import :request;
-export import :http;
+export import lihttpto;
 export import :error;
 export import ncrequest.coro;
-export import ncrequest.type;
+export import rstd;
 import :session_share_backend;
+import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
+using namespace rstd::literals;
 using rstd::async::AnyExecutor;
 using rstd::async::Completion;
 using rstd::async::CompletionHandle;
 using rstd::async::CompletionQueue;
 using rstd::async::CompletionQueueHandle;
-using namespace rstd::literals;
 using rstd::async::ExecutorJob;
 using rstd::bytes::Bytes;
 using rstd::collections::HashMap;
 using rstd::str_::from_utf8;
+using rstd::sync::Arc;
+using rstd::sync::Weak;
 using rstd::sync::atomic::Atomic;
 
 namespace ncrequest::client::qt_network
@@ -110,7 +113,9 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
         return Err(Error::InvalidState("Qt network backend requires a QCoreApplication"));
     }
 
-    QNetworkRequest request { QUrl(QString::fromUtf8(req.url().data(), req.url().size())) };
+    auto            url = req.url();
+    QNetworkRequest request { QUrl(
+        QString::fromUtf8(reinterpret_cast<const char*>(url.data()), url.size().to_primitive())) };
     request.setAttribute(QNetworkRequest::AutoDeleteReplyOnFinishAttribute, false);
 
     auto raw_headers = QList<std::pair<QByteArray, QByteArray>> {};
@@ -147,7 +152,7 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
 void apply_proxy(QNetworkAccessManager* manager, const ProxyOptions& proxy) {
     if (manager == nullptr) return;
 
-    if (proxy.content.empty()) {
+    if (proxy.content.is_empty()) {
         manager->setProxy(QNetworkProxy { QNetworkProxy::NoProxy });
         return;
     }
@@ -162,7 +167,8 @@ void apply_proxy(QNetworkAccessManager* manager, const ProxyOptions& proxy) {
     case ProxyOptions::Type::HTTPS2: type = QNetworkProxy::HttpProxy; break;
     }
 
-    auto raw  = QString::fromStdString(proxy.content);
+    auto raw  = QString::fromUtf8(reinterpret_cast<const char*>(proxy.content.data()),
+                                  proxy.content.len().to_primitive());
     auto url  = QUrl::fromUserInput(raw);
     auto host = url.host();
     auto port = url.port();
@@ -315,7 +321,11 @@ auto transport_error(QNetworkReply* reply) -> Option<Error> {
         return Some(Error::Canceled());
     }
 
-    auto message = reply->errorString().toStdString();
+    auto utf8    = reply->errorString().toUtf8();
+    auto message = String::make(
+        from_utf8(slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(utf8.constData()),
+                                            usize(utf8.size())))
+            .unwrap());
     return Some(Error::Client(ClientError {
         .backend = ClientBackend::QtNetwork,
         .code    = static_cast<i32>(error),
@@ -507,11 +517,14 @@ private:
     }
 };
 
-class QtNetworkDriver : public NoCopy {
+class QtNetworkDriver {
     QThread          m_thread;
     QtNetworkWorker* m_worker { nullptr };
 
 public:
+    QtNetworkDriver(const QtNetworkDriver&)                    = delete;
+    auto operator=(const QtNetworkDriver&) -> QtNetworkDriver& = delete;
+
     QtNetworkDriver() {
         m_worker = new QtNetworkWorker();
         m_worker->moveToThread(&m_thread);
@@ -578,8 +591,11 @@ void OperationState::cancel() {
     }
 }
 
-export class SessionBackend : public NoCopy {
+export class SessionBackend {
 public:
+    SessionBackend(const SessionBackend&)                    = delete;
+    auto operator=(const SessionBackend&) -> SessionBackend& = delete;
+
     SessionBackend(): m_driver(Some(Arc<QtNetworkDriver>::make())) {}
 
     explicit SessionBackend(QObject* parent)
@@ -619,10 +635,13 @@ private:
     Option<AnyExecutor>              m_executor;
 };
 
-export class ResponseBackend : public NoCopy {
+export class ResponseBackend {
     friend class SessionBackend;
 
 public:
+    ResponseBackend(const ResponseBackend&)                    = delete;
+    auto operator=(const ResponseBackend&) -> ResponseBackend& = delete;
+
     static constexpr usize ReadSize { 1024 * 16 };
 
     ~ResponseBackend() noexcept { cancel(); }

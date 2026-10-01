@@ -4,8 +4,12 @@ import :session_share;
 import :session_share_backend;
 import ncrequest.curl;
 
+using namespace rstd::prelude;
 using namespace curl;
 using rstd::path::Path;
+using rstd::sync::Arc;
+using rstd::sync::Mutex;
+using rstd::sync::MutexGuard;
 
 namespace ncrequest
 {
@@ -17,16 +21,21 @@ public:
 
     static void lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
         auto* self = static_cast<Private*>(clientp);
-        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) self->share_mutex.lock();
+        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE)
+            self->share_guard = Some(self->share_mutex.lock().unwrap());
     }
 
     static void unlock(CURL*, curl_lock_data data, void* clientp) {
         auto* self = static_cast<Private*>(clientp);
-        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) self->share_mutex.unlock();
+        if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
+            // Clear shared guard storage before releasing the lock.
+            auto guard = self->share_guard.take();
+        }
     }
 
-    CURLSH*    share;
-    std::mutex share_mutex;
+    CURLSH*                   share;
+    Mutex<empty>              share_mutex;
+    Option<MutexGuard<empty>> share_guard;
 };
 
 SessionShare::SessionShare(Arc<Private> state): d_ptr(rstd::move(state)) {}

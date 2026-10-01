@@ -1,12 +1,10 @@
 module;
 #include <curl/curl.h>
-#include <limits>
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;
 import :session_share_backend;
 import ncrequest.coro;
-import rstd.cppstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -14,7 +12,7 @@ using rstd::async::yield_now;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
 using rstd::ffi::CString;
-using std::pmr::polymorphic_allocator;
+using rstd::sync::Arc;
 
 namespace ncrequest::client::curl
 {
@@ -48,7 +46,8 @@ void apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptio
     if (options.endpoint().socket_path().is_none()) {
         auto& p = options.proxy();
         easy.setopt(CURLoption::CURLOPT_PROXYTYPE, static_cast<long>(p.type));
-        easy.setopt(CURLoption::CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
+        auto proxy = CString::from_vec_unchecked(Vec<u8>::from(p.content.as_str().as_bytes()));
+        easy.setopt(CURLoption::CURLOPT_PROXY, p.content.is_empty() ? nullptr : proxy.as_ptr());
     }
     {
         auto& p = options.tls();
@@ -68,16 +67,13 @@ void apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptio
 } // namespace
 
 ResponseBackend::Inner::Inner(ResponseBackend* res, PreparedRequest req, SessionBackend& ses)
-    : m_q(res),
-      m_finished(false),
-      m_connect(Connection::make(rstd::move(req), ses.channel_rc(), ses.allocator())),
-      m_allocator(ses.allocator()) {}
+    : m_q(res), m_finished(false), m_connect(Connection::make(rstd::move(req), ses.channel_rc())) {}
 
 ResponseBackend::ResponseBackend(PreparedRequest req, SessionBackend& ses) noexcept
     : m_inner(Arc<Inner>::make(this, rstd::move(req), ses)) {
     apply_easy_request(connection().easy(), request(), connection().options());
     auto& reader = request().body().reader();
-    if (reader.is_some()) connection().set_send_callback(reader->callback);
+    if (reader.is_some()) connection().set_send_callback(reader->callback.clone());
 }
 
 ResponseBackend::ResponseBackend(ResponseBackend&& other) noexcept
@@ -99,10 +95,6 @@ ResponseBackend& ResponseBackend::operator=(ResponseBackend&& other) noexcept {
 }
 
 ResponseBackend::~ResponseBackend() noexcept { cancel(); }
-
-auto ResponseBackend::allocator() const -> const polymorphic_allocator<char>& {
-    return m_inner->m_allocator;
-}
 
 Arc<ResponseBackend> ResponseBackend::make_response(PreparedRequest req, SessionBackend& ses) {
     return Arc<ResponseBackend>::make(rstd::move(req), ses);
@@ -146,8 +138,7 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
     } else if (method == "POST"_str || body.is_some()) {
         set(CURLOPT_POST, 1L);
         if (reader.is_some()) {
-            if (reader->size.is_some() &&
-                reader->size->to_primitive() > std::numeric_limits<curl_off_t>::max())
+            if (reader->size.is_some() && reader->size->to_primitive() > i64::MAX.to_primitive())
                 return Err(Error::InvalidState("request body is too large"));
             set(CURLOPT_POSTFIELDS, static_cast<const char*>(nullptr));
             set(CURLOPT_POSTFIELDSIZE_LARGE,
@@ -155,7 +146,7 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
                                        : static_cast<curl_off_t>(reader->size->to_primitive()));
         } else {
             auto size = body.is_some() ? body->size().to_primitive() : 0;
-            if (size > std::numeric_limits<curl_off_t>::max())
+            if (size > i64::MAX.to_primitive())
                 return Err(Error::InvalidState("request body is too large"));
             set(CURLOPT_POSTFIELDS, size ? reinterpret_cast<const char*>(body->data()) : "");
             set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(size));
@@ -170,8 +161,7 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
         set(CURLOPT_CUSTOMREQUEST, token.as_ptr());
     }
     if (code != CURLE_OK) {
-        return Err(Error::Client(ClientError {
-            ClientBackend::Curl, i32(static_cast<int>(code)), curl_easy_strerror(code) }));
+        return Err(rstd::into<Error>(code));
     }
     return Ok(empty {});
 }

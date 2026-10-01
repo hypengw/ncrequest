@@ -1,6 +1,7 @@
 export module ncrequest:request_body;
 export import :error;
-export import ncrequest.type;
+export import :client_callback;
+export import rstd;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;
@@ -9,7 +10,7 @@ namespace ncrequest
 {
 
 export struct BodyReader {
-    using Callback = std::function<usize(byte*, usize)>;
+    using Callback = client::Callback<usize(byte*, usize)>;
     Callback      callback;
     Option<usize> size;
 };
