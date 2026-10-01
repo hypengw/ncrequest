@@ -1,6 +1,7 @@
 export module ncrequest:client_callback;
 export import ncrequest.type;
 
+using namespace rstd::prelude;
 using rstd::mtp::rm_cvf;
 using rstd::mtp::same_as;
 using rstd::sync::Mutex;
@@ -13,7 +14,7 @@ class Callback;
 
 template<typename R, typename... Args>
 class Callback<R(Args...)> {
-    using Function = Box<rstd::dyn<rstd::FnMut<R(Args...)>>>;
+    using Function = Box<dyn<FnMut<R(Args...)>>>;
     using State    = Mutex<Function>;
 
     Option<Arc<State>> m_state;

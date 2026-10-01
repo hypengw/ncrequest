@@ -27,15 +27,12 @@ export module ncrequest:qt;
 
 export namespace ncrequest::qt
 {
-using ::qint64;
-using ::qsizetype;
-using ::quint16;
-
 using ::QAbstractSocket;
 using ::QByteArray;
 using ::QCoreApplication;
 using ::QDateTime;
 using ::QHttpHeaders;
+using ::qint64;
 using ::QIODevice;
 using ::QList;
 using ::QMetaObject;
@@ -47,10 +44,12 @@ using ::QNetworkReply;
 using ::QNetworkRequest;
 using ::QObject;
 using ::QPointer;
+using ::qsizetype;
 using ::QSslConfiguration;
 using ::QSslSocket;
 using ::QString;
 using ::QThread;
+using ::quint16;
 using ::QUrl;
 using ::QWebSocket;
 

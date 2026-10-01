@@ -5,14 +5,13 @@ export module ncrequest.curl:multi;
 export import :easy;
 export import ncrequest.type;
 
+using namespace rstd::prelude;
 using namespace curl;
 using rstd::ffi::CStr;
 using rstd::path::Path;
-using rstd::string::String;
 using rstd::sync::Mutex;
 using rstd::sync::MutexGuard;
 using rstd::time::Duration;
-using rstd::vec::Vec;
 
 namespace ncrequest
 {
@@ -70,14 +69,14 @@ public:
         if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
             auto code = easy.setopt<CURLoption::CURLOPT_SHARE>(m_share);
             if (code != CURLcode::CURLE_OK) {
-                return rstd::Err(CurlMultiError::Easy(code));
+                return Err(CurlMultiError::Easy(code));
             }
         }
         auto code = curl_multi_add_handle(m_multi, easy.handle());
         if (code != CURLMcode::CURLM_OK) {
-            return rstd::Err(CurlMultiError::Multi(code));
+            return Err(CurlMultiError::Multi(code));
         }
-        return rstd::Ok(empty {});
+        return Ok(empty {});
     }
 
     auto set_options(CurlOptions options) -> CurlMultiResult {
@@ -88,7 +87,7 @@ public:
             m_options = old;
             return applied;
         }
-        return rstd::Ok(empty {});
+        return Ok(empty {});
     }
 
     auto options() const noexcept -> const CurlOptions& { return m_options; }
@@ -174,56 +173,56 @@ private:
         if (m_options.max_idle_connections > 0) {
             if (auto ec = curl_multi_setopt(
                     m_multi, CURLMoption::CURLMOPT_MAXCONNECTS, m_options.max_idle_connections)) {
-                return rstd::Err(CurlMultiError::Multi(ec));
+                return Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.max_host_connections > 0) {
             if (auto ec = curl_multi_setopt(m_multi,
                                             CURLMoption::CURLMOPT_MAX_HOST_CONNECTIONS,
                                             m_options.max_host_connections)) {
-                return rstd::Err(CurlMultiError::Multi(ec));
+                return Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.max_total_connections > 0) {
             if (auto ec = curl_multi_setopt(m_multi,
                                             CURLMoption::CURLMOPT_MAX_TOTAL_CONNECTIONS,
                                             m_options.max_total_connections)) {
-                return rstd::Err(CurlMultiError::Multi(ec));
+                return Err(CurlMultiError::Multi(ec));
             }
         }
         if (m_options.enable_http_multiplex) {
             if (auto ec = curl_multi_setopt(m_multi, CURLMoption::CURLMOPT_PIPELINING, 2L)) {
-                return rstd::Err(CurlMultiError::Multi(ec));
+                return Err(CurlMultiError::Multi(ec));
             }
         }
-        return rstd::Ok(empty {});
+        return Ok(empty {});
     }
 
     auto apply_easy_options(CurlEasy& easy) -> CurlMultiResult {
         if (m_options.receive_buffer_size > 0) {
             if (auto ec =
                     easy.setopt(CURLoption::CURLOPT_BUFFERSIZE, m_options.receive_buffer_size)) {
-                return rstd::Err(CurlMultiError::Easy(ec));
+                return Err(CurlMultiError::Easy(ec));
             }
         }
         if (m_options.upload_buffer_size > 0) {
             if (auto ec = easy.setopt(CURLoption::CURLOPT_UPLOAD_BUFFERSIZE,
                                       m_options.upload_buffer_size)) {
-                return rstd::Err(CurlMultiError::Easy(ec));
+                return Err(CurlMultiError::Easy(ec));
             }
         }
-        return rstd::Ok(empty {});
+        return Ok(empty {});
     }
 
     static auto multi_result(CURLMcode code) -> CurlMultiResult {
-        if (code == CURLMcode::CURLM_OK) return rstd::Ok(empty {});
-        return rstd::Err(CurlMultiError::Multi(code));
+        if (code == CURLMcode::CURLM_OK) return Ok(empty {});
+        return Err(CurlMultiError::Multi(code));
     }
 
     static void static_share_lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
         auto info = static_cast<CurlMulti*>(clientp);
         if (data == curl_lock_data::CURL_LOCK_DATA_COOKIE) {
-            info->m_share_guard = rstd::Some(info->m_share_mutex.lock().unwrap());
+            info->m_share_guard = Some(info->m_share_mutex.lock().unwrap());
         }
     }
 
@@ -239,8 +238,8 @@ private:
     CURLSH*     m_share;
     CurlOptions m_options;
 
-    Mutex<empty>                    m_share_mutex;
-    rstd::Option<MutexGuard<empty>> m_share_guard;
+    Mutex<empty>              m_share_mutex;
+    Option<MutexGuard<empty>> m_share_guard;
 };
 } // namespace ncrequest
 

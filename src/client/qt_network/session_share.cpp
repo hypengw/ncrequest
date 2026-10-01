@@ -3,13 +3,13 @@ module ncrequest;
 import :qt;
 import :session_share_backend;
 
+using namespace rstd::prelude;
 using namespace ncrequest::qt;
 using namespace rstd::literals;
 using rstd::fs::read;
 using rstd::fs::write;
 using rstd::path::Path;
 using rstd::sync::Mutex;
-using rstd::vec::Vec;
 
 namespace ncrequest
 {
@@ -36,7 +36,7 @@ auto equals(slice<u8> value, ref<str> expected) -> bool {
            __builtin_memcmp(value.as_raw_ptr(), expected.data(), value.len().to_primitive()) == 0;
 }
 
-auto cookie_fields(slice<u8> line) -> rstd::Option<CookieFields> {
+auto cookie_fields(slice<u8> line) -> Option<CookieFields> {
     auto fields = CookieFields {};
     for (usize i {}; i < usize(6); ++i) {
         auto tab = line.len();
@@ -68,7 +68,7 @@ auto parse_expiry(slice<u8> text) -> Option<qint64> {
     return Some(value);
 }
 
-auto parse_cookie(slice<u8> line) -> rstd::Option<QNetworkCookie> {
+auto parse_cookie(slice<u8> line) -> Option<QNetworkCookie> {
     bool http_only = false;
     if (starts_with(line, HttpOnlyPrefix)) {
         http_only = true;

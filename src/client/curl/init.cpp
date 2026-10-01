@@ -46,7 +46,7 @@ void* curl_calloc_fn(rstd::size_t nmemb, rstd::size_t size) {
 }
 } // namespace
 
-auto ncrequest::curl_init(memory_resource* resource) -> rstd::Result<rstd::empty, curl::CURLcode> {
+auto ncrequest::curl_init(memory_resource* resource) -> rstd::Result<empty, curl::CURLcode> {
     auto code = curl::CURLcode::CURLE_OK;
     if (resource == nullptr) {
         code = curl_global_init(CURL_GLOBAL_ALL);
@@ -59,6 +59,6 @@ auto ncrequest::curl_init(memory_resource* resource) -> rstd::Result<rstd::empty
                                           curl_strdup_fn,
                                           curl_calloc_fn);
     }
-    if (code != curl::CURLcode::CURLE_OK) return rstd::Err(code);
-    return rstd::Ok(rstd::empty {});
+    if (code != curl::CURLcode::CURLE_OK) return Err(code);
+    return Ok(empty {});
 }

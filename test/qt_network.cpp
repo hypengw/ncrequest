@@ -14,11 +14,15 @@ import ncrequest.qt_network;
 import rstd;
 import rstd.cppstd;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 using ncrequest::qt_network::Response;
 using ncrequest::qt_network::Session;
-using ncrequest::req_opt::Share;
-using ncrequest::req_opt::Timeout;
+using Share = ncrequest::ShareOptions;
+using ncrequest::RequestOptions;
+using Timeout = ncrequest::TimeoutOptions;
+using ncrequest::BodyReader;
+using ncrequest::RequestBody;
 using rstd::async::block_on;
 using rstd::async::RuntimeBuilder;
 using rstd::bytes::Bytes;
@@ -78,8 +82,8 @@ auto large_body() -> std::string {
 }
 
 auto bytes_from_string(const std::string& body) -> Bytes {
-    auto bytes = rstd::slice<rstd::u8>::from_raw_parts(
-        reinterpret_cast<const rstd::byte*>(body.data()), rstd::usize(body.size()));
+    auto bytes = slice<u8>::from_raw_parts(
+        reinterpret_cast<const byte*>(body.data()), usize(body.size()));
     return Bytes::copy_from_slice(bytes);
 }
 
@@ -93,7 +97,7 @@ auto fetch_text(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->get(req.clone());
+    auto        rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session request failed";
         co_return result;
@@ -119,7 +123,7 @@ auto post_text(ncrequest::Arc<Session> session, std::string url,
                std::string body) -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->post(req.clone(), bytes_from_string(body));
+    auto        rsp = co_await session->post(req.try_clone().unwrap(), bytes_from_string(body));
     if (rsp.is_err()) {
         result.error = "session request failed";
         co_return result;
@@ -145,9 +149,13 @@ auto fetch_timeout(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
     auto        req                                             = make_request(url);
-    req.get_opt<Timeout>().transfer_timeout = rstd::i64(100);
+    auto timeout_options = RequestOptions {};
+    auto timeout = Timeout {};
+    timeout.transfer_timeout = i64(100);
+    timeout_options.timeout = Some(timeout);
+    req.set_options(rstd::move(timeout_options));
 
-    auto rsp = co_await session->get(req.clone());
+    auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session request failed";
         co_return result;
@@ -171,9 +179,11 @@ auto fetch_with_share(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<ErrorResult> {
     auto result = ErrorResult {};
     auto req    = make_request(url);
-    req.get_opt<Share>().set_share(rstd::Some(ncrequest::SessionShare {}));
+    auto options = RequestOptions {};
+    options.share = Some(Share {Some(ncrequest::SessionShare {})});
+    req.set_options(rstd::move(options));
 
-    auto response = co_await session->get(req.clone());
+    auto response = co_await session->get(req.try_clone().unwrap());
     if (response.is_err()) {
         auto error       = rstd::move(response).unwrap_err();
         result.got_error = true;
@@ -189,8 +199,10 @@ auto share_roundtrip(ncrequest::Arc<Session> session, std::string base)
     auto share = ncrequest::SessionShare {};
     auto set_request =
         make_request(local_http_url(base, "/cookie/set?name=owned_manager_cookie&value=shared"));
-    set_request.get_opt<Share>().set_share(rstd::Some(share.clone()));
-    auto set_response = co_await session->get(set_request.clone());
+    auto options = RequestOptions {};
+    options.share = Some(Share {Some(share.clone())});
+    set_request.set_options(options.clone());
+    auto set_response = co_await session->get(set_request.try_clone().unwrap());
     if (set_response.is_err()) {
         auto result  = FetchResult {};
         result.error = "share cookie set failed";
@@ -204,8 +216,8 @@ auto share_roundtrip(ncrequest::Arc<Session> session, std::string base)
     }
 
     auto echo_request = make_request(local_http_url(base, "/cookie/echo"));
-    echo_request.get_opt<Share>().set_share(rstd::Some(share.clone()));
-    auto echo_response = co_await session->get(echo_request.clone());
+    echo_request.set_options(rstd::move(options));
+    auto echo_response = co_await session->get(echo_request.try_clone().unwrap());
     if (echo_response.is_err()) {
         auto result  = FetchResult {};
         result.error = "share cookie echo failed";
@@ -232,7 +244,7 @@ auto fetch_then_cancel(ncrequest::Arc<Session> session, std::string url)
     ErrorResult result;
     auto        req = make_request(url);
 
-    auto rsp = co_await session->get(req.clone());
+    auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session request failed";
         co_return result;
@@ -266,7 +278,7 @@ auto run_http_rstd(Start&& start) {
 template<typename Start>
 auto run_http_rstd_multi_thread(Start&& start) {
     auto runtime_result =
-        RuntimeBuilder::multi_thread().worker_threads(rstd::usize(2)).build();
+        RuntimeBuilder::multi_thread().worker_threads(usize(2)).build();
     auto runtime = runtime_result.unwrap();
     auto session = Session::make();
     return runtime.block_on(start(rstd::move(session)));

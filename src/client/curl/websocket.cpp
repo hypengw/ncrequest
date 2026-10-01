@@ -8,6 +8,7 @@ module ncrequest;
 import :client_curl_websocket;
 import rstd;
 
+using namespace rstd::prelude;
 using namespace ::curl;
 using IoError = rstd::io::error::Error;
 using rstd::async::Completion;
@@ -19,7 +20,6 @@ using rstd::async::Runtime;
 using rstd::bytes::Bytes;
 using rstd::ffi::CString;
 using rstd::os::fd::RawFd;
-using rstd::string::String;
 using rstd::sync::Mutex;
 using rstd::sync::atomic::Atomic;
 using rstd::sync::atomic::Ordering;
@@ -28,7 +28,6 @@ using rstd::task::Poll;
 using rstd::task::Waker;
 using rstd::thread::JoinHandle;
 using rstd::thread::spawn;
-using rstd::vec::Vec;
 using std::pmr::deque;
 using std::pmr::memory_resource;
 using std::pmr::polymorphic_allocator;
@@ -65,23 +64,23 @@ class WebSocketBackend::Impl {
 
     class CommandQueue {
         struct Fields {
-            Vec<Command>        commands;
-            rstd::Option<Waker> waker;
-            bool                closed { false };
+            Vec<Command>  commands;
+            Option<Waker> waker;
+            bool          closed { false };
 
             Fields(): commands(Vec<Command>::make()) {}
         };
 
     public:
-        using Output = rstd::Option<Command>;
+        using Output = Option<Command>;
 
         CommandQueue(): m_fields(Fields {}) {}
 
         auto push(Command command) -> rstd::Result<empty, Command> {
-            auto waker = rstd::Option<Waker> {};
+            auto waker = Option<Waker> {};
             {
                 auto fields = m_fields.lock().unwrap();
-                if (fields->closed) return rstd::Err(rstd::move(command));
+                if (fields->closed) return Err(rstd::move(command));
 
                 fields->commands.push(rstd::move(command));
                 waker = fields->waker.take();
@@ -90,11 +89,11 @@ class WebSocketBackend::Impl {
             if (waker.is_some()) {
                 rstd::move(*waker).wake();
             }
-            return rstd::Ok(empty {});
+            return Ok(empty {});
         }
 
         void close() {
-            auto waker = rstd::Option<Waker> {};
+            auto waker = Option<Waker> {};
             {
                 auto fields = m_fields.lock().unwrap();
                 if (fields->closed) return;
@@ -110,21 +109,21 @@ class WebSocketBackend::Impl {
 
         void clear_waker() {
             auto fields   = m_fields.lock().unwrap();
-            fields->waker = rstd::None();
+            fields->waker = None();
         }
 
         auto poll_receive(Context& cx) -> Poll<Output> {
             auto fields = m_fields.lock().unwrap();
             if (! fields->commands.is_empty()) {
                 auto command = fields->commands.remove(usize());
-                return Poll<Output>::Ready(rstd::Some(rstd::move(command)));
+                return Poll<Output>::Ready(Some(rstd::move(command)));
             }
 
             if (fields->closed) {
-                return Poll<Output>::Ready(rstd::None<Command>());
+                return Poll<Output>::Ready(None<Command>());
             }
 
-            fields->waker = rstd::Some(cx.waker().clone());
+            fields->waker = Some(cx.waker().clone());
             return Poll<Output>::Pending();
         }
 
@@ -136,7 +135,7 @@ class WebSocketBackend::Impl {
     public:
         using Output = LoopEvent;
 
-        NextEventFuture(Impl& owner, rstd::Option<Arc<Registration>> registration, bool wait_write)
+        NextEventFuture(Impl& owner, Option<Arc<Registration>> registration, bool wait_write)
             : m_owner(&owner), m_registration(rstd::move(registration)), m_wait_write(wait_write) {}
 
         NextEventFuture(const NextEventFuture&)                    = delete;
@@ -163,7 +162,7 @@ class WebSocketBackend::Impl {
 
         ~NextEventFuture() { cancel(); }
 
-        auto poll(rstd::mut_ref<NextEventFuture> self, Context& cx) -> Poll<LoopEvent> {
+        auto poll(mut_ref<NextEventFuture> self, Context& cx) -> Poll<LoopEvent> {
             auto& future = *self;
 
             auto command = future.m_owner->m_commands.poll_receive(cx);
@@ -245,11 +244,11 @@ class WebSocketBackend::Impl {
             }
         }
 
-        Impl*                           m_owner {};
-        rstd::Option<Arc<Registration>> m_registration;
-        bool                            m_wait_write { false };
-        usize                           m_read_waiter_id {};
-        usize                           m_write_waiter_id {};
+        Impl*                     m_owner {};
+        Option<Arc<Registration>> m_registration;
+        bool                      m_wait_write { false };
+        usize                     m_read_waiter_id {};
+        usize                     m_write_waiter_id {};
     };
 
     struct Callbacks {
@@ -260,7 +259,7 @@ class WebSocketBackend::Impl {
     };
 
 public:
-    Impl(rstd::Option<u64> max_buffer_size, memory_resource* mem_pool)
+    Impl(Option<u64> max_buffer_size, memory_resource* mem_pool)
         : m_alloc(mem_pool),
           m_read_buffer(
               static_cast<rstd::size_t>(max_buffer_size.unwrap_or(MaxBufferSize).to_primitive()),
@@ -339,8 +338,8 @@ private:
                 if (! flush_write()) continue;
             }
 
-            auto registration = m_registration.is_some() ? rstd::Some(m_registration->clone())
-                                                         : rstd::None<Arc<Registration>>();
+            auto registration = m_registration.is_some() ? Some(m_registration->clone())
+                                                         : None<Arc<Registration>>();
             auto event =
                 co_await NextEventFuture { *this, rstd::move(registration), ! m_msgs.empty() };
             if (! handle_event(rstd::move(event))) {
@@ -454,8 +453,7 @@ private:
         }
 
         reset_states();
-        m_registration =
-            rstd::Some(Arc<Registration>::make(rstd::move(registration).unwrap_unchecked()));
+        m_registration = Some(Arc<Registration>::make(rstd::move(registration).unwrap_unchecked()));
         m_connected.store(true, Ordering::Release);
 
         (void)command.completion.complete(true);
@@ -542,7 +540,7 @@ private:
 
         if (m_registration) {
             (*m_registration)->reset();
-            m_registration = rstd::None();
+            m_registration = None();
         }
 
         if (m_curl) {
@@ -614,7 +612,7 @@ private:
         if (callback) callback(data, last);
     }
 
-    void emit_error(rstd::ref<rstd::str> message) {
+    void emit_error(ref<str> message) {
         auto callback = error_callback();
         if (callback) callback(message);
     }
@@ -629,25 +627,25 @@ private:
         emit_error(m_error_message.as_str());
     }
 
-    polymorphic_allocator<rstd::byte> m_alloc;
-    vector<rstd::byte>                m_read_buffer;
-    rstd::size_t                      m_read_len {};
-    deque<Bytes>                      m_msgs;
-    rstd::size_t                      m_sent_len {};
+    polymorphic_allocator<byte> m_alloc;
+    vector<byte>                m_read_buffer;
+    rstd::size_t                m_read_len {};
+    deque<Bytes>                m_msgs;
+    rstd::size_t                m_sent_len {};
 
-    ::curl::CURL*                   m_curl {};
-    rstd::Option<Arc<Registration>> m_registration;
-    Atomic<bool>                    m_connected;
-    Atomic<bool>                    m_stop_requested;
-    CommandQueue                    m_commands;
-    Option<JoinHandle<void>>        m_worker;
+    ::curl::CURL*             m_curl {};
+    Option<Arc<Registration>> m_registration;
+    Atomic<bool>              m_connected;
+    Atomic<bool>              m_stop_requested;
+    CommandQueue              m_commands;
+    Option<JoinHandle<void>>  m_worker;
 
     Mutex<Callbacks> m_callbacks;
 
     String m_error_message;
 };
 
-WebSocketBackend::WebSocketBackend(rstd::Option<u64> max_buffer_size, memory_resource* mem_pool)
+WebSocketBackend::WebSocketBackend(Option<u64> max_buffer_size, memory_resource* mem_pool)
     : m_impl(Box<Impl>::make(rstd::move(max_buffer_size), mem_pool)) {}
 
 WebSocketBackend::~WebSocketBackend() = default;

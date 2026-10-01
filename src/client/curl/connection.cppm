@@ -10,6 +10,7 @@ export import :request;
 export import :error;
 export import :client_callback;
 
+using namespace rstd::prelude;
 using namespace ::curl;
 using namespace rstd::literals;
 using rstd::async::Completion;
@@ -21,7 +22,6 @@ using rstd::sync::Mutex;
 using rstd::sync::MutexGuard;
 using rstd::sync::atomic::Atomic;
 using rstd::sync::atomic::Ordering;
-using rstd::vec::Vec;
 using std::pmr::polymorphic_allocator;
 
 namespace ncrequest::client::curl
@@ -144,9 +144,9 @@ public:
     };
 
     struct IoResult {
-        rstd::Option<Error> error;
-        bool                eof { false };
-        usize               size { 0 };
+        Option<Error> error;
+        bool          eof { false };
+        usize         size { 0 };
 
         static auto ok(usize size) -> IoResult { return { None<Error>(), false, size }; }
         static auto done() -> IoResult { return { None<Error>(), true, usize() }; }
@@ -228,15 +228,16 @@ public:
         Allocator     m_alloc;
     };
 
-    static auto make(Request request, Arc<SessionChannel> session_channel, allocator_type allocator)
-        -> Arc<Connection> {
+    static auto make(PreparedRequest request, Arc<SessionChannel> session_channel,
+                     allocator_type allocator) -> Arc<Connection> {
         auto connection =
             Arc<Connection>::make(rstd::move(request), rstd::move(session_channel), allocator);
         connection->m_self = connection.downgrade();
         return connection;
     }
 
-    Connection(Request request, Arc<SessionChannel> session_channel, allocator_type allocator)
+    Connection(PreparedRequest request, Arc<SessionChannel> session_channel,
+               allocator_type allocator)
         : m_finish_ec(CURLcode::CURLE_OK),
           m_state(State::NotStarted),
           m_recv_paused(false),
@@ -267,7 +268,8 @@ public:
     }
 
     auto& easy() { return *m_easy; }
-    auto  request() const -> const Request& { return m_request; }
+    auto  request() const -> const Request& { return m_request.request(); }
+    auto  options() const -> const EffectiveOptions& { return m_request.options(); }
     auto& easy() const { return *m_easy; }
     auto& channel() { return m_session_channel; }
 
@@ -278,7 +280,7 @@ public:
             return None<ref<lihttpto::Headers>>();
         return Some(ref<lihttpto::Headers>::from_raw_parts(&*m_trailers));
     }
-    void set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
+    void set_send_callback(const BodyReader::Callback& cb) { m_send_callback = cb; }
 
     auto is_finished() const -> bool {
         auto lock = RawMutexGuard { m_mutex };
@@ -349,8 +351,8 @@ public:
         co_return rstd::move(result).unwrap_unchecked();
     }
 
-    auto wait_header() -> coro<rstd::Option<Error>> {
-        using Output = rstd::Option<Error>;
+    auto wait_header() -> coro<Option<Error>> {
+        using Output = Option<Error>;
         auto made    = Completion<Output>::make();
         if (made.is_err()) {
             co_return Some(Error::Io(rstd::move(made).unwrap_err_unchecked()));
@@ -375,7 +377,7 @@ public:
 
 private:
     using RstdIoState     = Arc<CompletionProducer<IoResult>>;
-    using RstdHeaderState = Arc<CompletionProducer<rstd::Option<Error>>>;
+    using RstdHeaderState = Arc<CompletionProducer<Option<Error>>>;
 
     struct RstdReadWaiter {
         BytesMut*   buffer;
@@ -562,7 +564,7 @@ private:
         if (m_state == State::NotStarted) m_state = State::Transfering;
     }
 
-    auto finish_error_locked() const -> rstd::Option<Error> {
+    auto finish_error_locked() const -> Option<Error> {
         if (m_header_error.is_some()) {
             auto const& kind     = m_header_error->kind();
             auto        protocol = ProtocolError::InvalidHeaderLine;
@@ -665,7 +667,7 @@ private:
     Atomic<bool> m_send_paused;
 
     // Keep upload bytes and callbacks alive until easy cleanup, including queued cancellation.
-    Request             m_request;
+    PreparedRequest     m_request;
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
@@ -678,8 +680,8 @@ private:
     bool                              m_trailer_started { false };
     Buffer<allocator_type>            m_recv_buf;
 
-    req_opt::Read::Callback m_send_callback;
-    Buffer<allocator_type>  m_send_buf;
+    BodyReader::Callback   m_send_callback;
+    Buffer<allocator_type> m_send_buf;
 
     Option<RstdHeaderState> m_header_waiter;
     Option<RstdReadWaiter>  m_read_waiter;

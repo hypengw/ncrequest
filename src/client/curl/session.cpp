@@ -9,14 +9,13 @@ module ncrequest;
 import :client_curl_session;
 import cppstd;
 
+using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using rstd::path::Path;
-using rstd::string::String;
 using rstd::sync::Mutex;
 using rstd::thread::JoinHandle;
 using rstd::thread::spawn;
 using rstd::time::Duration;
-using rstd::vec::Vec;
 using std::pmr::memory_resource;
 using std::pmr::polymorphic_allocator;
 
@@ -61,9 +60,7 @@ private:
     Arc<channel_type> m_channel;
     bool              m_stopped;
 
-    rstd::Option<req_opt::Proxy> m_proxy;
-    bool                         m_ignore_certificate;
-    memory_resource*             m_memory;
+    memory_resource* m_memory;
 
     Mutex<Option<JoinHandle<void>>> m_thread;
 };
@@ -81,13 +78,7 @@ SessionBackend::~SessionBackend() {
 
 auto SessionBackend::allocator() -> polymorphic_allocator<byte> { return { (m_d->m_memory) }; }
 
-auto SessionBackend::prepare_req(Request o) const -> Request {
-    if (m_d->m_proxy) o.set_opt(m_d->m_proxy.clone().unwrap());
-    if (m_d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
-    return o;
-}
-
-auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::empty>> {
+auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<empty>> {
     auto& con      = rsp->connection();
     auto  prepared = rsp->prepare_perform();
     if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
@@ -97,14 +88,14 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
 
     auto header_error = co_await con.wait_header();
     if (header_error.is_some()) {
-        co_return Result<rstd::empty>(Err(rstd::move(header_error).unwrap_unchecked()));
+        co_return Result<empty>(Err(rstd::move(header_error).unwrap_unchecked()));
     }
 
-    co_return Result<rstd::empty>(Ok(rstd::empty {}));
+    co_return Result<empty>(Ok(empty {}));
 }
 
-auto SessionBackend::start_request(Request req) -> coro<Result<ResponseBackend>> {
-    auto res       = ResponseBackend::make_response(prepare_req(rstd::move(req)), *this);
+auto SessionBackend::start_request(PreparedRequest req) -> coro<Result<ResponseBackend>> {
+    auto res       = ResponseBackend::make_response(rstd::move(req), *this);
     auto performed = co_await perform(res);
     if (performed.is_err()) co_return Err(rstd::move(performed).unwrap_err());
     co_return Ok(rstd::move(*res));
@@ -114,8 +105,6 @@ SessionBackend::Private::Private(memory_resource* mem_pool, CurlOptions options)
     : m_curl_multi(Box<CurlMulti>::make(options)),
       m_channel(Arc<channel_type>::make()),
       m_stopped(false),
-      m_proxy(),
-      m_ignore_certificate(false),
       m_memory(mem_pool),
       m_thread(Option<JoinHandle<void>> {}) {
     m_channel->set_wake_callback([this] {
@@ -151,8 +140,6 @@ void SessionBackend::load_cookie(ref<Path> path) { m_d->m_curl_multi->load_cooki
 void SessionBackend::save_cookie(ref<Path> path) const { m_d->m_curl_multi->save_cookie(path); }
 
 auto SessionBackend::cookies() -> Vec<String> { return m_d->m_curl_multi->cookies(); }
-void SessionBackend::set_proxy(const req_opt::Proxy& p) { m_d->m_proxy = Some(p.clone()); }
-void SessionBackend::set_verify_certificate(bool v) { m_d->m_ignore_certificate = ! v; }
 
 SessionBackend::channel_type& SessionBackend::channel() { return *(m_d->m_channel); }
 

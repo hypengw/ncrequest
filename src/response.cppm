@@ -10,11 +10,11 @@ import :client_curl_response;
 #endif
 export import :client_http_backend;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
 using rstd::sync::atomic::Atomic;
-using rstd::vec::Vec;
 
 namespace ncrequest
 {
@@ -169,7 +169,7 @@ public:
 
     auto head() const -> const lihttpto::ResponseHead& { return head_; }
     auto header() const -> const lihttpto::Headers& { return head_.headers; }
-    auto code() const -> Option<i32> { return Some(rstd::as_cast<i32>(head_.status.value())); }
+    auto code() const -> Option<i32> { return Some(as_cast<i32>(head_.status.value())); }
     auto trailers() const -> Option<ref<lihttpto::Headers>> { return backend_->trailers(); }
     auto request() const -> const Request& { return backend_->request(); }
     auto is_finished() const -> bool { return backend_->is_finished(); }

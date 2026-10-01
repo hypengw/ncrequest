@@ -12,6 +12,7 @@
 import ncrequest.qt_network;
 import rstd.cppstd;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 using ncrequest::qt_network::WebSocketClient;
 using rstd::async::block_on;
@@ -88,7 +89,7 @@ TEST(qt_network_websocket, LocalEchoText) {
     client.set_on_disconnected_callback([&disconnected_promise] {
         disconnected_promise.set_value();
     });
-    client.set_on_message_callback([&message_promise](rstd::slice<rstd::u8> data, bool) {
+    client.set_on_message_callback([&message_promise](slice<u8> data, bool) {
         std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
                         data.len().to_primitive());
         message_promise.set_value(std::move(out));

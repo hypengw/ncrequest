@@ -5,6 +5,7 @@ export import :client_curl_connection;
 export import :error;
 export import ncrequest.coro;
 
+using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using std::pmr::polymorphic_allocator;
 
@@ -23,15 +24,15 @@ public:
 
 public:
     auto header() const -> const lihttpto::Headers&;
-    auto head() const -> rstd::Option<rstd::ref<lihttpto::MessageHead>>;
-    auto trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>>;
-    auto code() const -> rstd::Option<i32>;
+    auto head() const -> Option<ref<lihttpto::MessageHead>>;
+    auto trailers() const -> Option<ref<lihttpto::Headers>>;
+    auto code() const -> Option<i32>;
 
-    auto next_chunk() -> coro<Result<rstd::Option<Bytes>>>;
-    auto ready_head() -> coro<Result<rstd::empty>> { co_return Ok(rstd::empty {}); }
+    auto next_chunk() -> coro<Result<Option<Bytes>>>;
+    auto ready_head() -> coro<Result<empty>> { co_return Ok(empty {}); }
 
-    static auto make_response(Request, SessionBackend&) -> Arc<ResponseBackend>;
-    ResponseBackend(Request, SessionBackend&) noexcept;
+    static auto make_response(PreparedRequest, SessionBackend&) -> Arc<ResponseBackend>;
+    ResponseBackend(PreparedRequest, SessionBackend&) noexcept;
     ResponseBackend(ResponseBackend&&) noexcept;
     ~ResponseBackend() noexcept;
     ResponseBackend& operator=(ResponseBackend&&) noexcept;
@@ -46,7 +47,7 @@ public:
     auto allocator() const -> const allocator_type&;
 
 private:
-    auto prepare_perform() -> Result<rstd::empty>;
+    auto prepare_perform() -> Result<empty>;
 
     auto connection() -> Connection&;
     auto connection() const -> const Connection&;
@@ -57,7 +58,7 @@ private:
 
 class ResponseBackend::Inner {
 public:
-    Inner(ResponseBackend*, Request, SessionBackend&);
+    Inner(ResponseBackend*, PreparedRequest, SessionBackend&);
     friend class ResponseBackend;
 
 private:

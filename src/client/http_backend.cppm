@@ -5,6 +5,7 @@ export import :error;
 export import ncrequest.coro;
 export import ncrequest.type;
 
+using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using rstd::mtp::convertible_to;
 using rstd::mtp::same_as;
@@ -14,24 +15,20 @@ namespace ncrequest::client
 
 export template<typename T>
 concept HttpResponseBackend = requires(T response, const T const_response) {
-    { response.next_chunk() } -> same_as<coro<Result<rstd::Option<Bytes>>>>;
-    { response.ready_head() } -> same_as<coro<Result<rstd::empty>>>;
+    { response.next_chunk() } -> same_as<coro<Result<Option<Bytes>>>>;
+    { response.ready_head() } -> same_as<coro<Result<empty>>>;
     { const_response.header() } -> same_as<const lihttpto::Headers&>;
-    { const_response.head() } -> same_as<rstd::Option<rstd::ref<lihttpto::MessageHead>>>;
-    { const_response.trailers() } -> same_as<rstd::Option<rstd::ref<lihttpto::Headers>>>;
+    { const_response.head() } -> same_as<Option<ref<lihttpto::MessageHead>>>;
+    { const_response.trailers() } -> same_as<Option<ref<lihttpto::Headers>>>;
     { const_response.request() } -> same_as<const Request&>;
     { response.cancel() } -> same_as<void>;
     { const_response.is_finished() } -> convertible_to<bool>;
 };
 
 export template<typename T, typename ResponseT>
-concept HttpSessionBackend = HttpResponseBackend<ResponseT> &&
-                             requires(T session, Request request, const req_opt::Proxy& proxy) {
-                                 {
-                                     session.start_request(rstd::move(request))
-                                 } -> same_as<coro<Result<ResponseT>>>;
-                                 { session.set_proxy(proxy) } -> same_as<void>;
-                                 { session.set_verify_certificate(true) } -> same_as<void>;
-                             };
+concept HttpSessionBackend =
+    HttpResponseBackend<ResponseT> && requires(T session, PreparedRequest request) {
+        { session.start_request(rstd::move(request)) } -> same_as<coro<Result<ResponseT>>>;
+    };
 
 } // namespace ncrequest::client

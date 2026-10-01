@@ -4,10 +4,9 @@ export import :client_curl_response;
 export import :client_curl_connection;
 export import ncrequest.type;
 
+using namespace rstd::prelude;
 using rstd::bytes::Bytes;
 using rstd::path::Path;
-using rstd::string::String;
-using rstd::vec::Vec;
 using std::pmr::memory_resource;
 using std::pmr::polymorphic_allocator;
 
@@ -33,13 +32,11 @@ public:
 
     void start();
 
-    auto start_request(Request) -> coro<Result<ResponseBackend>>;
+    auto start_request(PreparedRequest) -> coro<Result<ResponseBackend>>;
 
     auto cookies() -> Vec<String>;
     void load_cookie(ref<Path> path);
     void save_cookie(ref<Path> path) const;
-    void set_proxy(const req_opt::Proxy&);
-    void set_verify_certificate(bool);
 
     void about_to_stop();
     void close() { about_to_stop(); }
@@ -49,8 +46,7 @@ public:
     auto allocator() -> polymorphic_allocator<byte>;
 
 private:
-    auto perform(Arc<ResponseBackend>&) -> coro<Result<rstd::empty>>;
-    auto prepare_req(Request) const -> Request;
+    auto perform(Arc<ResponseBackend>&) -> coro<Result<empty>>;
 
     Box<Private> m_d;
 };

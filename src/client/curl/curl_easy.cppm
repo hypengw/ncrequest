@@ -3,10 +3,10 @@ export module ncrequest.curl:easy;
 export import ncrequest.type;
 export import :curl;
 
+using namespace rstd::prelude;
 using namespace curl;
 using namespace rstd::literals;
 using rstd::ffi::CString;
-using rstd::vec::Vec;
 
 namespace ncrequest
 {
@@ -51,9 +51,9 @@ public:
     inline auto get_info(CURLINFO info) noexcept -> rstd::Result<T, CURLcode> {
         T inst;
         if (auto res = curl_easy_getinfo(handle(), info, &inst)) {
-            return rstd::Err(res);
+            return Err(res);
         }
-        return rstd::Ok(rstd::move(inst));
+        return Ok(rstd::move(inst));
     }
 
     template<CURLoption OPT>

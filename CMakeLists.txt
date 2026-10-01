@@ -68,6 +68,8 @@ set(NCREQUEST_MODULE_FILES
     src/error.cppm
     src/session_share.cppm
     src/request.cppm
+    src/options.cppm
+    src/request_body.cppm
     src/client/callback.cppm
     src/client/http_backend.cppm
     src/client/websocket_backend.cppm

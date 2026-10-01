@@ -8,12 +8,12 @@ import :session_share_backend;
 import ncrequest.coro;
 import rstd.cppstd;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::async::yield_now;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
 using rstd::ffi::CString;
-using rstd::vec::Vec;
 using std::pmr::polymorphic_allocator;
 
 namespace ncrequest::client::curl
@@ -22,13 +22,13 @@ namespace ncrequest::client::curl
 namespace
 {
 
-void apply_easy_request(CurlEasy& easy, const Request& req) {
+void apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptions& options) {
     auto url_bytes = Vec<u8>::make();
     url_bytes.extend_from_slice(req.url_info().as_ref().as_bytes());
     auto url = CString::from_vec_unchecked(rstd::move(url_bytes));
     easy.setopt(CURLoption::CURLOPT_URL, url.as_ptr());
     {
-        auto& timeout = req.get_opt<req_opt::Timeout>();
+        auto& timeout = options.timeout();
 
         easy.setopt(CURLoption::CURLOPT_LOW_SPEED_LIMIT,
                     static_cast<long>(timeout.low_speed.to_primitive()));
@@ -37,26 +37,26 @@ void apply_easy_request(CurlEasy& easy, const Request& req) {
         easy.setopt(CURLoption::CURLOPT_CONNECTTIMEOUT,
                     static_cast<long>(timeout.connect_timeout.to_primitive()));
     }
-    {
-        auto& tcp = req.get_opt<req_opt::Tcp>();
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive);
+    if (options.endpoint().socket_path().is_none()) {
+        auto& tcp = options.tcp();
+        easy.setopt(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive ? 1L : 0L);
         easy.setopt(CURLoption::CURLOPT_TCP_KEEPIDLE,
                     static_cast<long>(tcp.keepidle.to_primitive()));
         easy.setopt(CURLoption::CURLOPT_TCP_KEEPINTVL,
                     static_cast<long>(tcp.keepintvl.to_primitive()));
     }
-    {
-        auto& p = req.get_opt<req_opt::Proxy>();
+    if (options.endpoint().socket_path().is_none()) {
+        auto& p = options.proxy();
         easy.setopt(CURLoption::CURLOPT_PROXYTYPE, static_cast<long>(p.type));
         easy.setopt(CURLoption::CURLOPT_PROXY, p.content.empty() ? nullptr : p.content.c_str());
     }
     {
-        auto& p = req.get_opt<req_opt::SSL>();
+        auto& p = options.tls();
         easy.setopt(CURLoption::CURLOPT_SSL_VERIFYPEER, (long)p.verify_certificate);
         easy.setopt(CURLoption::CURLOPT_PROXY_SSL_VERIFYPEER, (long)p.verify_certificate);
     }
     {
-        auto& p = req.get_opt<req_opt::Share>();
+        auto& p = options.share();
         if (p.share) {
             easy.setopt<CURLoption::CURLOPT_SHARE>(
                 detail::SessionShareAccess::curl_handle(*p.share));
@@ -67,17 +67,17 @@ void apply_easy_request(CurlEasy& easy, const Request& req) {
 
 } // namespace
 
-ResponseBackend::Inner::Inner(ResponseBackend* res, Request req, SessionBackend& ses)
+ResponseBackend::Inner::Inner(ResponseBackend* res, PreparedRequest req, SessionBackend& ses)
     : m_q(res),
       m_finished(false),
       m_connect(Connection::make(rstd::move(req), ses.channel_rc(), ses.allocator())),
       m_allocator(ses.allocator()) {}
 
-ResponseBackend::ResponseBackend(Request req, SessionBackend& ses) noexcept
+ResponseBackend::ResponseBackend(PreparedRequest req, SessionBackend& ses) noexcept
     : m_inner(Arc<Inner>::make(this, rstd::move(req), ses)) {
-    apply_easy_request(connection().easy(), request());
-    auto& reader = request().get_opt<req_opt::Read>();
-    if (reader.callback) connection().set_send_callback(reader.callback);
+    apply_easy_request(connection().easy(), request(), connection().options());
+    auto& reader = request().body().reader();
+    if (reader.is_some()) connection().set_send_callback(reader->callback);
 }
 
 ResponseBackend::ResponseBackend(ResponseBackend&& other) noexcept
@@ -104,7 +104,7 @@ auto ResponseBackend::allocator() const -> const polymorphic_allocator<char>& {
     return m_inner->m_allocator;
 }
 
-Arc<ResponseBackend> ResponseBackend::make_response(Request req, SessionBackend& ses) {
+Arc<ResponseBackend> ResponseBackend::make_response(PreparedRequest req, SessionBackend& ses) {
     return Arc<ResponseBackend>::make(rstd::move(req), ses);
 }
 
@@ -121,27 +121,38 @@ bool ResponseBackend::pause_recv(bool pause) {
     return true;
 }
 
-auto ResponseBackend::prepare_perform() -> Result<rstd::empty> {
+auto ResponseBackend::prepare_perform() -> Result<empty> {
     auto&    easy   = connection().easy();
     auto&    req    = request();
     auto     method = req.method().as_ref();
-    auto&    body   = req.body();
-    auto&    reader = req.get_opt<req_opt::Read>();
+    auto&    body   = req.body().bytes();
+    auto&    reader = req.body().reader();
     CURLcode code   = CURLE_OK;
     auto     set    = [&](CURLoption option, auto value) {
         if (code == CURLE_OK) code = easy.setopt(option, value);
     };
+    auto socket = connection().options().endpoint().socket_path();
+    if (socket.is_some()) {
+        auto* version = curl_version_info(CURLVERSION_NOW);
+        if (version == nullptr || ! (version->features & CURL_VERSION_UNIX_SOCKETS))
+            return Err(Error::Unsupported("curl does not support Unix socket endpoints"));
+        auto bytes = Vec<u8>::from(socket->as_os_str().as_encoded_bytes());
+        auto path  = CString::from_vec_unchecked(rstd::move(bytes));
+        set(CURLOPT_UNIX_SOCKET_PATH, path.as_ptr());
+        set(CURLOPT_PROXY, "");
+    }
     if (method == "HEAD"_str) {
         set(CURLOPT_NOBODY, 1L);
     } else if (method == "POST"_str || body.is_some()) {
         set(CURLOPT_POST, 1L);
-        if (reader.callback) {
-            if (reader.size.to_primitive() > std::numeric_limits<curl_off_t>::max())
+        if (reader.is_some()) {
+            if (reader->size.is_some() &&
+                reader->size->to_primitive() > std::numeric_limits<curl_off_t>::max())
                 return Err(Error::InvalidState("request body is too large"));
             set(CURLOPT_POSTFIELDS, static_cast<const char*>(nullptr));
             set(CURLOPT_POSTFIELDSIZE_LARGE,
-                reader.size == usize() ? static_cast<curl_off_t>(-1)
-                                       : static_cast<curl_off_t>(reader.size.to_primitive()));
+                reader->size.is_none() ? static_cast<curl_off_t>(-1)
+                                       : static_cast<curl_off_t>(reader->size->to_primitive()));
         } else {
             auto size = body.is_some() ? body->size().to_primitive() : 0;
             if (size > std::numeric_limits<curl_off_t>::max())
@@ -162,7 +173,7 @@ auto ResponseBackend::prepare_perform() -> Result<rstd::empty> {
         return Err(Error::Client(ClientError {
             ClientBackend::Curl, i32(static_cast<int>(code)), curl_easy_strerror(code) }));
     }
-    return Ok(rstd::empty {});
+    return Ok(empty {});
 }
 
 bool ResponseBackend::is_finished() const {
@@ -173,16 +184,16 @@ bool ResponseBackend::is_finished() const {
 auto ResponseBackend::header() const -> const lihttpto::Headers& {
     return connection().header().headers();
 }
-auto ResponseBackend::head() const -> rstd::Option<rstd::ref<lihttpto::MessageHead>> {
-    return Some(rstd::ref<lihttpto::MessageHead>::from_raw_parts(&connection().header()));
+auto ResponseBackend::head() const -> Option<ref<lihttpto::MessageHead>> {
+    return Some(ref<lihttpto::MessageHead>::from_raw_parts(&connection().header()));
 }
-auto ResponseBackend::trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>> {
+auto ResponseBackend::trailers() const -> Option<ref<lihttpto::Headers>> {
     return connection().trailers();
 }
-auto ResponseBackend::code() const -> rstd::Option<i32> {
+auto ResponseBackend::code() const -> Option<i32> {
     auto status = connection().header().status_code();
     if (status.is_none()) return None();
-    return Some(rstd::as_cast<i32>(*status));
+    return Some(as_cast<i32>(*status));
 }
 
 auto ResponseBackend::connection() -> Connection& { return *(m_inner->m_connect); }
@@ -193,7 +204,7 @@ void ResponseBackend::cancel() {
     connection().about_to_cancel();
 }
 
-auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<Bytes>>> {
+auto ResponseBackend::next_chunk() -> coro<Result<Option<Bytes>>> {
     auto chunk = BytesMut::with_capacity(ReadSize);
     for (;;) {
         auto read = co_await connection().read_some(chunk);

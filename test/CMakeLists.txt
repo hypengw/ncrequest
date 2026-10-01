@@ -34,6 +34,14 @@ if(Python3_EXECUTABLE)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/http_server_test.py
             --test-executable $<TARGET_FILE:ncrequest_test>)
   set_tests_properties(ncrequest_local_http PROPERTIES LABELS "http;integration")
+  if(UNIX AND NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
+    add_test(
+      NAME ncrequest_unix_http
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/http_server_test.py
+              --test-executable $<TARGET_FILE:ncrequest_test> --unix-socket
+              --gtest-filter "http.LocalHttpUnix*")
+    set_tests_properties(ncrequest_unix_http PROPERTIES LABELS "http;integration;unix")
+  endif()
 endif()
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl" AND Python3_EXECUTABLE)

@@ -18,11 +18,18 @@ using namespace rstd::prelude;
 using IoError = rstd::io::error::Error;
 using IoErrorKind = rstd::io::error::ErrorKind;
 using ncrequest::byte;
-using ncrequest::req_opt::Proxy;
-using ncrequest::req_opt::Read;
-using ncrequest::req_opt::Share;
-using ncrequest::req_opt::SSL;
-using ncrequest::req_opt::Timeout;
+using ncrequest::Endpoint;
+using ncrequest::EffectiveOptions;
+using ncrequest::PreparedRequest;
+using ncrequest::RequestOptions;
+using ncrequest::SessionOptions;
+using Proxy = ncrequest::ProxyOptions;
+using Share = ncrequest::ShareOptions;
+using SSL = ncrequest::TlsOptions;
+using Tcp = ncrequest::TcpOptions;
+using Timeout = ncrequest::TimeoutOptions;
+using ncrequest::BodyReader;
+using ncrequest::RequestBody;
 using ncrequest::usize;
 using rstd::async::block_on;
 using rstd::async::join;
@@ -31,7 +38,6 @@ using rstd::async::sleep;
 using rstd::async::spawn_local;
 using rstd::async::yield_now;
 using rstd::bytes::Bytes;
-using rstd::clone::Clone;
 using rstd::cppstd::as_str;
 using rstd::cppstd::as_string_view;
 using rstd::cppstd::to_string;
@@ -41,14 +47,13 @@ using rstd::fs::write;
 using rstd::path::Path;
 using rstd::path::PathBuf;
 using rstd::time::Duration;
-using rstd::vec::Vec;
 using std::chrono::milliseconds;
 using std::chrono::steady_clock;
 
 namespace
 {
 
-auto as_rstd_str(std::string_view value) -> rstd::ref<rstd::str> {
+auto as_rstd_str(std::string_view value) -> ref<str> {
     return rstd::move(as_str(value)).unwrap();
 }
 
@@ -156,7 +161,7 @@ auto upload_body() -> std::string {
 }
 
 auto bytes_from_string(const std::string& body) -> Bytes {
-    auto bytes = rstd::slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(body.data()),
+    auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(body.data()),
                                                    usize(body.size()));
     return Bytes::copy_from_slice(bytes);
 }
@@ -209,7 +214,7 @@ void record_error(ErrorResult& result, const ncrequest::Error& error) {
 auto fetch_text_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Request req)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
-    auto        rsp = co_await session->get(req.clone());
+    auto        rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         auto error        = rstd::move(rsp).unwrap_err();
         result.got_error  = true;
@@ -270,7 +275,9 @@ auto fetch_text(ncrequest::Arc<ncrequest::Session> session, std::string url)
 auto request_with_share(std::string url, const ncrequest::SessionShare& share)
     -> ncrequest::Request {
     auto request = make_request(url);
-    request.get_opt<Share>().set_share(rstd::Some(share.clone()));
+    auto options = RequestOptions {};
+    options.share = Some(Share {Some(share.clone())});
+    request.set_options(rstd::move(options));
     return request;
 }
 
@@ -283,15 +290,15 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
                               const ncrequest::SessionShare& share)
     -> ncrequest::coro<FetchResult> {
     auto result   = FetchResult {};
-    auto response = rstd::Option<ncrequest::Arc<ncrequest::Response>> {};
+    auto response = Option<ncrequest::Arc<ncrequest::Response>> {};
     {
         auto request = request_with_share(rstd::move(url), share);
-        auto started = co_await session->get(request.clone());
+        auto started = co_await session->get(request.try_clone().unwrap());
         if (started.is_err()) {
             result.error = "session returned error";
             co_return result;
         }
-        response            = rstd::Some(rstd::move(started).unwrap());
+        response            = Some(rstd::move(started).unwrap());
         result.got_response = true;
     }
 
@@ -373,7 +380,7 @@ auto fetch_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->get(req.clone());
+    auto        rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -399,7 +406,7 @@ auto post_text(ncrequest::Arc<ncrequest::Session> session, std::string url, std:
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->post(req.clone(), bytes_from_string(body));
+    auto        rsp = co_await session->post(req.try_clone().unwrap(), bytes_from_string(body));
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -425,7 +432,7 @@ auto post_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url, std
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->post(req.clone(), bytes_from_string(body));
+    auto        rsp = co_await session->post(req.try_clone().unwrap(), bytes_from_string(body));
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -450,15 +457,17 @@ auto post_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url, std
 auto timeout_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Request req)
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
-    auto&       timeout = req.get_opt<Timeout>();
+    auto timeout = Timeout {};
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
     timeout.transfer_timeout = i64(100);
 #else
     timeout.low_speed        = i64(1);
     timeout.transfer_timeout = i64(1);
 #endif
-
-    auto rsp = co_await session->get(req.clone());
+    auto options = req.options().clone();
+    options.timeout = Some(timeout);
+    req.set_options(rstd::move(options));
+    auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         auto error = rstd::move(rsp).unwrap_err();
         record_error(result, error);
@@ -486,7 +495,7 @@ auto cancel_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Reque
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
 
-    auto rsp = co_await session->get(req.clone());
+    auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session returned error before cancel";
         co_return result;
@@ -517,7 +526,7 @@ auto curl_slow_consumer(ncrequest::Arc<ncrequest::Session> session, std::string 
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->get(req.clone());
+    auto        rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -526,7 +535,7 @@ auto curl_slow_consumer(ncrequest::Arc<ncrequest::Session> session, std::string 
     auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
     auto body = response->take_body().unwrap();
-    co_await sleep(Duration::from_millis(rstd::u64(350)));
+    co_await sleep(Duration::from_millis(u64(350)));
     result.finished_while_paused = response->is_finished();
 
     auto bytes = co_await body.collect();
@@ -548,8 +557,8 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
     auto        req = make_request(url);
     usize       offset {};
     usize       calls {};
-    auto&       reader = req.get_opt<Read>();
-    reader.size        = usize(body.size());
+    auto reader = BodyReader {};
+    reader.size = Some(usize(body.size()));
     reader.callback    = [&body, &offset, &calls](byte* ptr, usize size) -> usize {
         ++calls;
         auto remaining = usize(body.size()) - offset;
@@ -562,7 +571,8 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
         return copied;
     };
 
-    auto rsp = co_await session->post(req.clone());
+    req.set_body(RequestBody::from_reader(rstd::move(reader)).unwrap());
+    auto rsp = co_await session->post(rstd::move(req));
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -595,7 +605,7 @@ auto run_http(Start&& start) {
 template<typename Start>
 auto run_http_multi_thread(Start&& start) {
     auto runtime = RuntimeBuilder::multi_thread()
-                       .worker_threads(rstd::usize(2))
+                       .worker_threads(usize(2))
                        .build()
                        .unwrap();
     auto session = ncrequest::Session::make();
@@ -615,7 +625,7 @@ TEST(http, HeaderCloneAndRequestReuseTypedOwner) {
     ASSERT_TRUE(source.add("Set-Cookie"_str, "a=1"_str).is_ok());
     ASSERT_TRUE(source.add("set-cookie"_str, "b=2"_str).is_ok());
 
-    auto cloned = rstd::as<Clone>(source).clone();
+    auto cloned = as<Clone>(source).clone();
     ASSERT_TRUE(cloned.set("X-First"_str, "changed"_str).is_ok());
     auto source_first = source.get("x-first"_str);
     auto cloned_first = cloned.get("x-first"_str);
@@ -631,7 +641,7 @@ TEST(http, HeaderCloneAndRequestReuseTypedOwner) {
     ASSERT_TRUE(request.try_set_header("X-First"_str, "request"_str).is_ok());
     EXPECT_EQ(request.header("x-first"), "request");
 
-    auto request_clone = request.clone();
+    auto request_clone = request.try_clone().unwrap();
     ASSERT_TRUE(request_clone.try_set_header("X-First"_str, "clone"_str).is_ok());
     EXPECT_EQ(request.header("x-first"), "request");
     EXPECT_EQ(request_clone.header("x-first"), "clone");
@@ -649,8 +659,8 @@ TEST(http, ErrorModelVariants) {
     ASSERT_TRUE(curl_error.is_Client());
     EXPECT_EQ(curl_error.as_Client().error.backend, ncrequest::ClientBackend::Curl);
     EXPECT_EQ(curl_error.as_Client().error.code,
-              static_cast<rstd::i32>(curl::CURLcode::CURLE_COULDNT_CONNECT));
-    auto client_source = rstd::as<rstd::error::Error>(curl_error).source();
+              static_cast<i32>(curl::CURLcode::CURLE_COULDNT_CONNECT));
+    auto client_source = as<rstd::error::Error>(curl_error).source();
     ASSERT_TRUE(client_source.is_some());
     EXPECT_TRUE(rstd::error::is<ncrequest::ClientError>(*client_source));
     EXPECT_EQ(client_source->as_raw_ptr(), &curl_error.as_Client().error);
@@ -659,7 +669,7 @@ TEST(http, ErrorModelVariants) {
               curl::curl_easy_strerror(curl::CURLcode::CURLE_COULDNT_CONNECT));
 
     auto multi_error = ncrequest::CurlMultiError::Multi(curl::CURLMcode::CURLM_BAD_HANDLE);
-    EXPECT_TRUE(rstd::as<rstd::error::Error>(multi_error).source().is_none());
+    EXPECT_TRUE(as<rstd::error::Error>(multi_error).source().is_none());
     EXPECT_EQ(to_string(rstd::format("{}", multi_error)),
               curl::curl_multi_strerror(curl::CURLMcode::CURLM_BAD_HANDLE));
 #else
@@ -672,7 +682,7 @@ TEST(http, ErrorModelVariants) {
     ASSERT_TRUE(client.is_Client());
     EXPECT_EQ(client.as_Client().error.backend, ncrequest::ClientBackend::QtNetwork);
     EXPECT_EQ(client.as_Client().error.code.to_primitive(), 7);
-    auto client_source = rstd::as<rstd::error::Error>(client).source();
+    auto client_source = as<rstd::error::Error>(client).source();
     ASSERT_TRUE(client_source.is_some());
     EXPECT_TRUE(rstd::error::is<ncrequest::ClientError>(*client_source));
     EXPECT_EQ(client_source->as_raw_ptr(), &client.as_Client().error);
@@ -687,7 +697,7 @@ TEST(http, ErrorModelVariants) {
     ASSERT_TRUE(io_error.is_Io());
     EXPECT_EQ(io_error.as_Io().error.kind(),
               (IoErrorKind { IoErrorKind::TimedOut }));
-    auto io_source = rstd::as<rstd::error::Error>(io_error).source();
+    auto io_source = as<rstd::error::Error>(io_error).source();
     ASSERT_TRUE(io_source.is_some());
     EXPECT_TRUE(rstd::error::is<IoError>(*io_source));
     EXPECT_EQ(io_source->as_raw_ptr(), &io_error.as_Io().error);
@@ -702,35 +712,43 @@ TEST(http, ErrorModelVariants) {
     EXPECT_EQ(to_string(rstd::format("{}", unsupported)), "unsupported capability");
 }
 
-TEST(http, RequestOptionEnumSetOpt) {
-    auto req = ncrequest::Request {};
+TEST(http, UnifiedOptionsInheritanceAndOverride) {
+    auto defaults = SessionOptions {};
+    defaults.timeout = Timeout {i64(2), i64(3), i64(4)};
+    defaults.proxy = Proxy {Proxy::Type::SOCKS5, "127.0.0.1:1080"};
+    defaults.tcp = Tcp {true, i64(12), i64(6)};
+    defaults.tls.verify_certificate = false;
+    defaults.share = Share {Some(ncrequest::SessionShare {})};
+    auto request = make_request("http://localhost/");
+    auto inherited = PreparedRequest::prepare(request.try_clone().unwrap(), defaults).unwrap();
+    EXPECT_EQ(inherited.options().timeout().connect_timeout, i64(3));
+    EXPECT_EQ(inherited.options().timeout().low_speed, i64(2));
+    EXPECT_EQ(inherited.options().timeout().transfer_timeout, i64(4));
+    EXPECT_EQ(inherited.options().proxy().type, Proxy::Type::SOCKS5);
+    EXPECT_EQ(inherited.options().proxy().content, "127.0.0.1:1080");
+    EXPECT_TRUE(inherited.options().tcp().keepalive);
+    EXPECT_FALSE(inherited.options().tls().verify_certificate);
+    EXPECT_TRUE(inherited.options().share().share.is_some());
 
-    req.set_opt(ncrequest::RequestOpt::Timeout(Timeout {
-        .low_speed        = i64(2),
-        .connect_timeout  = i64(3),
-        .transfer_timeout = i64(4),
-    }));
-    EXPECT_EQ(req.get_opt<Timeout>().low_speed.to_primitive(), 2);
-    EXPECT_EQ(req.get_opt<Timeout>().connect_timeout.to_primitive(), 3);
-    EXPECT_EQ(req.get_opt<Timeout>().transfer_timeout.to_primitive(), 4);
-
-    req.set_opt(ncrequest::RequestOpt::Proxy(Proxy {
-        .type    = Proxy::Type::SOCKS5,
-        .content = "127.0.0.1:1080",
-    }));
-    EXPECT_EQ(req.get_opt<Proxy>().type,
-              Proxy::Type::SOCKS5);
-    EXPECT_EQ(req.get_opt<Proxy>().content, "127.0.0.1:1080");
-
-    req.set_opt(ncrequest::RequestOpt::SSL(SSL {
-        .verify_certificate = false,
-    }));
-    EXPECT_FALSE(req.get_opt<SSL>().verify_certificate);
-
-    auto share_opt = Share {};
-    share_opt.set_share(rstd::Some(ncrequest::SessionShare {}));
-    req.set_opt(ncrequest::RequestOpt::Share(rstd::move(share_opt)));
-    EXPECT_TRUE(req.get_opt<Share>().share.is_some());
+    auto overrides = RequestOptions {};
+    overrides.timeout = Some(Timeout {i64(), i64(), i64()});
+    overrides.proxy = Some(Proxy {});
+    overrides.tcp = Some(Tcp {});
+    overrides.tls = Some(SSL {});
+    overrides.share = Some(Share {});
+    request.set_options(rstd::move(overrides));
+    auto copy = request.try_clone().unwrap();
+    auto effective = PreparedRequest::prepare(rstd::move(copy), defaults).unwrap();
+    EXPECT_EQ(effective.options().timeout().transfer_timeout, i64());
+    EXPECT_TRUE(effective.options().proxy().content.empty());
+    EXPECT_FALSE(effective.options().tcp().keepalive);
+    EXPECT_TRUE(effective.options().tls().verify_certificate);
+    EXPECT_TRUE(effective.options().share().share.is_none());
+    defaults.proxy.content.clear();
+    EXPECT_EQ(inherited.options().proxy().content, "127.0.0.1:1080");
+    EXPECT_FALSE(inherited.options().tls().verify_certificate);
+    EXPECT_TRUE(request.options().share.is_some());
+    EXPECT_TRUE(request.options().share->share.is_none());
 }
 
 TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
@@ -1125,7 +1143,7 @@ auto response_before_body(ncrequest::Arc<ncrequest::Session> session, std::strin
 
 auto owned_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
     -> ncrequest::coro<bool> {
-    auto body = rstd::Option<ncrequest::ResponseBody> {};
+    auto body = Option<ncrequest::ResponseBody> {};
     {
         auto response = co_await session->get(make_request(url));
         if (response.is_err()) co_return false;
@@ -1166,11 +1184,11 @@ struct StreamingSink {
     std::string contents;
     std::size_t writes {};
     bool fail {false};
-    auto write(Bytes bytes) -> ncrequest::coro<ncrequest::Result<rstd::empty>> {
+    auto write(Bytes bytes) -> ncrequest::coro<ncrequest::Result<empty>> {
         if (fail) co_return Err(Error::InvalidState("sink rejected chunk"));
         ++writes;
         contents += string_from_bytes(bytes);
-        co_return Ok(rstd::empty {});
+        co_return Ok(empty {});
     }
 };
 
@@ -1425,17 +1443,20 @@ TEST(http, RequestMethodAndOwnedBody) {
     }
     request.set_method(lihttpto::Method::parse("PATCH"_str).unwrap());
     request.set_body(bytes_from_string("owned"));
-    auto cloned = request.clone();
+    auto cloned = request.try_clone().unwrap();
     request.clear_body();
-    EXPECT_TRUE(request.body().is_none());
-    ASSERT_TRUE(cloned.body().is_some());
+    EXPECT_TRUE(request.body().bytes().is_none());
+    ASSERT_TRUE(cloned.body().bytes().is_some());
     EXPECT_EQ(as_string_view(cloned.method().as_ref()), "PATCH");
-    EXPECT_EQ(string_from_bytes(Bytes::copy_from_slice(cloned.body()->as_slice())), "owned");
+    EXPECT_EQ(string_from_bytes(Bytes::copy_from_slice(cloned.body().bytes()->as_slice())), "owned");
     EXPECT_TRUE(cloned.validate().is_ok());
-    cloned.get_opt<Read>().callback = [](byte*, usize) { return usize(); };
-    EXPECT_TRUE(cloned.validate().is_err());
-    cloned.clear_body();
+    auto reader = BodyReader {[](byte*, usize) { return usize(); }, Some(usize())};
+    cloned.set_body(RequestBody::from_reader(rstd::move(reader)).unwrap());
+    EXPECT_TRUE(cloned.body().bytes().is_none());
+    EXPECT_TRUE(cloned.try_clone().is_err());
     EXPECT_TRUE(cloned.validate().unwrap_err().is_Unsupported());
+    cloned.clear_body();
+    EXPECT_TRUE(cloned.try_clone().is_ok());
 }
 
 TEST(http, LocalHttpMethodAndBodyMatrix) {
@@ -1463,4 +1484,197 @@ TEST(http, LocalHttpAbortOwnedUpload) {
     EXPECT_TRUE(run_http([base](auto session) {
         return abort_owned_upload(rstd::move(session), base);
     }));
+}
+
+namespace {
+auto socket_endpoint(std::string_view path) -> Endpoint {
+    return Endpoint::unix_socket(PathBuf::from(as_rstd_str(path))).unwrap();
+}
+
+auto socket_path(const Endpoint& endpoint) -> std::string {
+    auto path = endpoint.socket_path().unwrap();
+    return std::string(as_string_view(path.to_str().unwrap()));
+}
+
+auto endpoint_request(std::string url, Endpoint endpoint) -> ncrequest::Request {
+    auto request = make_request(url);
+    auto options = RequestOptions {};
+    options.endpoint = Some(rstd::move(endpoint));
+    request.set_options(rstd::move(options));
+    return request;
+}
+
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+auto local_socket_path() -> std::string {
+    auto* path = std::getenv("NCREQUEST_TEST_UNIX_SOCKET");
+    return path == nullptr ? std::string {} : std::string(path);
+}
+#endif
+}
+
+TEST(http, EndpointOptionsInheritanceAndSnapshot) {
+    auto defaults = SessionOptions {};
+    defaults.endpoint = socket_endpoint("/tmp/session.sock");
+    auto request = make_request("http://podman.invalid/v6/libpod/info?detail=1");
+    auto inherited = PreparedRequest::prepare(request.try_clone().unwrap(), defaults).unwrap();
+    EXPECT_EQ(socket_path(inherited.options().endpoint()), "/tmp/session.sock");
+    EXPECT_EQ(inherited.request().url(), "http://podman.invalid/v6/libpod/info?detail=1");
+
+    auto override = RequestOptions {};
+    override.endpoint = Some(socket_endpoint("/tmp/request.sock"));
+    request.set_options(rstd::move(override));
+    auto cloned = request.try_clone().unwrap();
+    auto selected = PreparedRequest::prepare(request.try_clone().unwrap(), defaults).unwrap();
+    defaults.endpoint = Endpoint::network();
+    request.set_options(RequestOptions {});
+    EXPECT_EQ(socket_path(selected.options().endpoint()), "/tmp/request.sock");
+    EXPECT_EQ(socket_path(*cloned.options().endpoint), "/tmp/request.sock");
+    EXPECT_EQ(socket_path(inherited.options().endpoint()), "/tmp/session.sock");
+
+    defaults.endpoint = socket_endpoint("/tmp/session.sock");
+    auto network = endpoint_request("http://localhost/", Endpoint::network());
+    auto reset = PreparedRequest::prepare(rstd::move(network), defaults).unwrap();
+    EXPECT_TRUE(reset.options().endpoint().socket_path().is_none());
+}
+
+TEST(http, EndpointInvalidPathsAndConflicts) {
+    EXPECT_TRUE(Endpoint::unix_socket(PathBuf {}).is_err());
+    EXPECT_TRUE(Endpoint::unix_socket(PathBuf::from("/tmp/one\0two"_str)).is_err());
+    auto defaults = SessionOptions {};
+    defaults.endpoint = socket_endpoint("/tmp/session.sock");
+    auto request = make_request("http://localhost/");
+    auto overrides = RequestOptions {};
+    overrides.proxy = Some(Proxy {Proxy::Type::HTTP, "http://127.0.0.1:1"});
+    request.set_options(overrides.clone());
+    auto proxy = PreparedRequest::prepare(request.try_clone().unwrap(), defaults);
+    ASSERT_TRUE(proxy.is_err());
+    EXPECT_TRUE(proxy.unwrap_err().is_InvalidState());
+    overrides.proxy = Some(Proxy {});
+    overrides.tcp = Some(Tcp {true, i64(120), i64(60)});
+    request.set_options(overrides.clone());
+    EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
+    overrides.tcp = Some(Tcp {});
+    request.set_options(rstd::move(overrides));
+    EXPECT_TRUE(PreparedRequest::prepare(rstd::move(request), defaults).is_ok());
+}
+
+TEST(http, LocalHttpUnixEndpoint) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto path = local_socket_path();
+    if (path.empty()) GTEST_SKIP();
+    auto defaults = SessionOptions {};
+    defaults.endpoint = socket_endpoint(path);
+    auto session = ncrequest::Session::make(rstd::move(defaults));
+    auto result = block_on(fetch_text_request(session.clone(),
+        make_request("http://podman.invalid:8087/endpoint?detail=1")));
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.body, "unix\npodman.invalid:8087\n/endpoint?detail=1\n");
+
+    auto network_url = local_http_url(local_http_base_url(), "/endpoint?network=1");
+    auto reset = block_on(fetch_text_request(session.clone(),
+        endpoint_request(network_url, Endpoint::network())));
+    ASSERT_TRUE(reset.got_body) << reset.error;
+    EXPECT_EQ(reset.body.substr(0, 4), "tcp\n");
+
+    auto failed = block_on(fetch_text_request(session.clone(),
+        endpoint_request("http://podman.invalid/text", socket_endpoint(path + ".missing"))));
+    EXPECT_TRUE(failed.got_error);
+    EXPECT_EQ(failed.error_kind, ncrequest::ErrorKind::Client);
+
+    auto recovered = block_on(fetch_text_request(rstd::move(session),
+        make_request("http://podman.invalid/text")));
+    ASSERT_TRUE(recovered.got_body) << recovered.error;
+#else
+    GTEST_SKIP() << "curl-only Unix socket runtime test";
+#endif
+}
+
+TEST(http, LocalHttpUnixRequestOverride) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto path = local_socket_path();
+    if (path.empty()) GTEST_SKIP();
+    auto result = run_http([path](auto session) {
+        return fetch_text_request(rstd::move(session),
+            endpoint_request("http://not-resolved.invalid/endpoint", socket_endpoint(path)));
+    });
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.body, "unix\nnot-resolved.invalid\n/endpoint\n");
+#else
+    GTEST_SKIP() << "curl-only Unix socket runtime test";
+#endif
+}
+
+TEST(http, UnifiedOptionsValidationAndInheritedConflicts) {
+    auto defaults = SessionOptions {};
+    defaults.endpoint = socket_endpoint("/tmp/session.sock");
+    defaults.proxy.content = "http://127.0.0.1:1";
+    auto request = make_request("http://localhost/");
+    EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
+    auto options = RequestOptions {};
+    options.proxy = Some(Proxy {});
+    request.set_options(options.clone());
+    EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_ok());
+    options.timeout = Some(Timeout {i64(-1), i64(3), i64(0)});
+    request.set_options(options.clone());
+    EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
+    options.timeout = None();
+    options.tcp = Some(Tcp {false, i64(-1), i64(0)});
+    request.set_options(rstd::move(options));
+    EXPECT_TRUE(PreparedRequest::prepare(rstd::move(request), defaults).is_err());
+}
+
+TEST(http, RequestBodyReaderOwnership) {
+    EXPECT_TRUE(RequestBody::from_reader(BodyReader {}).is_err());
+    auto reader = BodyReader {[](byte*, usize) { return usize(); }, Some(usize())};
+    auto request = make_request("http://localhost/");
+    request.try_set_method("POST"_str).unwrap();
+    request.set_body(RequestBody::from_reader(rstd::move(reader)).unwrap());
+    EXPECT_TRUE(request.body().reader().is_some());
+    EXPECT_TRUE(request.body().reader()->size.is_some());
+    EXPECT_EQ(*request.body().reader()->size, usize());
+    EXPECT_TRUE(request.try_clone().is_err());
+    request.set_body(bytes_from_string("replacement"));
+    EXPECT_TRUE(request.body().reader().is_none());
+    EXPECT_TRUE(request.try_clone().is_ok());
+}
+
+namespace {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+auto reader_upload(ncrequest::Arc<ncrequest::Session> session, std::string url,
+                   bool known_empty) -> ncrequest::coro<bool> {
+    std::size_t calls = 0;
+    auto reader = BodyReader {};
+    if (known_empty) reader.size = Some(usize());
+    reader.callback = [&calls, position = std::size_t {}](byte* buffer, usize capacity) mutable {
+        ++calls;
+        const std::string payload = "callback payload";
+        auto count = std::min(payload.size() - position, capacity.to_primitive());
+        std::memcpy(buffer, payload.data() + position, count);
+        position += count;
+        return usize(count);
+    };
+    auto request = make_request(url);
+    request.set_body(RequestBody::from_reader(rstd::move(reader)).unwrap());
+    auto response = co_await session->post(rstd::move(request));
+    if (response.is_err()) co_return false;
+    auto bytes = co_await (*response)->bytes();
+    if (bytes.is_err()) co_return false;
+    auto body = string_from_bytes(*bytes);
+    co_return known_empty ? body.empty() && calls == 0 : body == "callback payload" && calls > 0;
+}
+#endif
+}
+
+TEST(http, LocalHttpReaderLength) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    for (bool empty : {false, true}) {
+        EXPECT_TRUE(run_http([url = local_http_url(base, "/body-reader"), empty](auto session) {
+            return reader_upload(rstd::move(session), url, empty);
+        }));
+    }
+#else
+    GTEST_SKIP() << "Qt Network does not support body readers";
+#endif
 }

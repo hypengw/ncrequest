@@ -3,7 +3,9 @@
 import argparse
 import os
 import subprocess
+import socketserver
 import sys
+import tempfile
 import threading
 import time
 from http import HTTPStatus
@@ -108,6 +110,12 @@ class Handler(BaseHTTPRequestHandler):
             self.method_echo()
             return
         target = urlsplit(self.path)
+
+        if target.path == "/endpoint":
+            transport = getattr(self.server, "transport", "tcp")
+            body = f"{transport}\n{self.headers.get('Host')}\n{self.path}\n".encode()
+            self.send_payload(HTTPStatus.OK, body)
+            return
 
         if target.path == "/delayed-body":
             self.send_stream(HTTPStatus.OK, b"delayed body", 4096, 1.0, 0.0)
@@ -263,6 +271,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
 
     def do_POST(self) -> None:
+        if self.path == "/body-reader":
+            body = bytearray()
+            if self.headers.get("Transfer-Encoding") == "chunked":
+                while True:
+                    size = int(self.rfile.readline().strip(), 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        break
+                    body.extend(self.rfile.read(size))
+                    self.rfile.read(2)
+            else:
+                body.extend(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            self.send_payload(HTTPStatus.OK, bytes(body))
+            return
         if self.path == "/slow-upload":
             remaining = int(self.headers.get("Content-Length", "0"))
             try:
@@ -303,6 +325,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-executable", required=True)
     parser.add_argument("--gtest-filter", default="http.LocalHttp*")
+    parser.add_argument("--unix-socket", action="store_true")
     parser.add_argument("extra_args", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -314,9 +337,26 @@ def main() -> int:
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
 
+    unix_server = None
+    unix_thread = None
+    socket_dir = None
+
     try:
         env = os.environ.copy()
         env["NCREQUEST_TEST_HTTP_BASE_URL"] = f"http://{host}:{port}"
+        if args.unix_socket:
+            class UnixHttpServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+                daemon_threads = True
+                transport = "unix"
+
+            socket_dir = tempfile.TemporaryDirectory(prefix="ncrequest-http-")
+            socket_path = os.path.join(socket_dir.name, "http.sock")
+            unix_server = UnixHttpServer(socket_path, Handler)
+            unix_thread = threading.Thread(target=unix_server.serve_forever)
+            unix_thread.start()
+            env["NCREQUEST_TEST_UNIX_SOCKET"] = socket_path
+            env["http_proxy"] = "http://127.0.0.1:1"
+            env["no_proxy"] = "127.0.0.1,localhost"
 
         command = [
             args.test_executable,
@@ -330,6 +370,13 @@ def main() -> int:
         completed = subprocess.run(command, env=env, check=False)
         return completed.returncode
     finally:
+        if unix_server is not None:
+            unix_server.shutdown()
+            unix_server.server_close()
+        if unix_thread is not None:
+            unix_thread.join()
+        if socket_dir is not None:
+            socket_dir.cleanup()
         server.shutdown()
         server.server_close()
         thread.join()

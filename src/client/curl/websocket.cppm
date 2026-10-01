@@ -7,6 +7,7 @@ export import ncrequest.curl;
 export import :client_callback;
 import rstd;
 
+using namespace rstd::prelude;
 using rstd::async::Completion;
 using std::pmr::memory_resource;
 
@@ -19,10 +20,10 @@ public:
     using ConnectedCallback    = client::Callback<void()>;
     using DisconnectedCallback = client::Callback<void()>;
     using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
-    using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
+    using ErrorCallback        = client::Callback<void(ref<str>)>;
 
-    explicit WebSocketBackend(rstd::Option<u64> max_buffer_size = None(),
-                              memory_resource*  mem_pool        = std::pmr::get_default_resource());
+    explicit WebSocketBackend(Option<u64>      max_buffer_size = None(),
+                              memory_resource* mem_pool        = std::pmr::get_default_resource());
     ~WebSocketBackend();
     WebSocketBackend(const WebSocketBackend&)            = delete;
     WebSocketBackend& operator=(const WebSocketBackend&) = delete;

@@ -6,6 +6,7 @@ export import :qt;
 export import ncrequest.type;
 export import :client_callback;
 
+using namespace rstd::prelude;
 using namespace ncrequest::qt;
 using rstd::async::Completion;
 using rstd::async::CompletionHandle;
@@ -23,9 +24,9 @@ public:
     using ConnectedCallback    = client::Callback<void()>;
     using DisconnectedCallback = client::Callback<void()>;
     using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
-    using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
+    using ErrorCallback        = client::Callback<void(ref<str>)>;
 
-    explicit WebSocketBackend(QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
+    explicit WebSocketBackend(QObject* parent = nullptr, Option<u64> max_buffer_size = None(),
                               memory_resource* mem_pool = std::pmr::get_default_resource())
         : m_owned_socket(parent == nullptr ? Some(Box<QWebSocket>::make(
                                                  QString {}, QWebSocketProtocol::VersionLatest))
@@ -207,8 +208,8 @@ private:
     MessageCallback                m_on_message;
     ErrorCallback                  m_on_error;
 
-    polymorphic_allocator<rstd::byte> m_alloc;
-    vector<rstd::byte>                m_read_buffer;
+    polymorphic_allocator<byte> m_alloc;
+    vector<byte>                m_read_buffer;
 };
 
 } // namespace ncrequest::client::qt_network

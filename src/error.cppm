@@ -9,8 +9,8 @@ export import ncrequest.curl;
 #endif
 export import cppstd;
 
+using namespace rstd::prelude;
 using IoError = rstd::io::error::Error;
-using rstd::convert::From;
 using rstd::error::ErrorRef;
 using rstd::fmt::Debug;
 using rstd::fmt::Display;
@@ -42,7 +42,7 @@ export enum class ClientBackend {
 
 export struct ClientError {
     ClientBackend backend;
-    rstd::i32     code;
+    i32           code;
     std::string   message;
 };
 
@@ -92,12 +92,12 @@ struct rstd::Impl<Display, ncrequest::ClientError> : rstd::ImplBase<ncrequest::C
 
 template<>
 struct rstd::Impl<Debug, ncrequest::ClientError> : rstd::ImplBase<ncrequest::ClientError> {
-    auto fmt(fmt::Formatter& f) const -> bool { return rstd::as<Display>(this->self()).fmt(f); }
+    auto fmt(fmt::Formatter& f) const -> bool { return as<Display>(this->self()).fmt(f); }
 };
 
 template<>
 struct rstd::Impl<rstd::error::Error, ncrequest::ClientError>
-    : rstd::DefaultInImpl<rstd::error::Error, ncrequest::ClientError> {};
+    : DefaultInImpl<rstd::error::Error, ncrequest::ClientError> {};
 
 template<>
 struct rstd::Impl<Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
@@ -139,25 +139,25 @@ struct rstd::Impl<Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> 
 
 template<>
 struct rstd::Impl<Debug, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
-    auto fmt(fmt::Formatter& f) const -> bool { return rstd::as<Display>(this->self()).fmt(f); }
+    auto fmt(fmt::Formatter& f) const -> bool { return as<Display>(this->self()).fmt(f); }
 };
 
 template<>
 struct rstd::Impl<rstd::error::Error, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
-    auto source() const noexcept -> rstd::Option<ErrorRef> {
+    auto source() const noexcept -> Option<ErrorRef> {
         auto& error = this->self();
         switch (error.tag()) {
         case ncrequest::Error::Tag::Client:
-            return rstd::Some(rstd::dyn<rstd::error::Error>::from_ref(error.as_Client().error));
+            return Some(dyn<rstd::error::Error>::from_ref(error.as_Client().error));
         case ncrequest::Error::Tag::Io:
-            return rstd::Some(rstd::dyn<rstd::error::Error>::from_ref(error.as_Io().error));
-        default: return rstd::None();
+            return Some(dyn<rstd::error::Error>::from_ref(error.as_Io().error));
+        default: return None();
         }
     }
 };
 
-static_assert(rstd::Impled<ncrequest::ClientError, rstd::error::Error>);
-static_assert(rstd::Impled<ncrequest::Error, rstd::error::Error>);
+static_assert(Impled<ncrequest::ClientError, rstd::error::Error>);
+static_assert(Impled<ncrequest::Error, rstd::error::Error>);
 
 template<>
 struct rstd::Impl<From<ncrequest::ClientError>, ncrequest::Error> {
@@ -173,7 +173,7 @@ struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
         auto* message = curl::curl_easy_strerror(e);
         return rstd::into(ncrequest::ClientError {
             .backend = ncrequest::ClientBackend::Curl,
-            .code    = static_cast<rstd::i32>(e),
+            .code    = static_cast<i32>(e),
             .message = message != nullptr ? message : "curl client error",
         });
     };

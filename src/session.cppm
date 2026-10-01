@@ -8,6 +8,7 @@ export import :client_curl_session;
 #endif
 export import :client_http_backend;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
 using rstd::sync::atomic::Atomic;
@@ -26,9 +27,11 @@ static_assert(client::HttpSessionBackend<SelectedSessionBackend, SelectedRespons
 export class Session : public NoCopy {
     struct ConstructionKey {};
     struct State {
+        SessionOptions         options;
         SelectedSessionBackend backend;
         Atomic<bool>           closed { false };
         State() = default;
+        explicit State(SessionOptions value): options(rstd::move(value)) {}
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
         explicit State(qt::QObject* parent): backend(parent) {}
         explicit State(qt::QNetworkAccessManager* manager): backend(manager) {}
@@ -41,6 +44,9 @@ export class Session : public NoCopy {
 
 public:
     Session(): state_(Arc<State>::make()) { start_backend(state_->backend); }
+    explicit Session(SessionOptions options): state_(Arc<State>::make(rstd::move(options))) {
+        start_backend(state_->backend);
+    }
     ~Session() { close(); }
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
     Session(ConstructionKey, qt::QObject* parent): state_(Arc<State>::make(parent)) {}
@@ -56,6 +62,9 @@ public:
     void close() { state_->close(); }
 
     static auto make() -> Arc<Session> { return Arc<Session>::make(); }
+    static auto make(SessionOptions options) -> Arc<Session> {
+        return Arc<Session>::make(rstd::move(options));
+    }
 
     auto get(Request req) -> coro<Result<Arc<Response>>> {
         req.set_method(lihttpto::Method::parse("GET"_str).unwrap());
@@ -86,9 +95,9 @@ private:
 
     static auto send_request(Arc<State> state, Request req) -> coro<Result<Arc<Response>>> {
         if (state->closed.load()) co_return Err(Error::Canceled());
-        auto valid = req.validate();
-        if (valid.is_err()) co_return Err(rstd::move(valid).unwrap_err());
-        auto res = co_await state->backend.start_request(rstd::move(req));
+        auto prepared = PreparedRequest::prepare(rstd::move(req), state->options);
+        if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
+        auto res = co_await state->backend.start_request(rstd::move(prepared).unwrap());
         if (res.is_err()) {
             co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
         }
