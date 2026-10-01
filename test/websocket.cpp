@@ -9,10 +9,16 @@
 import ncrequest;
 import rstd.cppstd;
 
+using namespace rstd::literals;
+using rstd::async::block_on;
+using rstd::cppstd::as_str;
+using std::chrono::milliseconds;
+using std::chrono::seconds;
+using std::chrono::steady_clock;
+using std::this_thread::sleep_for;
+
 namespace
 {
-
-using namespace rstd::literals;
 
 auto local_ws_url() -> std::string {
     auto* value = std::getenv("NCREQUEST_TEST_WS_URL");
@@ -21,15 +27,15 @@ auto local_ws_url() -> std::string {
 }
 
 template<typename T>
-auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> bool {
-    auto const deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+auto wait_future(std::future<T>& future, milliseconds timeout) -> bool {
+    auto const deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (future.wait_for(milliseconds(0)) == std::future_status::ready) {
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        sleep_for(milliseconds(1));
     }
-    return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+    return future.wait_for(milliseconds(0)) == std::future_status::ready;
 }
 
 } // namespace
@@ -78,18 +84,18 @@ TEST(websocket, LocalEchoText) {
         error_promise.set_value(std::move(out));
     });
 
-    auto connected = rstd::async::block_on(
-        client.connect(rstd::move(rstd::cppstd::as_str(url)).unwrap()));
+    auto connected = block_on(
+        client.connect(rstd::move(as_str(url)).unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
     client.send("curl websocket payload"_str);
-    ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)))
-        << (wait_future(error, std::chrono::milliseconds(0)) ? error.get() : "message timed out");
+    ASSERT_TRUE(wait_future(message, seconds(5)))
+        << (wait_future(error, milliseconds(0)) ? error.get() : "message timed out");
     EXPECT_EQ(message.get(), "curl websocket payload");
 
     client.disconnect();
-    ASSERT_TRUE(wait_future(disconnected, std::chrono::seconds(5)));
+    ASSERT_TRUE(wait_future(disconnected, seconds(5)));
     EXPECT_FALSE(client.is_connected());
 }

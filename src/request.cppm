@@ -13,6 +13,11 @@ export import :error;
 export import :session_share;
 export import ncrequest.type;
 
+using rstd::clone::Clone;
+using rstd::mtp::decay;
+using rstd::mtp::same_as;
+using std::pmr::memory_resource;
+
 namespace ncrequest
 {
 
@@ -28,7 +33,7 @@ export struct Timeout {
     REQ_OPT_PROP(i64, transfer_timeout, {})
 };
 
-export struct Proxy : rstd::DefaultInClass<Proxy, rstd::clone::Clone> {
+export struct Proxy : rstd::DefaultInClass<Proxy, Clone> {
     enum class Type
     {
         HTTP    = 0,
@@ -59,7 +64,7 @@ export struct Read {
     REQ_OPT_PROP(usize, size, { 0 })
 };
 
-export struct Share : rstd::DefaultInClass<Share, rstd::clone::Clone> {
+export struct Share : rstd::DefaultInClass<Share, Clone> {
     rstd::Option<SessionShare> share {};
     auto&                      set_share(rstd::Option<SessionShare> v) {
         share = rstd::move(v);
@@ -76,12 +81,9 @@ export using RequestOpts = rstd::tuple<req_opt::Timeout, req_opt::Proxy, req_opt
                                        req_opt::Read, req_opt::Share>;
 
 export template<typename T>
-concept RequestOption = rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Timeout> ||
-                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Proxy> ||
-                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Tcp> ||
-                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::SSL> ||
-                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Read> ||
-                        rstd::mtp::same_as<rstd::mtp::decay<T>, req_opt::Share>;
+concept RequestOption = same_as<decay<T>, req_opt::Timeout> || same_as<decay<T>, req_opt::Proxy> ||
+                        same_as<decay<T>, req_opt::Tcp> || same_as<decay<T>, req_opt::SSL> ||
+                        same_as<decay<T>, req_opt::Read> || same_as<decay<T>, req_opt::Share>;
 
 export struct RequestOpt {
     RSTD_ENUM(RequestOpt, (Timeout, (req_opt::Timeout value;)), (Proxy, (req_opt::Proxy value;)),
@@ -89,12 +91,12 @@ export struct RequestOpt {
               (Read, (req_opt::Read value;)), (Share, (req_opt::Share value;)))
 };
 
-export auto global_init(std::pmr::memory_resource* resource = nullptr) -> Result<rstd::empty>;
+export auto global_init(memory_resource* resource = nullptr) -> Result<rstd::empty>;
 } // namespace ncrequest
 namespace ncrequest
 {
 
-export class Request : public rstd::DefaultInClass<Request, rstd::clone::Clone> {
+export class Request : public rstd::DefaultInClass<Request, Clone> {
 public:
     Request() noexcept;
     explicit Request(lihttpto::Url url) noexcept;
@@ -131,7 +133,7 @@ public:
 
     template<RequestOption T>
     auto set_opt(T&& opt) -> Request& {
-        m_opts.template get<rstd::mtp::decay<T>>() = rstd::forward<T>(opt);
+        m_opts.template get<decay<T>>() = rstd::forward<T>(opt);
         return *this;
     }
 
@@ -145,6 +147,6 @@ private:
 
 } // namespace ncrequest
 
-static_assert(rstd::Impled<ncrequest::Request, rstd::clone::Clone>);
-static_assert(rstd::Impled<ncrequest::req_opt::Share, rstd::clone::Clone>);
-static_assert(rstd::Impled<ncrequest::req_opt::Proxy, rstd::clone::Clone>);
+static_assert(rstd::Impled<ncrequest::Request, Clone>);
+static_assert(rstd::Impled<ncrequest::req_opt::Share, Clone>);
+static_assert(rstd::Impled<ncrequest::req_opt::Proxy, Clone>);

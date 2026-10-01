@@ -1,6 +1,7 @@
 export module ncrequest:session_share;
 export import ncrequest.type;
 
+using rstd::clone::Clone;
 using rstd::path::Path;
 
 namespace ncrequest
@@ -10,7 +11,7 @@ export namespace detail
 class SessionShareAccess;
 }
 
-export class SessionShare : public rstd::DefaultInClass<SessionShare, rstd::clone::Clone> {
+export class SessionShare : public rstd::DefaultInClass<SessionShare, Clone> {
 public:
     SessionShare();
     ~SessionShare();
@@ -33,5 +34,5 @@ private:
     Arc<Private> d_ptr;
 };
 
-static_assert(rstd::Impled<SessionShare, rstd::clone::Clone>);
+static_assert(rstd::Impled<SessionShare, Clone>);
 } // namespace ncrequest

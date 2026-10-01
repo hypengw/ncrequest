@@ -14,10 +14,18 @@ import ncrequest.qt_network;
 import rstd;
 import rstd.cppstd;
 
+using namespace rstd::literals;
+using ncrequest::qt_network::Response;
+using ncrequest::qt_network::Session;
+using ncrequest::req_opt::Share;
+using ncrequest::req_opt::Timeout;
+using rstd::async::block_on;
+using rstd::async::RuntimeBuilder;
+using rstd::bytes::Bytes;
+using rstd::cppstd::as_str;
+
 namespace
 {
-
-using namespace rstd::literals;
 
 struct FetchResult {
     bool        got_response { false };
@@ -55,7 +63,7 @@ auto local_http_url(std::string_view base, std::string_view path) -> std::string
 }
 
 auto make_request(std::string_view url) -> ncrequest::Request {
-    auto value = rstd::move(rstd::cppstd::as_str(url)).unwrap();
+    auto value = rstd::move(as_str(url)).unwrap();
     return rstd::move(ncrequest::Request::from_url(value)).unwrap();
 }
 
@@ -69,19 +77,19 @@ auto large_body() -> std::string {
     return out;
 }
 
-auto bytes_from_string(const std::string& body) -> rstd::bytes::Bytes {
+auto bytes_from_string(const std::string& body) -> Bytes {
     auto bytes = rstd::slice<rstd::u8>::from_raw_parts(
         reinterpret_cast<const rstd::byte*>(body.data()), rstd::usize(body.size()));
-    return rstd::bytes::Bytes::copy_from_slice(bytes);
+    return Bytes::copy_from_slice(bytes);
 }
 
-auto response_code(const ncrequest::Arc<ncrequest::qt_network::Response>& response) -> int {
+auto response_code(const ncrequest::Arc<Response>& response) -> int {
     auto code = response->code();
     if (code.is_some()) return code.unwrap().to_primitive();
     return 0;
 }
 
-auto fetch_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url)
+auto fetch_text(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
@@ -107,7 +115,7 @@ auto fetch_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::str
     co_return result;
 }
 
-auto post_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url,
+auto post_text(ncrequest::Arc<Session> session, std::string url,
                std::string body) -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
@@ -133,11 +141,11 @@ auto post_text(ncrequest::Arc<ncrequest::qt_network::Session> session, std::stri
     co_return result;
 }
 
-auto fetch_timeout(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url)
+auto fetch_timeout(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
     auto        req                                             = make_request(url);
-    req.get_opt<ncrequest::req_opt::Timeout>().transfer_timeout = rstd::i64(100);
+    req.get_opt<Timeout>().transfer_timeout = rstd::i64(100);
 
     auto rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
@@ -159,11 +167,11 @@ auto fetch_timeout(ncrequest::Arc<ncrequest::qt_network::Session> session, std::
     co_return result;
 }
 
-auto fetch_with_share(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url)
+auto fetch_with_share(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<ErrorResult> {
     auto result = ErrorResult {};
     auto req    = make_request(url);
-    req.get_opt<ncrequest::req_opt::Share>().set_share(rstd::Some(ncrequest::SessionShare {}));
+    req.get_opt<Share>().set_share(rstd::Some(ncrequest::SessionShare {}));
 
     auto response = co_await session->get(req.clone());
     if (response.is_err()) {
@@ -176,12 +184,12 @@ auto fetch_with_share(ncrequest::Arc<ncrequest::qt_network::Session> session, st
     co_return result;
 }
 
-auto share_roundtrip(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string base)
+auto share_roundtrip(ncrequest::Arc<Session> session, std::string base)
     -> ncrequest::coro<FetchResult> {
     auto share = ncrequest::SessionShare {};
     auto set_request =
         make_request(local_http_url(base, "/cookie/set?name=owned_manager_cookie&value=shared"));
-    set_request.get_opt<ncrequest::req_opt::Share>().set_share(rstd::Some(share.clone()));
+    set_request.get_opt<Share>().set_share(rstd::Some(share.clone()));
     auto set_response = co_await session->get(set_request.clone());
     if (set_response.is_err()) {
         auto result  = FetchResult {};
@@ -196,7 +204,7 @@ auto share_roundtrip(ncrequest::Arc<ncrequest::qt_network::Session> session, std
     }
 
     auto echo_request = make_request(local_http_url(base, "/cookie/echo"));
-    echo_request.get_opt<ncrequest::req_opt::Share>().set_share(rstd::Some(share.clone()));
+    echo_request.get_opt<Share>().set_share(rstd::Some(share.clone()));
     auto echo_response = co_await session->get(echo_request.clone());
     if (echo_response.is_err()) {
         auto result  = FetchResult {};
@@ -219,7 +227,7 @@ auto share_roundtrip(ncrequest::Arc<ncrequest::qt_network::Session> session, std
     co_return result;
 }
 
-auto fetch_then_cancel(ncrequest::Arc<ncrequest::qt_network::Session> session, std::string url)
+auto fetch_then_cancel(ncrequest::Arc<Session> session, std::string url)
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
     auto        req = make_request(url);
@@ -245,22 +253,22 @@ auto fetch_then_cancel(ncrequest::Arc<ncrequest::qt_network::Session> session, s
 
 template<typename Start>
 auto run_http(Start&& start) {
-    auto session = ncrequest::qt_network::Session::make();
-    return rstd::async::block_on(start(rstd::move(session)));
+    auto session = Session::make();
+    return block_on(start(rstd::move(session)));
 }
 
 template<typename Start>
 auto run_http_rstd(Start&& start) {
-    auto session = ncrequest::qt_network::Session::make();
-    return rstd::async::block_on(start(rstd::move(session)));
+    auto session = Session::make();
+    return block_on(start(rstd::move(session)));
 }
 
 template<typename Start>
 auto run_http_rstd_multi_thread(Start&& start) {
     auto runtime_result =
-        rstd::async::RuntimeBuilder::multi_thread().worker_threads(rstd::usize(2)).build();
+        RuntimeBuilder::multi_thread().worker_threads(rstd::usize(2)).build();
     auto runtime = runtime_result.unwrap();
-    auto session = ncrequest::qt_network::Session::make();
+    auto session = Session::make();
     return runtime.block_on(start(rstd::move(session)));
 }
 
@@ -269,7 +277,7 @@ auto run_qt_owner_coro(ncrequest::coro<T> task) -> T {
     QEventLoop       loop;
     std::optional<T> result;
     auto             worker = std::thread([&loop, &result, task = rstd::move(task)]() mutable {
-        result.emplace(rstd::async::block_on(rstd::move(task)));
+        result.emplace(block_on(rstd::move(task)));
         (void)QMetaObject::invokeMethod(
             &loop,
             [&loop] {
@@ -435,7 +443,7 @@ TEST(qt_network, LocalHttpManagerAutoDeleteOverride) {
 
     QNetworkAccessManager manager;
     manager.setAutoDeleteReplies(true);
-    auto session = ncrequest::qt_network::Session::from_qt_manager(&manager);
+    auto session = Session::from_qt_manager(&manager);
 
     auto result = run_qt_owner_coro(fetch_text(rstd::move(session), local_http_url(base, "/text")));
     ASSERT_TRUE(result.got_response) << result.error;
@@ -452,7 +460,7 @@ TEST(qt_network, LocalHttpExternalManagerRejectsShare) {
     }
 
     QNetworkAccessManager manager;
-    auto                  session = ncrequest::qt_network::Session::from_qt_manager(&manager);
+    auto                  session = Session::from_qt_manager(&manager);
 
     auto result = run_qt_owner_coro(
         fetch_with_share(rstd::move(session), local_http_url(base, "/cookie/echo")));
@@ -468,7 +476,7 @@ TEST(qt_network, LocalHttpOwnedManagerSupportsShare) {
     }
 
     QObject parent;
-    auto    session = ncrequest::qt_network::Session::from_qt_parent(&parent);
+    auto    session = Session::from_qt_parent(&parent);
 
     auto result = run_qt_owner_coro(share_roundtrip(rstd::move(session), base));
     ASSERT_TRUE(result.got_response) << result.error;

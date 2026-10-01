@@ -11,17 +11,27 @@ export import :error;
 export import :client_callback;
 
 using namespace ::curl;
+using namespace rstd::literals;
+using rstd::async::Completion;
+using rstd::async::CompletionHandle;
+using rstd::bytes::Bytes;
+using rstd::bytes::BytesMut;
+using rstd::sync::Condvar;
+using rstd::sync::Mutex;
+using rstd::sync::MutexGuard;
 using rstd::sync::atomic::Atomic;
 using rstd::sync::atomic::Ordering;
+using rstd::vec::Vec;
+using std::pmr::polymorphic_allocator;
 
 namespace ncrequest::client::curl
 {
 
 class RawMutexGuard {
-    rstd::sync::MutexGuard<empty> m_guard;
+    MutexGuard<empty> m_guard;
 
 public:
-    explicit RawMutexGuard(rstd::sync::Mutex<empty> const& mutex): m_guard(mutex.lock().unwrap()) {}
+    explicit RawMutexGuard(Mutex<empty> const& mutex): m_guard(mutex.lock().unwrap()) {}
 
     RawMutexGuard(const RawMutexGuard&)                    = delete;
     auto operator=(const RawMutexGuard&) -> RawMutexGuard& = delete;
@@ -33,10 +43,9 @@ export class SessionBackend;
 
 template<typename T>
 struct CompletionProducer {
-    rstd::async::CompletionHandle<T> handle;
+    CompletionHandle<T> handle;
 
-    explicit CompletionProducer(rstd::async::CompletionHandle<T> handle)
-        : handle(rstd::move(handle)) {}
+    explicit CompletionProducer(CompletionHandle<T> handle): handle(rstd::move(handle)) {}
 
     void complete(T value) { (void)handle.complete(rstd::move(value)); }
     auto is_closed() -> bool { return handle.is_closed(); }
@@ -106,22 +115,22 @@ public:
 
 private:
     struct Fields {
-        rstd::vec::Vec<SessionMessage> messages;
-        WakeCallback                   wake;
-        bool                           closed { false };
+        Vec<SessionMessage> messages;
+        WakeCallback        wake;
+        bool                closed { false };
 
-        Fields(): messages(rstd::vec::Vec<SessionMessage>::make()) {}
+        Fields(): messages(Vec<SessionMessage>::make()) {}
     };
 
-    rstd::sync::Mutex<Fields> m_fields;
-    rstd::sync::Condvar       m_cv;
+    Mutex<Fields> m_fields;
+    Condvar       m_cv;
 };
 
 export class Connection {
     friend class SessionBackend;
 
 public:
-    using allocator_type = std::pmr::polymorphic_allocator<char>;
+    using allocator_type = polymorphic_allocator<char>;
 
     static constexpr usize RECV_LIMIT { 64 * 1024 };
     static constexpr usize SEND_LIMIT { 64 * 1024 };
@@ -174,7 +183,7 @@ public:
             return copied;
         }
 
-        auto consume(rstd::bytes::BytesMut& out) {
+        auto consume(BytesMut& out) {
             auto chunk  = out.chunk_mut();
             auto copied = rstd::min(chunk.len(), m_buf.size());
             if (copied == usize()) return usize();
@@ -196,7 +205,7 @@ public:
             return copied;
         }
 
-        auto commit(rstd::bytes::Bytes& in) {
+        auto commit(Bytes& in) {
             auto chunk  = in.chunk();
             auto copied = commit(chunk);
             in.advance(copied);
@@ -212,11 +221,11 @@ public:
                                        : (s >= m_limit ? State::Full : State::Normal));
         }
 
-        rstd::bytes::BytesMut m_buf;
-        Atomic<State>         m_state;
-        usize                 m_limit;
-        usize                 m_transferred;
-        Allocator             m_alloc;
+        BytesMut      m_buf;
+        Atomic<State> m_state;
+        usize         m_limit;
+        usize         m_transferred;
+        Allocator     m_alloc;
     };
 
     static auto make(Arc<SessionChannel> session_channel, allocator_type allocator)
@@ -291,8 +300,8 @@ public:
         m_session_channel->try_send(rstd::move(msg));
     }
 
-    auto read_some(rstd::bytes::BytesMut& buffer) -> coro<IoResult> {
-        auto made = rstd::async::Completion<IoResult>::make();
+    auto read_some(BytesMut& buffer) -> coro<IoResult> {
+        auto made = Completion<IoResult>::make();
         if (made.is_err()) {
             co_return IoResult::fail(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
@@ -314,8 +323,8 @@ public:
         co_return rstd::move(result).unwrap_unchecked();
     }
 
-    auto write_some(rstd::bytes::Bytes& buffer) -> coro<IoResult> {
-        auto made = rstd::async::Completion<IoResult>::make();
+    auto write_some(Bytes& buffer) -> coro<IoResult> {
+        auto made = Completion<IoResult>::make();
         if (made.is_err()) {
             co_return IoResult::fail(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
@@ -339,7 +348,7 @@ public:
 
     auto wait_header() -> coro<rstd::Option<Error>> {
         using Output = rstd::Option<Error>;
-        auto made    = rstd::async::Completion<Output>::make();
+        auto made    = Completion<Output>::make();
         if (made.is_err()) {
             co_return Some(Error::Io(rstd::move(made).unwrap_err_unchecked()));
         }
@@ -366,16 +375,16 @@ private:
     using RstdHeaderState = Arc<CompletionProducer<rstd::Option<Error>>>;
 
     struct RstdReadWaiter {
-        rstd::bytes::BytesMut* buffer;
-        RstdIoState            state;
+        BytesMut*   buffer;
+        RstdIoState state;
     };
 
     struct RstdWriteWaiter {
-        rstd::bytes::Bytes* buffer;
-        RstdIoState         state;
+        Bytes*      buffer;
+        RstdIoState state;
     };
 
-    void start_read_some(rstd::bytes::BytesMut& buffer, RstdIoState state) {
+    void start_read_some(BytesMut& buffer, RstdIoState state) {
         auto lock = RawMutexGuard { m_mutex };
         if (state->is_closed()) return;
         if (m_read_waiter.is_some()) {
@@ -386,7 +395,7 @@ private:
         try_read_waiter_locked();
     }
 
-    void start_write_some(rstd::bytes::Bytes& buffer, RstdIoState state) {
+    void start_write_some(Bytes& buffer, RstdIoState state) {
         auto lock = RawMutexGuard { m_mutex };
         if (state->is_closed()) return;
         if (m_write_waiter.is_some()) {
@@ -431,7 +440,6 @@ private:
 
     static rstd::size_t header_callback(char* ptr, rstd::size_t size, rstd::size_t nmemb,
                                         Connection* self) {
-        using namespace rstd::literals;
         auto total_size = usize(size * nmemb);
         auto header     = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
         auto lock       = RawMutexGuard { self->m_mutex };
@@ -516,7 +524,6 @@ private:
         auto lock = RawMutexGuard { m_mutex };
         if (m_state == State::Finished || m_state == State::Canceled) return;
         if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
-            using namespace rstd::literals;
             auto parsed = m_trailer_parser.push("\r\n"_bytes);
             if (parsed.is_err()) {
                 m_header_error = Some(rstd::move(parsed).unwrap_err());
@@ -673,8 +680,8 @@ private:
     Option<RstdReadWaiter>  m_read_waiter;
     Option<RstdWriteWaiter> m_write_waiter;
 
-    mutable rstd::sync::Mutex<empty> m_mutex;
-    Weak<Connection>                 m_self;
+    mutable Mutex<empty> m_mutex;
+    Weak<Connection>     m_self;
 };
 
 } // namespace ncrequest::client::curl

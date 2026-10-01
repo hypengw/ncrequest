@@ -9,10 +9,21 @@ module ncrequest;
 import :client_curl_session;
 import cppstd;
 
+using rstd::bytes::Bytes;
+using rstd::path::Path;
+using rstd::string::String;
+using rstd::sync::Mutex;
+using rstd::thread::JoinHandle;
+using rstd::thread::spawn;
+using rstd::time::Duration;
+using rstd::vec::Vec;
+using std::pmr::memory_resource;
+using std::pmr::polymorphic_allocator;
+
 namespace ncrequest::client::curl
 {
 
-constexpr static auto POLL_TIMEOUT { rstd::time::Duration::from_millis(u64(1000)) };
+constexpr static auto POLL_TIMEOUT { Duration::from_millis(u64(1000)) };
 namespace sm = ncrequest::client::curl::session_message;
 
 namespace
@@ -32,7 +43,7 @@ class SessionBackend::Private {
     friend class SessionBackend;
 
 public:
-    Private(std::pmr::memory_resource* mem_pool, CurlOptions options) noexcept;
+    Private(memory_resource* mem_pool, CurlOptions options) noexcept;
     ~Private();
 
     void ensure_worker();
@@ -44,20 +55,20 @@ public:
     void remove_connect(const Arc<Connection>&);
 
 private:
-    Box<CurlMulti>                  m_curl_multi;
-    rstd::vec::Vec<Arc<Connection>> m_connect_set;
+    Box<CurlMulti>       m_curl_multi;
+    Vec<Arc<Connection>> m_connect_set;
 
     Arc<channel_type> m_channel;
     bool              m_stopped;
 
     rstd::Option<req_opt::Proxy> m_proxy;
     bool                         m_ignore_certificate;
-    std::pmr::memory_resource*   m_memory;
+    memory_resource*             m_memory;
 
-    rstd::sync::Mutex<Option<rstd::thread::JoinHandle<void>>> m_thread;
+    Mutex<Option<JoinHandle<void>>> m_thread;
 };
 
-SessionBackend::SessionBackend(std::pmr::memory_resource* mem_pool, CurlOptions options)
+SessionBackend::SessionBackend(memory_resource* mem_pool, CurlOptions options)
     : m_d(Box<Private>::make(mem_pool, options)) {}
 
 void SessionBackend::start() { m_d->ensure_worker(); }
@@ -68,9 +79,7 @@ SessionBackend::~SessionBackend() {
     m_d->m_channel->set_wake_callback({});
 }
 
-auto SessionBackend::allocator() -> std::pmr::polymorphic_allocator<byte> {
-    return { (m_d->m_memory) };
-}
+auto SessionBackend::allocator() -> polymorphic_allocator<byte> { return { (m_d->m_memory) }; }
 
 auto SessionBackend::prepare_req(const Request& req) const -> Request {
     Request o { req.clone() };
@@ -95,8 +104,7 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
 }
 
 auto SessionBackend::start_request(const Request& req, Operation operation,
-                                   rstd::Option<rstd::bytes::Bytes> body)
-    -> coro<Result<ResponseBackend>> {
+                                   rstd::Option<Bytes> body) -> coro<Result<ResponseBackend>> {
     Arc<ResponseBackend> res = ResponseBackend::make_response(prepare_req(req), operation, *this);
     if (body.is_some()) {
         res->add_send_buffer(rstd::move(body).unwrap_unchecked());
@@ -130,8 +138,7 @@ auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend
     co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
 }
 
-auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
-    -> coro<Result<Arc<ResponseBackend>>> {
+auto SessionBackend::post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>> {
     Arc<ResponseBackend> res =
         ResponseBackend::make_response(prepare_req(req), Operation::Post(), *this);
     res->add_send_buffer(rstd::move(body));
@@ -143,14 +150,14 @@ auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
 }
 
-SessionBackend::Private::Private(std::pmr::memory_resource* mem_pool, CurlOptions options) noexcept
+SessionBackend::Private::Private(memory_resource* mem_pool, CurlOptions options) noexcept
     : m_curl_multi(Box<CurlMulti>::make(options)),
       m_channel(Arc<channel_type>::make()),
       m_stopped(false),
       m_proxy(),
       m_ignore_certificate(false),
       m_memory(mem_pool),
-      m_thread(Option<rstd::thread::JoinHandle<void>> {}) {
+      m_thread(Option<JoinHandle<void>> {}) {
     m_channel->set_wake_callback([this] {
         m_curl_multi->wakeup();
     });
@@ -162,7 +169,7 @@ void SessionBackend::Private::ensure_worker() {
     auto thread = m_thread.lock().unwrap();
     if (thread->is_some()) return;
 
-    auto spawned = rstd::thread::spawn([this] {
+    auto spawned = spawn([this] {
         run();
     });
     if (spawned.is_err()) rstd::panic { "failed to start curl session worker" };
@@ -170,7 +177,7 @@ void SessionBackend::Private::ensure_worker() {
 }
 
 void SessionBackend::Private::join_worker() {
-    auto worker = Option<rstd::thread::JoinHandle<void>> {};
+    auto worker = Option<JoinHandle<void>> {};
     {
         auto thread = m_thread.lock().unwrap();
         worker      = thread->take();
@@ -180,16 +187,10 @@ void SessionBackend::Private::join_worker() {
     }
 }
 
-void SessionBackend::load_cookie(ref<rstd::path::Path> path) {
-    m_d->m_curl_multi->load_cookie(path);
-}
-void SessionBackend::save_cookie(ref<rstd::path::Path> path) const {
-    m_d->m_curl_multi->save_cookie(path);
-}
+void SessionBackend::load_cookie(ref<Path> path) { m_d->m_curl_multi->load_cookie(path); }
+void SessionBackend::save_cookie(ref<Path> path) const { m_d->m_curl_multi->save_cookie(path); }
 
-auto SessionBackend::cookies() -> rstd::vec::Vec<rstd::string::String> {
-    return m_d->m_curl_multi->cookies();
-}
+auto SessionBackend::cookies() -> Vec<String> { return m_d->m_curl_multi->cookies(); }
 void SessionBackend::set_proxy(const req_opt::Proxy& p) { m_d->m_proxy = Some(p.clone()); }
 void SessionBackend::set_verify_certificate(bool v) { m_d->m_ignore_certificate = ! v; }
 

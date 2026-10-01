@@ -6,11 +6,16 @@ export import :easy;
 export import ncrequest.type;
 
 using namespace curl;
+using rstd::ffi::CStr;
+using rstd::path::Path;
+using rstd::string::String;
+using rstd::sync::Mutex;
+using rstd::sync::MutexGuard;
+using rstd::time::Duration;
+using rstd::vec::Vec;
 
 namespace ncrequest
 {
-
-using rstd::path::Path;
 
 export struct CurlOptions {
     long max_idle_connections { 0 };
@@ -101,13 +106,13 @@ public:
         return multi_result(curl_multi_perform(m_multi, &still_running));
     }
 
-    auto poll(rstd::time::Duration timeout) -> CurlMultiResult {
+    auto poll(Duration timeout) -> CurlMultiResult {
         return multi_result(curl_multi_poll(
             m_multi, nullptr, 0, static_cast<int>(timeout.as_millis().to_primitive()), nullptr));
     }
 
-    auto query_info_msg() -> rstd::vec::Vec<InfoMsg> {
-        auto out = rstd::vec::Vec<InfoMsg>::make();
+    auto query_info_msg() -> Vec<InfoMsg> {
+        auto out = Vec<InfoMsg>::make();
         int  message_left { 0 };
         while (CURLMsg* msg = curl_multi_info_read(m_multi, &message_left)) {
             out.push(InfoMsg {
@@ -119,8 +124,8 @@ public:
         return out;
     }
 
-    auto cookies() const -> rstd::vec::Vec<rstd::string::String> {
-        auto     out = rstd::vec::Vec<rstd::string::String>::make();
+    auto cookies() const -> Vec<String> {
+        auto     out = Vec<String>::make();
         CurlEasy x;
 
         x.setopt(CURLoption::CURLOPT_SHARE, m_share);
@@ -129,9 +134,9 @@ public:
             auto list = rstd::move(list_).unwrap();
             auto head = list;
             while (list) {
-                auto text = rstd::ffi::CStr::from_ptr(list->data).to_str();
+                auto text = CStr::from_ptr(list->data).to_str();
                 if (text.is_ok()) {
-                    out.push(rstd::string::String::make(rstd::move(text).unwrap()));
+                    out.push(String::make(rstd::move(text).unwrap()));
                 }
                 list = list->next;
             }
@@ -234,8 +239,8 @@ private:
     CURLSH*     m_share;
     CurlOptions m_options;
 
-    rstd::sync::Mutex<empty>                    m_share_mutex;
-    rstd::Option<rstd::sync::MutexGuard<empty>> m_share_guard;
+    Mutex<empty>                    m_share_mutex;
+    rstd::Option<MutexGuard<empty>> m_share_guard;
 };
 } // namespace ncrequest
 

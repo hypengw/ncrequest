@@ -10,8 +10,12 @@ import ncrequest.curl;
 #endif
 
 using namespace ncrequest;
+using rstd::clone::Clone;
+using rstd::cppstd::as_str;
+using rstd::cppstd::as_string_view;
+using std::pmr::memory_resource;
 
-auto ncrequest::global_init(std::pmr::memory_resource* resource) -> Result<rstd::empty> {
+auto ncrequest::global_init(memory_resource* resource) -> Result<rstd::empty> {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
     auto initialized = ncrequest::curl_init(resource);
     if (initialized.is_err()) {
@@ -43,7 +47,7 @@ auto Request::from_url(rstd::ref<rstd::str> input) -> rstd::Result<Request, liht
     return rstd::Ok(Request { rstd::move(parsed).unwrap() });
 }
 
-std::string_view Request::url() const { return rstd::cppstd::as_string_view(m_url.as_ref()); }
+std::string_view Request::url() const { return as_string_view(m_url.as_ref()); }
 
 auto Request::url_info() const -> const lihttpto::Url& { return m_url; }
 
@@ -56,7 +60,7 @@ auto Request::try_set_url(rstd::ref<rstd::str> input)
 }
 
 std::string Request::header(std::string_view name) const {
-    auto name_text = rstd::cppstd::as_str(name);
+    auto name_text = as_str(name);
     if (name_text.is_err()) return {};
     auto value = m_header.get(rstd::move(name_text).unwrap());
     if (value.is_none()) return {};
@@ -100,7 +104,7 @@ auto Request::clone() const -> ncrequest::Request {
     auto& self   = *this;
     req.m_url    = self.m_url.clone();
     req.m_header = self.m_header.clone();
-    req.m_opts   = as<rstd::clone::Clone>(self.m_opts).clone();
+    req.m_opts   = as<Clone>(self.m_opts).clone();
     return req;
 }
 

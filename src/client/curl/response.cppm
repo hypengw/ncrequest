@@ -5,6 +5,9 @@ export import :client_curl_connection;
 export import :error;
 export import ncrequest.coro;
 
+using rstd::bytes::Bytes;
+using std::pmr::polymorphic_allocator;
+
 namespace ncrequest::client::curl
 {
 
@@ -14,7 +17,7 @@ export class ResponseBackend : public NoCopy {
     friend class SessionBackend;
 
 public:
-    using allocator_type = std::pmr::polymorphic_allocator<char>;
+    using allocator_type = polymorphic_allocator<char>;
     class Inner;
     static constexpr usize ReadSize { 1024 * 16 };
 
@@ -24,7 +27,7 @@ public:
     auto trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>>;
     auto code() const -> rstd::Option<i32>;
 
-    auto next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>>;
+    auto next_chunk() -> coro<Result<rstd::Option<Bytes>>>;
     auto ready_head() -> coro<Result<rstd::empty>> { co_return Ok(rstd::empty {}); }
 
     static auto make_response(const Request&, Operation, SessionBackend&) -> Arc<ResponseBackend>;
@@ -45,7 +48,7 @@ public:
 
 private:
     void prepare_perform();
-    void add_send_buffer(rstd::bytes::Bytes);
+    void add_send_buffer(Bytes);
 
     auto connection() -> Connection&;
     auto connection() const -> const Connection&;
@@ -68,11 +71,11 @@ private:
     Operation m_operation;
     bool      m_finished;
 
-    rstd::bytes::Bytes         m_send_buffer;
+    Bytes                      m_send_buffer;
     Arc<Connection>            m_connect;
     rstd::Option<SessionShare> m_share;
 
-    std::pmr::polymorphic_allocator<char> m_allocator;
+    polymorphic_allocator<char> m_allocator;
 };
 
 } // namespace ncrequest::client::curl

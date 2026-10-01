@@ -9,6 +9,12 @@ export import ncrequest.curl;
 #endif
 export import cppstd;
 
+using IoError = rstd::io::error::Error;
+using rstd::convert::From;
+using rstd::error::ErrorRef;
+using rstd::fmt::Debug;
+using rstd::fmt::Display;
+
 namespace ncrequest
 {
 
@@ -42,7 +48,7 @@ export struct ClientError {
 
 export struct Error {
     RSTD_ENUM_DEFAULT(Error, (InvalidState, "uncategorized ncrequest error"),
-                      (Client, (ClientError error;)), (Io, (rstd::io::error::Error error;)),
+                      (Client, (ClientError error;)), (Io, (IoError error;)),
                       (Protocol, (ProtocolError kind; const char* msg;)),
                       (Unsupported, (const char* msg;)), (Canceled),
                       (InvalidState, (const char* msg;)))
@@ -77,8 +83,7 @@ constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char
 } // namespace ncrequest
 
 template<>
-struct rstd::Impl<rstd::fmt::Display, ncrequest::ClientError>
-    : rstd::ImplBase<ncrequest::ClientError> {
+struct rstd::Impl<Display, ncrequest::ClientError> : rstd::ImplBase<ncrequest::ClientError> {
     auto fmt(fmt::Formatter& f) const -> bool {
         auto& message = this->self().message;
         return f.write_raw(message.data(), message.size());
@@ -86,11 +91,8 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::ClientError>
 };
 
 template<>
-struct rstd::Impl<rstd::fmt::Debug, ncrequest::ClientError>
-    : rstd::ImplBase<ncrequest::ClientError> {
-    auto fmt(fmt::Formatter& f) const -> bool {
-        return rstd::as<rstd::fmt::Display>(this->self()).fmt(f);
-    }
+struct rstd::Impl<Debug, ncrequest::ClientError> : rstd::ImplBase<ncrequest::ClientError> {
+    auto fmt(fmt::Formatter& f) const -> bool { return rstd::as<Display>(this->self()).fmt(f); }
 };
 
 template<>
@@ -98,7 +100,7 @@ struct rstd::Impl<rstd::error::Error, ncrequest::ClientError>
     : rstd::DefaultInImpl<rstd::error::Error, ncrequest::ClientError> {};
 
 template<>
-struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
+struct rstd::Impl<Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
     auto fmt(fmt::Formatter& f) const -> bool {
         auto& e = this->self();
         switch (e.tag()) {
@@ -136,15 +138,13 @@ struct rstd::Impl<rstd::fmt::Display, ncrequest::Error> : rstd::ImplBase<ncreque
 };
 
 template<>
-struct rstd::Impl<rstd::fmt::Debug, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
-    auto fmt(fmt::Formatter& f) const -> bool {
-        return rstd::as<rstd::fmt::Display>(this->self()).fmt(f);
-    }
+struct rstd::Impl<Debug, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
+    auto fmt(fmt::Formatter& f) const -> bool { return rstd::as<Display>(this->self()).fmt(f); }
 };
 
 template<>
 struct rstd::Impl<rstd::error::Error, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> {
-    auto source() const noexcept -> rstd::Option<rstd::error::ErrorRef> {
+    auto source() const noexcept -> rstd::Option<ErrorRef> {
         auto& error = this->self();
         switch (error.tag()) {
         case ncrequest::Error::Tag::Client:
@@ -160,7 +160,7 @@ static_assert(rstd::Impled<ncrequest::ClientError, rstd::error::Error>);
 static_assert(rstd::Impled<ncrequest::Error, rstd::error::Error>);
 
 template<>
-struct rstd::Impl<rstd::convert::From<ncrequest::ClientError>, ncrequest::Error> {
+struct rstd::Impl<From<ncrequest::ClientError>, ncrequest::Error> {
     static auto from(ncrequest::ClientError error) -> ncrequest::Error {
         return ncrequest::Error::Client(rstd::move(error));
     }
@@ -168,7 +168,7 @@ struct rstd::Impl<rstd::convert::From<ncrequest::ClientError>, ncrequest::Error>
 
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
 template<>
-struct rstd::Impl<rstd::convert::From<curl::CURLcode>, ncrequest::Error> {
+struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
     static auto from(curl::CURLcode e) -> ncrequest::Error {
         auto* message = curl::curl_easy_strerror(e);
         return rstd::into(ncrequest::ClientError {
@@ -181,8 +181,6 @@ struct rstd::Impl<rstd::convert::From<curl::CURLcode>, ncrequest::Error> {
 #endif
 
 template<>
-struct rstd::Impl<rstd::convert::From<rstd::io::error::Error>, ncrequest::Error> {
-    static auto from(rstd::io::error::Error e) -> ncrequest::Error {
-        return ncrequest::Error::Io(rstd::move(e));
-    };
+struct rstd::Impl<From<IoError>, ncrequest::Error> {
+    static auto from(IoError e) -> ncrequest::Error { return ncrequest::Error::Io(rstd::move(e)); };
 };

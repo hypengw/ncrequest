@@ -8,6 +8,9 @@ export import :client_curl_session;
 #endif
 export import :client_http_backend;
 
+using rstd::bytes::Bytes;
+using rstd::sync::atomic::Atomic;
+
 namespace ncrequest
 {
 
@@ -22,8 +25,8 @@ static_assert(client::HttpSessionBackend<SelectedSessionBackend, SelectedRespons
 export class Session : public NoCopy {
     struct ConstructionKey {};
     struct State {
-        SelectedSessionBackend           backend;
-        rstd::sync::atomic::Atomic<bool> closed { false };
+        SelectedSessionBackend backend;
+        Atomic<bool>           closed { false };
         State() = default;
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
         explicit State(qt::QObject* parent): backend(parent) {}
@@ -54,14 +57,14 @@ public:
     static auto make() -> Arc<Session> { return Arc<Session>::make(); }
 
     auto get(Request req) -> coro<Result<Arc<Response>>> {
-        return send(state_.clone(), rstd::move(req), Operation::Get(), None<rstd::bytes::Bytes>());
+        return send(state_.clone(), rstd::move(req), Operation::Get(), None<Bytes>());
     }
 
     auto post(Request req) -> coro<Result<Arc<Response>>> {
-        return post(rstd::move(req), rstd::bytes::Bytes::make());
+        return post(rstd::move(req), Bytes::make());
     }
 
-    auto post(Request req, rstd::bytes::Bytes body) -> coro<Result<Arc<Response>>> {
+    auto post(Request req, Bytes body) -> coro<Result<Arc<Response>>> {
         return send(state_.clone(), rstd::move(req), Operation::Post(), Some(rstd::move(body)));
     }
 
@@ -73,8 +76,8 @@ private:
         }
     }
 
-    static auto send(Arc<State> state, Request req, Operation operation,
-                     rstd::Option<rstd::bytes::Bytes> body) -> coro<Result<Arc<Response>>> {
+    static auto send(Arc<State> state, Request req, Operation operation, rstd::Option<Bytes> body)
+        -> coro<Result<Arc<Response>>> {
         if (state->closed.load()) co_return Err(Error::Canceled());
         auto res = co_await state->backend.start_request(req, operation, rstd::move(body));
         if (res.is_err()) {

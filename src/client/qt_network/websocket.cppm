@@ -6,10 +6,16 @@ export import :qt;
 export import ncrequest.type;
 export import :client_callback;
 
+using namespace ncrequest::qt;
+using rstd::async::Completion;
+using rstd::async::CompletionHandle;
+using rstd::str_::from_utf8_unchecked;
+using std::pmr::memory_resource;
+using std::pmr::polymorphic_allocator;
+using std::pmr::vector;
+
 namespace ncrequest::client::qt_network
 {
-
-using namespace ncrequest::qt;
 
 export class WebSocketBackend : public NoCopy {
 public:
@@ -19,9 +25,8 @@ public:
     using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
     using ErrorCallback        = client::Callback<void(rstd::ref<rstd::str>)>;
 
-    explicit WebSocketBackend(
-        QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
-        std::pmr::memory_resource* mem_pool = std::pmr::get_default_resource())
+    explicit WebSocketBackend(QObject* parent = nullptr, rstd::Option<u64> max_buffer_size = None(),
+                              memory_resource* mem_pool = std::pmr::get_default_resource())
         : m_owned_socket(parent == nullptr ? Some(Box<QWebSocket>::make(
                                                  QString {}, QWebSocketProtocol::VersionLatest))
                                            : None<Box<QWebSocket>>()),
@@ -43,8 +48,8 @@ public:
     WebSocketBackend(const WebSocketBackend&)            = delete;
     WebSocketBackend& operator=(const WebSocketBackend&) = delete;
 
-    auto connect(ref<str> url) -> rstd::async::Completion<bool> {
-        auto  made       = rstd::async::Completion<bool>::make();
+    auto connect(ref<str> url) -> Completion<bool> {
+        auto  made       = Completion<bool>::make();
         auto  pair       = rstd::move(made).unwrap();
         auto  completion = rstd::move(pair.get<0>());
         auto  handle     = rstd::move(pair.get<1>());
@@ -180,7 +185,7 @@ private:
         auto text  = message.toUtf8();
         auto bytes = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(text.constData()),
                                                static_cast<usize>(text.size()));
-        m_on_error(rstd::str_::from_utf8_unchecked(bytes));
+        m_on_error(from_utf8_unchecked(bytes));
     }
 
     void disconnect_signals() {
@@ -196,14 +201,14 @@ private:
     bool                           m_connected;
     bool                           m_connecting;
 
-    Option<rstd::async::CompletionHandle<bool>> m_connect_promise;
-    ConnectedCallback                           m_on_connected;
-    DisconnectedCallback                        m_on_disconnected;
-    MessageCallback                             m_on_message;
-    ErrorCallback                               m_on_error;
+    Option<CompletionHandle<bool>> m_connect_promise;
+    ConnectedCallback              m_on_connected;
+    DisconnectedCallback           m_on_disconnected;
+    MessageCallback                m_on_message;
+    ErrorCallback                  m_on_error;
 
-    std::pmr::polymorphic_allocator<rstd::byte> m_alloc;
-    std::pmr::vector<rstd::byte>                m_read_buffer;
+    polymorphic_allocator<rstd::byte> m_alloc;
+    vector<rstd::byte>                m_read_buffer;
 };
 
 } // namespace ncrequest::client::qt_network

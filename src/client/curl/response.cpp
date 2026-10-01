@@ -7,6 +7,13 @@ import :session_share_backend;
 import ncrequest.coro;
 import rstd.cppstd;
 
+using rstd::async::yield_now;
+using rstd::bytes::Bytes;
+using rstd::bytes::BytesMut;
+using rstd::ffi::CString;
+using rstd::vec::Vec;
+using std::pmr::polymorphic_allocator;
+
 namespace ncrequest::client::curl
 {
 
@@ -14,9 +21,9 @@ namespace
 {
 
 void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
-    auto url_bytes = rstd::vec::Vec<u8>::make();
+    auto url_bytes = Vec<u8>::make();
     url_bytes.extend_from_slice(req.url_info().as_ref().as_bytes());
-    auto url = rstd::ffi::CString::from_vec_unchecked(rstd::move(url_bytes));
+    auto url = CString::from_vec_unchecked(rstd::move(url_bytes));
     easy.setopt(CURLoption::CURLOPT_URL, url.as_ptr());
     {
         auto& timeout = req.get_opt<req_opt::Timeout>();
@@ -112,7 +119,7 @@ ResponseBackend& ResponseBackend::operator=(ResponseBackend&& other) noexcept {
 
 ResponseBackend::~ResponseBackend() noexcept { cancel(); }
 
-auto ResponseBackend::allocator() const -> const std::pmr::polymorphic_allocator<char>& {
+auto ResponseBackend::allocator() const -> const polymorphic_allocator<char>& {
     return m_inner->m_allocator;
 }
 
@@ -134,9 +141,7 @@ bool ResponseBackend::pause_recv(bool pause) {
     return true;
 }
 
-void ResponseBackend::add_send_buffer(rstd::bytes::Bytes buf) {
-    m_inner->m_send_buffer = rstd::move(buf);
-}
+void ResponseBackend::add_send_buffer(Bytes buf) { m_inner->m_send_buffer = rstd::move(buf); }
 
 void ResponseBackend::prepare_perform() {
     auto& easy = connection().easy();
@@ -193,14 +198,14 @@ void ResponseBackend::cancel() {
     connection().about_to_cancel();
 }
 
-auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>> {
-    auto chunk = rstd::bytes::BytesMut::with_capacity(ReadSize);
+auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<Bytes>>> {
+    auto chunk = BytesMut::with_capacity(ReadSize);
     for (;;) {
         auto read = co_await connection().read_some(chunk);
         if (read.error.is_some()) co_return Err(read.error.take().unwrap());
-        if (read.eof) co_return Ok(None<rstd::bytes::Bytes>());
+        if (read.eof) co_return Ok(None<Bytes>());
         if (read.size != usize()) co_return Ok(Some(chunk.freeze()));
-        co_await rstd::async::yield_now();
+        co_await yield_now();
     }
 }
 

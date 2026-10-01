@@ -4,10 +4,12 @@ export import ncrequest.type;
 export import :curl;
 
 using namespace curl;
+using namespace rstd::literals;
+using rstd::ffi::CString;
+using rstd::vec::Vec;
 
 namespace ncrequest
 {
-using namespace rstd::literals;
 namespace detail
 {
 template<CURLoption OPT>
@@ -78,11 +80,11 @@ public:
             auto name  = field.name.as_str();
             auto value = field.value.as_slice();
 
-            auto bytes = rstd::vec::Vec<u8>::with_capacity(name.size() + value.len() + usize(2));
+            auto bytes = Vec<u8>::with_capacity(name.size() + value.len() + usize(2));
             bytes.extend_from_slice(name.as_bytes());
             bytes.extend_from_slice(": "_bytes);
             bytes.extend_from_slice(value);
-            auto header = rstd::ffi::CString::from_vec_unchecked(rstd::move(bytes));
+            auto header = CString::from_vec_unchecked(rstd::move(bytes));
             m_headers   = curl_slist_append(m_headers, header.as_ptr());
         }
         if (m_headers != nullptr) setopt<CURLoption::CURLOPT_HTTPHEADER>(m_headers);

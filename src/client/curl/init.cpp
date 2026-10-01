@@ -2,12 +2,13 @@ module ncrequest.curl;
 import :init;
 import rstd.core;
 
-using max_align_t = std::max_align_t;
 using namespace rstd::prelude;
+using max_align_t = std::max_align_t;
+using std::pmr::memory_resource;
 
 namespace
 {
-std::pmr::memory_resource* g_resource = nullptr;
+memory_resource* g_resource = nullptr;
 
 void* curl_malloc_fn(rstd::size_t size) { return g_resource->allocate(size, alignof(max_align_t)); }
 
@@ -45,8 +46,7 @@ void* curl_calloc_fn(rstd::size_t nmemb, rstd::size_t size) {
 }
 } // namespace
 
-auto ncrequest::curl_init(std::pmr::memory_resource* resource)
-    -> rstd::Result<rstd::empty, curl::CURLcode> {
+auto ncrequest::curl_init(memory_resource* resource) -> rstd::Result<rstd::empty, curl::CURLcode> {
     auto code = curl::CURLcode::CURLE_OK;
     if (resource == nullptr) {
         code = curl_global_init(CURL_GLOBAL_ALL);

@@ -12,10 +12,18 @@
 import ncrequest.qt_network;
 import rstd.cppstd;
 
+using namespace rstd::literals;
+using ncrequest::qt_network::WebSocketClient;
+using rstd::async::block_on;
+using rstd::async::Completion;
+using rstd::cppstd::as_str;
+using std::chrono::milliseconds;
+using std::chrono::seconds;
+using std::chrono::steady_clock;
+using std::this_thread::sleep_for;
+
 namespace
 {
-
-using namespace rstd::literals;
 
 auto local_ws_url() -> std::string {
     auto* value = std::getenv("NCREQUEST_TEST_WS_URL");
@@ -24,25 +32,25 @@ auto local_ws_url() -> std::string {
 }
 
 template<typename T>
-auto wait_future(std::future<T>& future, std::chrono::milliseconds timeout) -> bool {
-    auto const deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+auto wait_future(std::future<T>& future, milliseconds timeout) -> bool {
+    auto const deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (future.wait_for(milliseconds(0)) == std::future_status::ready) {
             return true;
         }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        sleep_for(milliseconds(1));
     }
-    return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+    return future.wait_for(milliseconds(0)) == std::future_status::ready;
 }
 
-auto wait_completion(rstd::async::Completion<bool> completion) {
-    using Output = rstd::async::Completion<bool>::Output;
+auto wait_completion(Completion<bool> completion) {
+    using Output = Completion<bool>::Output;
 
     QEventLoop            loop;
     std::optional<Output> output;
     auto worker = std::thread([&loop, &output, completion = rstd::move(completion)]() mutable {
-        output.emplace(rstd::async::block_on(rstd::move(completion)));
+        output.emplace(block_on(rstd::move(completion)));
         (void)QMetaObject::invokeMethod(
             &loop,
             [&loop] {
@@ -59,7 +67,7 @@ auto wait_completion(rstd::async::Completion<bool> completion) {
 } // namespace
 
 TEST(qt_network_websocket, ConstructDisconnected) {
-    auto client = ncrequest::qt_network::WebSocketClient {};
+    auto client = WebSocketClient {};
     EXPECT_FALSE(client.is_connected());
     client.send("ignored while disconnected"_str);
     client.disconnect();
@@ -71,7 +79,7 @@ TEST(qt_network_websocket, LocalEchoText) {
         GTEST_SKIP() << "NCREQUEST_TEST_WS_URL is not set";
     }
 
-    auto client = ncrequest::qt_network::WebSocketClient {};
+    auto client = WebSocketClient {};
 
     std::promise<std::string> message_promise;
     auto                      message = message_promise.get_future();
@@ -87,16 +95,16 @@ TEST(qt_network_websocket, LocalEchoText) {
     });
 
     auto connected = wait_completion(
-        client.connect(rstd::move(rstd::cppstd::as_str(url)).unwrap()));
+        client.connect(rstd::move(as_str(url)).unwrap()));
     ASSERT_TRUE(connected.is_ok());
     ASSERT_TRUE(rstd::move(connected).unwrap());
     EXPECT_TRUE(client.is_connected());
 
     client.send("qt websocket payload"_str);
-    ASSERT_TRUE(wait_future(message, std::chrono::seconds(5)));
+    ASSERT_TRUE(wait_future(message, seconds(5)));
     EXPECT_EQ(message.get(), "qt websocket payload");
 
     client.disconnect();
-    ASSERT_TRUE(wait_future(disconnected, std::chrono::seconds(5)));
+    ASSERT_TRUE(wait_future(disconnected, seconds(5)));
     EXPECT_FALSE(client.is_connected());
 }

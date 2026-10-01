@@ -2,10 +2,10 @@ export module ncrequest:session_share_backend;
 export import :qt;
 import :session_share;
 
+using namespace ncrequest::qt;
+
 namespace ncrequest::detail
 {
-
-using namespace ncrequest::qt;
 
 export class SessionShareAccess {
 public:

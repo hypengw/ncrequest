@@ -10,11 +10,14 @@ import :client_curl_response;
 #endif
 export import :client_http_backend;
 
-namespace ncrequest
-{
 using namespace rstd::literals;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
+using rstd::sync::atomic::Atomic;
+using rstd::vec::Vec;
+
+namespace ncrequest
+{
 
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
 using SelectedResponseBackend = client::qt_network::ResponseBackend;
@@ -30,10 +33,10 @@ export class Session;
 export class ResponseBody : public NoCopy {
     friend class Response;
     struct State {
-        Arc<SelectedResponseBackend>     backend;
-        rstd::sync::atomic::Atomic<bool> busy { false };
-        bool                             started { false };
-        bool                             terminal { false };
+        Arc<SelectedResponseBackend> backend;
+        Atomic<bool>                 busy { false };
+        bool                         started { false };
+        bool                         terminal { false };
         explicit State(Arc<SelectedResponseBackend> value): backend(rstd::move(value)) {}
     };
     struct ReadGuard {
@@ -126,9 +129,9 @@ static_assert(lihttpto::BodySource<ResponseBody>);
 export class Response : public NoCopy {
     friend class Session;
     struct ConstructionKey {};
-    Arc<SelectedResponseBackend>     backend_;
-    lihttpto::ResponseHead           head_;
-    rstd::sync::atomic::Atomic<bool> body_taken_ { false };
+    Arc<SelectedResponseBackend> backend_;
+    lihttpto::ResponseHead       head_;
+    Atomic<bool>                 body_taken_ { false };
 
     static auto collect_body(Result<ResponseBody> body, usize limit) -> coro<Result<Bytes>> {
         if (body.is_err()) co_return Err(rstd::move(body).unwrap_err());
@@ -188,9 +191,8 @@ public:
         -> coro<rstd::Result<u64, lihttpto::BodyTransferError<Error, typename Sink::Error>>> {
         return transfer(take_body(), sink);
     }
-    auto set_cookies() const
-        -> rstd::Result<rstd::vec::Vec<lihttpto::SetCookie>, lihttpto::CookieError> {
-        auto cookies = rstd::vec::Vec<lihttpto::SetCookie>::make();
+    auto set_cookies() const -> rstd::Result<Vec<lihttpto::SetCookie>, lihttpto::CookieError> {
+        auto cookies = Vec<lihttpto::SetCookie>::make();
         for (const auto& value : header().get_all("set-cookie"_str)) {
             auto parsed = lihttpto::SetCookie::parse_bytes(value->as_slice());
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());

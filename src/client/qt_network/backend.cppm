@@ -11,12 +11,20 @@ export import ncrequest.coro;
 export import ncrequest.type;
 import :session_share_backend;
 
+using namespace ncrequest::qt;
+using rstd::async::AnyExecutor;
+using rstd::async::Completion;
+using rstd::async::CompletionHandle;
+using rstd::async::CompletionQueue;
+using rstd::async::CompletionQueueHandle;
+using rstd::async::ExecutorJob;
+using rstd::bytes::Bytes;
+using rstd::collections::HashMap;
+using rstd::str_::from_utf8;
+using rstd::sync::atomic::Atomic;
+
 namespace ncrequest::client::qt_network
 {
-
-using namespace ncrequest::qt;
-using rstd::collections::HashMap;
-using rstd::sync::atomic::Atomic;
 
 export struct Options {};
 
@@ -30,10 +38,10 @@ class QtExecutor {
 public:
     explicit QtExecutor(QObject* target): m_target(target) {}
 
-    auto post_job(rstd::async::ExecutorJob job) -> bool {
+    auto post_job(ExecutorJob job) -> bool {
         auto* target = m_target.data();
         if (target == nullptr) return false;
-        auto owned = Arc<rstd::async::ExecutorJob>::make(rstd::move(job));
+        auto owned = Arc<ExecutorJob>::make(rstd::move(job));
         return QMetaObject::invokeMethod(
             target,
             [capture = make_clone_tuple(rstd::move(owned))]() mutable {
@@ -45,14 +53,14 @@ public:
     auto is_closed() -> bool { return m_target.isNull(); }
 };
 
-auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor> {
-    if (target == nullptr) return None<rstd::async::AnyExecutor>();
-    return Some(rstd::async::AnyExecutor::from_executor(QtExecutor { target }));
+auto make_qt_executor(QObject* target) -> rstd::Option<AnyExecutor> {
+    if (target == nullptr) return None<AnyExecutor>();
+    return Some(AnyExecutor::from_executor(QtExecutor { target }));
 }
 
 struct BodyEvent {
-    RSTD_ENUM(BodyEvent, (Header, (lihttpto::MessageHead value;)),
-              (Chunk, (rstd::bytes::Bytes value;)), (Finished), (Failed, (Error value;)))
+    RSTD_ENUM(BodyEvent, (Header, (lihttpto::MessageHead value;)), (Chunk, (Bytes value;)),
+              (Finished), (Failed, (Error value;)))
 };
 
 struct DirectReplyState {
@@ -60,22 +68,21 @@ struct DirectReplyState {
 };
 
 struct OperationState {
-    Request                                            request;
-    Operation                                          operation;
-    Weak<QtNetworkDriver>                              driver;
-    rstd::Option<rstd::async::AnyExecutor>             executor;
-    Option<Arc<DirectReplyState>>                      direct;
-    rstd::Option<req_opt::Proxy>                       proxy;
-    rstd::async::CompletionHandle<rstd::Option<Error>> ready;
-    rstd::async::CompletionQueueHandle<BodyEvent>      body;
-    Atomic<bool>                                       finished { false };
-    Atomic<bool>                                       cancel_requested { false };
+    Request                               request;
+    Operation                             operation;
+    Weak<QtNetworkDriver>                 driver;
+    rstd::Option<AnyExecutor>             executor;
+    Option<Arc<DirectReplyState>>         direct;
+    rstd::Option<req_opt::Proxy>          proxy;
+    CompletionHandle<rstd::Option<Error>> ready;
+    CompletionQueueHandle<BodyEvent>      body;
+    Atomic<bool>                          finished { false };
+    Atomic<bool>                          cancel_requested { false };
 
     OperationState(Request request, Operation operation, Weak<QtNetworkDriver> driver,
-                   rstd::Option<rstd::async::AnyExecutor>             executor,
-                   rstd::Option<req_opt::Proxy>                       proxy,
-                   rstd::async::CompletionHandle<rstd::Option<Error>> ready,
-                   rstd::async::CompletionQueueHandle<BodyEvent>      body)
+                   rstd::Option<AnyExecutor> executor, rstd::Option<req_opt::Proxy> proxy,
+                   CompletionHandle<rstd::Option<Error>> ready,
+                   CompletionQueueHandle<BodyEvent>      body)
         : request(rstd::move(request)),
           operation(operation),
           driver(rstd::move(driver)),
@@ -178,7 +185,7 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
 }
 
 auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, Operation operation,
-                  rstd::Option<rstd::bytes::Bytes> body) -> QNetworkReply* {
+                  rstd::Option<Bytes> body) -> QNetworkReply* {
     if (manager == nullptr) return nullptr;
     if (! operation.is_Post()) {
         return manager->get(rstd::move(request));
@@ -268,7 +275,7 @@ auto read_header(QNetworkReply* reply)
         auto name_bytes = rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(pair.first.constData()),
             static_cast<rstd::usize>(pair.first.size()));
-        auto name_text = rstd::str_::from_utf8(name_bytes);
+        auto name_text = from_utf8(name_bytes);
         if (name_text.is_err()) {
             return rstd::Err(lihttpto::HttpParseError {
                 lihttpto::HttpParseErrorKind::InvalidHeaderLine(),
@@ -343,7 +350,7 @@ void publish_chunks(const Arc<OperationState>& state, QNetworkReply* reply) {
         auto chunk = reply->read(reply->bytesAvailable());
         if (chunk.isEmpty()) break;
 
-        auto bytes = rstd::bytes::Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
+        auto bytes = Bytes::copy_from_slice(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(chunk.constData()),
             static_cast<rstd::usize>(chunk.size())));
         state->push_body_event(BodyEvent::Chunk(rstd::move(bytes)));
@@ -387,7 +394,7 @@ public:
         }
     }
 
-    void start(Arc<OperationState> state, rstd::Option<rstd::bytes::Bytes> body) {
+    void start(Arc<OperationState> state, rstd::Option<Bytes> body) {
         ensure_manager();
 
         auto manager_result = m_router->manager_for(state->request);
@@ -530,12 +537,12 @@ public:
         }
     }
 
-    auto start(const Arc<OperationState>& state, rstd::Option<rstd::bytes::Bytes> body) -> bool {
+    auto start(const Arc<OperationState>& state, rstd::Option<Bytes> body) -> bool {
         if (m_worker == nullptr || ! m_thread.isRunning()) {
             return false;
         }
 
-        auto body_state = Arc<rstd::Option<rstd::bytes::Bytes>>::make(rstd::move(body));
+        auto body_state = Arc<rstd::Option<Bytes>>::make(rstd::move(body));
         return QMetaObject::invokeMethod(
             m_worker,
             [worker  = m_worker,
@@ -607,28 +614,28 @@ public:
         return Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
     }
 
-    auto start_request(const Request& req, Operation operation,
-                       rstd::Option<rstd::bytes::Bytes> body) -> coro<Result<ResponseBackend>>;
+    auto start_request(const Request& req, Operation operation, rstd::Option<Bytes> body)
+        -> coro<Result<ResponseBackend>>;
 
     auto get(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
     auto post(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request& req, rstd::bytes::Bytes body) -> coro<Result<Arc<ResponseBackend>>>;
+    auto post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>>;
 
     void set_proxy(const req_opt::Proxy&);
     void set_verify_certificate(bool);
 
 private:
     auto prepare_req(const Request&) const -> Request;
-    auto start_request_direct(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
+    auto start_request_direct(const Request&, Operation, rstd::Option<Bytes>)
         -> coro<Result<ResponseBackend>>;
 
 private:
-    Option<Arc<QtNetworkDriver>>           m_driver;
-    QPointer<QNetworkAccessManager>        m_manager;
-    QPointer<QtNetworkManagerRouter>       m_router;
-    rstd::Option<rstd::async::AnyExecutor> m_executor;
-    rstd::Option<req_opt::Proxy>           m_proxy;
-    bool                                   m_verify_certificate { true };
+    Option<Arc<QtNetworkDriver>>     m_driver;
+    QPointer<QNetworkAccessManager>  m_manager;
+    QPointer<QtNetworkManagerRouter> m_router;
+    rstd::Option<AnyExecutor>        m_executor;
+    rstd::Option<req_opt::Proxy>     m_proxy;
+    bool                             m_verify_certificate { true };
 };
 
 export class ResponseBackend : public NoCopy {
@@ -674,7 +681,7 @@ public:
         return Some<i32>(rstd::as_cast<i32>(*status));
     }
 
-    auto next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>>;
+    auto next_chunk() -> coro<Result<rstd::Option<Bytes>>>;
     auto ready_head() -> coro<Result<rstd::empty>>;
     auto is_finished() const -> bool { return ! m_state || m_state->finished.load(); }
     auto request() const -> const Request& { return m_req; }
@@ -685,18 +692,18 @@ public:
     }
 
 private:
-    ResponseBackend(Arc<OperationState> state, rstd::async::CompletionQueue<BodyEvent> body)
+    ResponseBackend(Arc<OperationState> state, CompletionQueue<BodyEvent> body)
         : m_req(state->request.clone()),
           m_operation(state->operation),
           m_state(rstd::move(state)),
           m_body(Some(rstd::move(body))) {}
 
-    Request                                               m_req;
-    Operation                                             m_operation;
-    Arc<OperationState>                                   m_state;
-    rstd::Option<rstd::async::CompletionQueue<BodyEvent>> m_body;
-    rstd::Option<lihttpto::MessageHead>                   m_header;
-    lihttpto::Headers                                     m_empty_header;
+    Request                                  m_req;
+    Operation                                m_operation;
+    Arc<OperationState>                      m_state;
+    rstd::Option<CompletionQueue<BodyEvent>> m_body;
+    rstd::Option<lihttpto::MessageHead>      m_header;
+    lihttpto::Headers                        m_empty_header;
 };
 
 auto SessionBackend::prepare_req(const Request& req) const -> Request {
@@ -721,20 +728,20 @@ void SessionBackend::close() {
 }
 
 auto SessionBackend::start_request_direct(const Request& req, Operation operation,
-                                          rstd::Option<rstd::bytes::Bytes> body)
+                                          rstd::Option<Bytes> body)
     -> coro<Result<ResponseBackend>> {
     if (m_executor.is_none()) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt executor is unavailable")));
     }
 
-    auto ready_completion = rstd::async::Completion<rstd::Option<Error>>::make();
+    auto ready_completion = Completion<rstd::Option<Error>>::make();
     if (ready_completion.is_err()) {
         co_return Result<ResponseBackend>(
             Err(Error::Io(rstd::move(ready_completion).unwrap_err_unchecked())));
     }
     auto ready_pair = rstd::move(ready_completion).unwrap_unchecked();
 
-    auto body_completion = rstd::async::CompletionQueue<BodyEvent>::make();
+    auto body_completion = CompletionQueue<BodyEvent>::make();
     if (body_completion.is_err()) {
         co_return Result<ResponseBackend>(
             Err(Error::Io(rstd::move(body_completion).unwrap_err_unchecked())));
@@ -835,8 +842,7 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
 }
 
 auto SessionBackend::start_request(const Request& req, Operation operation,
-                                   rstd::Option<rstd::bytes::Bytes> body)
-    -> coro<Result<ResponseBackend>> {
+                                   rstd::Option<Bytes> body) -> coro<Result<ResponseBackend>> {
     if (m_driver.is_none()) {
         co_return co_await start_request_direct(req, operation, rstd::move(body));
     }
@@ -848,14 +854,14 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
         proxy = Some(m_proxy.clone().unwrap());
     }
 
-    auto ready_completion = rstd::async::Completion<rstd::Option<Error>>::make();
+    auto ready_completion = Completion<rstd::Option<Error>>::make();
     if (ready_completion.is_err()) {
         co_return Result<ResponseBackend>(
             Err(Error::Io(rstd::move(ready_completion).unwrap_err_unchecked())));
     }
     auto ready_pair = rstd::move(ready_completion).unwrap_unchecked();
 
-    auto body_completion = rstd::async::CompletionQueue<BodyEvent>::make();
+    auto body_completion = CompletionQueue<BodyEvent>::make();
     if (body_completion.is_err()) {
         co_return Result<ResponseBackend>(
             Err(Error::Io(rstd::move(body_completion).unwrap_err_unchecked())));
@@ -865,7 +871,7 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
     auto state = Arc<OperationState>::make(rstd::move(prepared),
                                            operation,
                                            m_driver->downgrade(),
-                                           None<rstd::async::AnyExecutor>(),
+                                           None<AnyExecutor>(),
                                            rstd::move(proxy),
                                            rstd::move(ready_pair.get<1>()),
                                            rstd::move(body_pair.get<1>()));
@@ -890,7 +896,7 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, Operation::Get(), None<rstd::bytes::Bytes>());
+    auto res = co_await start_request(req, Operation::Get(), None<Bytes>());
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
     }
@@ -899,11 +905,10 @@ auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>
 }
 
 auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    co_return co_await post(req, rstd::bytes::Bytes::make());
+    co_return co_await post(req, Bytes::make());
 }
 
-auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
-    -> coro<Result<Arc<ResponseBackend>>> {
+auto SessionBackend::post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>> {
     auto res = co_await start_request(req, Operation::Post(), Some(rstd::move(body)));
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
@@ -934,7 +939,7 @@ auto ResponseBackend::ready_head() -> coro<Result<rstd::empty>> {
     }
 }
 
-auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>> {
+auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<Bytes>>> {
     if (m_body.is_none())
         co_return Err(Error::InvalidState("Qt response body queue is unavailable"));
     for (;;) {
@@ -946,7 +951,7 @@ auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Byte
         // Metadata notifications may repeat; the published response head is immutable.
         if (event.is_Header()) continue;
         if (event.is_Chunk()) co_return Ok(Some(rstd::move(event).as_Chunk().value));
-        if (event.is_Finished()) co_return Ok(None<rstd::bytes::Bytes>());
+        if (event.is_Finished()) co_return Ok(None<Bytes>());
         co_return Err(rstd::move(event).as_Failed().value);
     }
 }

@@ -4,10 +4,15 @@ export import :client_curl_response;
 export import :client_curl_connection;
 export import ncrequest.type;
 
+using rstd::bytes::Bytes;
+using rstd::path::Path;
+using rstd::string::String;
+using rstd::vec::Vec;
+using std::pmr::memory_resource;
+using std::pmr::polymorphic_allocator;
+
 namespace ncrequest::client::curl
 {
-
-using rstd::path::Path;
 
 export class SessionBackend : public NoCopy {
 public:
@@ -16,8 +21,8 @@ public:
     class Private;
     ~SessionBackend();
 
-    explicit SessionBackend(std::pmr::memory_resource* = std::pmr::get_default_resource(),
-                            CurlOptions options        = {});
+    explicit SessionBackend(memory_resource*    = std::pmr::get_default_resource(),
+                            CurlOptions options = {});
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {
@@ -28,14 +33,14 @@ public:
 
     void start();
 
-    auto start_request(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
+    auto start_request(const Request&, Operation, rstd::Option<Bytes>)
         -> coro<Result<ResponseBackend>>;
 
     auto get(const Request&) -> coro<Result<Arc<ResponseBackend>>>;
     auto post(const Request&) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request&, rstd::bytes::Bytes) -> coro<Result<Arc<ResponseBackend>>>;
+    auto post(const Request&, Bytes) -> coro<Result<Arc<ResponseBackend>>>;
 
-    auto cookies() -> rstd::vec::Vec<rstd::string::String>;
+    auto cookies() -> Vec<String>;
     void load_cookie(ref<Path> path);
     void save_cookie(ref<Path> path) const;
     void set_proxy(const req_opt::Proxy&);
@@ -46,7 +51,7 @@ public:
 
     auto channel() -> channel_type&;
     auto channel_rc() -> Arc<channel_type>;
-    auto allocator() -> std::pmr::polymorphic_allocator<byte>;
+    auto allocator() -> polymorphic_allocator<byte>;
 
 private:
     auto perform(Arc<ResponseBackend>&) -> coro<Result<rstd::empty>>;
