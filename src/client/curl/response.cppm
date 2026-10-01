@@ -19,9 +19,9 @@ public:
     static constexpr usize ReadSize { 1024 * 16 };
 
 public:
-    auto header() const -> const http::Header&;
-    auto head() const -> rstd::Option<rstd::ref<http::MessageHead>>;
-    auto trailers() const -> rstd::Option<rstd::ref<http::Header>>;
+    auto header() const -> const lihttpto::Headers&;
+    auto head() const -> rstd::Option<rstd::ref<lihttpto::MessageHead>>;
+    auto trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>>;
     auto code() const -> rstd::Option<i32>;
 
     auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
@@ -47,16 +47,15 @@ public:
         co_return written;
     }
 
-    static auto make_response(const Request&, http::Operation, SessionBackend&)
-        -> Arc<ResponseBackend>;
-    ResponseBackend(const Request&, http::Operation, SessionBackend&) noexcept;
+    static auto make_response(const Request&, Operation, SessionBackend&) -> Arc<ResponseBackend>;
+    ResponseBackend(const Request&, Operation, SessionBackend&) noexcept;
     ResponseBackend(ResponseBackend&&) noexcept;
     ~ResponseBackend() noexcept;
     ResponseBackend& operator=(ResponseBackend&&) noexcept;
 
     auto is_finished() const -> bool;
     auto request() const -> const Request&;
-    auto operation() const -> http::Operation;
+    auto operation() const -> Operation;
 
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
@@ -77,7 +76,7 @@ private:
 
 class ResponseBackend::Inner {
 public:
-    Inner(ResponseBackend*, const Request&, http::Operation, SessionBackend&);
+    Inner(ResponseBackend*, const Request&, Operation, SessionBackend&);
     friend class ResponseBackend;
 
     void set_share(rstd::Option<SessionShare> share) { m_share = rstd::move(share); }
@@ -86,8 +85,8 @@ private:
     ResponseBackend* m_q;
     Request          m_req;
 
-    http::Operation m_operation;
-    bool            m_finished;
+    Operation m_operation;
+    bool      m_finished;
 
     rstd::bytes::Bytes         m_send_buffer;
     Arc<Connection>            m_connect;

@@ -33,7 +33,7 @@ public:
     }
 
     auto get(const Request& req) -> coro<Result<Arc<Response>>> {
-        co_return co_await send(req, http::Operation::Get(), None<rstd::bytes::Bytes>());
+        co_return co_await send(req, Operation::Get(), None<rstd::bytes::Bytes>());
     }
 
     auto post(const Request& req) -> coro<Result<Arc<Response>>> {
@@ -41,7 +41,7 @@ public:
     }
 
     auto post(const Request& req, rstd::bytes::Bytes body) -> coro<Result<Arc<Response>>> {
-        co_return co_await send(req, http::Operation::Post(), Some(rstd::move(body)));
+        co_return co_await send(req, Operation::Post(), Some(rstd::move(body)));
     }
 
 private:
@@ -52,7 +52,7 @@ private:
         }
     }
 
-    auto send(const Request& req, http::Operation operation, rstd::Option<rstd::bytes::Bytes> body)
+    auto send(const Request& req, Operation operation, rstd::Option<rstd::bytes::Bytes> body)
         -> coro<Result<Arc<Response>>> {
         auto res = co_await this->start_request(req, operation, rstd::move(body));
         if (res.is_err()) {

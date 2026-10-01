@@ -59,7 +59,7 @@ void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Reque
 
 } // namespace
 
-ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, http::Operation oper,
+ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, Operation oper,
                               SessionBackend& ses)
     : m_q(res),
       m_req(req.clone()),
@@ -68,20 +68,19 @@ ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, http::Op
       m_connect(Connection::make(ses.channel_rc(), ses.allocator())),
       m_allocator(ses.allocator()) {}
 
-ResponseBackend::ResponseBackend(const Request& req, http::Operation oper,
-                                 SessionBackend& ses) noexcept
+ResponseBackend::ResponseBackend(const Request& req, Operation oper, SessionBackend& ses) noexcept
     : m_inner(Arc<Inner>::make(this, req, oper, ses)) {
     auto* d    = m_inner.as_ptr().as_raw_ptr();
     auto& easy = connection().easy();
     switch (oper.tag()) {
-    case http::Operation::Tag::Get: break;
-    case http::Operation::Tag::Post:
+    case Operation::Tag::Get: break;
+    case Operation::Tag::Post:
         easy.setopt(CURLoption::CURLOPT_POST, 1);
         easy.setopt(CURLoption::CURLOPT_POSTFIELDS, nullptr);
         easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(0));
         break;
-    case http::Operation::Tag::Delete:
-    case http::Operation::Tag::Head:
+    case Operation::Tag::Delete:
+    case Operation::Tag::Head:
     default: break;
     }
     apply_easy_request(d, easy, req);
@@ -117,7 +116,7 @@ auto ResponseBackend::allocator() const -> const std::pmr::polymorphic_allocator
     return m_inner->m_allocator;
 }
 
-Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, http::Operation oper,
+Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, Operation oper,
                                                     SessionBackend& ses) {
     return Arc<ResponseBackend>::make(req, oper, ses);
 }
@@ -143,8 +142,8 @@ void ResponseBackend::prepare_perform() {
     auto& easy = connection().easy();
 
     switch (m_inner->m_operation.tag()) {
-    case http::Operation::Tag::Get: break;
-    case http::Operation::Tag::Post: {
+    case Operation::Tag::Get: break;
+    case Operation::Tag::Post: {
         auto& p = m_inner->m_req.get_opt<req_opt::Read>();
         if (p.callback) {
             auto size = p.size == usize() ? static_cast<curl_off_t>(-1)
@@ -158,26 +157,26 @@ void ResponseBackend::prepare_perform() {
         }
         break;
     }
-    case http::Operation::Tag::Delete:
-    case http::Operation::Tag::Head:
+    case Operation::Tag::Delete:
+    case Operation::Tag::Head:
     default: break;
     }
 }
 
-auto ResponseBackend::operation() const -> http::Operation { return m_inner->m_operation; }
+auto ResponseBackend::operation() const -> Operation { return m_inner->m_operation; }
 
 bool ResponseBackend::is_finished() const {
     if (! m_inner) return true;
     return connection().is_finished();
 }
 
-auto ResponseBackend::header() const -> const http::Header& {
+auto ResponseBackend::header() const -> const lihttpto::Headers& {
     return connection().header().headers();
 }
-auto ResponseBackend::head() const -> rstd::Option<rstd::ref<http::MessageHead>> {
-    return Some(rstd::ref<http::MessageHead>::from_raw_parts(&connection().header()));
+auto ResponseBackend::head() const -> rstd::Option<rstd::ref<lihttpto::MessageHead>> {
+    return Some(rstd::ref<lihttpto::MessageHead>::from_raw_parts(&connection().header()));
 }
-auto ResponseBackend::trailers() const -> rstd::Option<rstd::ref<http::Header>> {
+auto ResponseBackend::trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>> {
     return connection().trailers();
 }
 auto ResponseBackend::code() const -> rstd::Option<i32> {

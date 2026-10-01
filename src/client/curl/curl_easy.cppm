@@ -73,10 +73,9 @@ public:
     template<typename Headers>
     void set_header(const Headers& headers) {
         reset_header();
-        auto fields = headers.iter();
-        for (auto field = fields.next(); field.is_some(); field = fields.next()) {
-            auto name  = (**field).name().as_ref();
-            auto value = (**field).value().as_bytes();
+        for (const auto& field : headers) {
+            auto name  = field.name.as_str();
+            auto value = field.value.as_slice();
 
             auto bytes = rstd::vec::Vec<u8>::with_capacity(name.size() + value.len() + usize(2));
             bytes.extend_from_slice(name.as_bytes());

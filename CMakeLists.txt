@@ -8,7 +8,7 @@ project(
   DESCRIPTION "")
 
 option(NCREQUEST_BUILD_TESTS "Build tests" ${PROJECT_IS_TOP_LEVEL})
-set(NCREQUEST_CLIENT_BACKEND "qt" CACHE STRING "Client backend: curl or qt")
+set(NCREQUEST_CLIENT_BACKEND "curl" CACHE STRING "Client backend: curl or qt")
 set(NCREQUEST_CLIENT_BACKEND_VALUES curl qt)
 set_property(CACHE NCREQUEST_CLIENT_BACKEND
              PROPERTY STRINGS ${NCREQUEST_CLIENT_BACKEND_VALUES})
@@ -36,12 +36,13 @@ include(GNUInstallDirs)
 include(FetchContent)
 
 if(NOT TARGET rstd::rstd)
-  if(EXISTS "${CMAKE_SOURCE_DIR}/rstd")
-    add_subdirectory(rstd)
+  set(RSTD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../rstd" CACHE PATH "rstd source directory")
+  if(EXISTS "${RSTD_SOURCE_DIR}/CMakeLists.txt")
+    add_subdirectory("${RSTD_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/rstd")
   else()
     message(
       FATAL_ERROR
-        "rstd is required: provide ${CMAKE_SOURCE_DIR}/rstd or define the rstd::rstd target before adding ncrequest"
+        "rstd is required: set RSTD_SOURCE_DIR or define rstd::rstd before adding ncrequest"
     )
   endif()
 endif()
@@ -55,21 +56,10 @@ endif()
 add_library(ncrequest STATIC)
 add_library(ncrequest::ncrequest ALIAS ncrequest)
 
-add_library(ncrequest_http_parser OBJECT)
-target_compile_features(ncrequest_http_parser PUBLIC cxx_std_20)
-target_sources(
-  ncrequest_http_parser
-  PUBLIC FILE_SET
-         modules
-         TYPE
-         CXX_MODULES
-         FILES
-         src/http/parser/cursor.cppm
-         src/http/parser/ascii.cppm
-         src/http/parser/uri.cppm
-         src/http/parser/http1.cppm
-         src/http/parser/mod.cppm)
-target_link_libraries(ncrequest_http_parser PUBLIC rstd::rstd)
+if(NOT TARGET lihttpto::lihttpto)
+  set(LIHTTPTO_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lihttpto" CACHE PATH "lihttpto source directory")
+  add_subdirectory("${LIHTTPTO_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/lihttpto")
+endif()
 
 target_compile_features(ncrequest PUBLIC cxx_std_20)
 
@@ -83,12 +73,6 @@ set(NCREQUEST_MODULE_FILES
     src/client/websocket_backend.cppm
     src/response.cppm
     src/session.cppm
-    src/http/error.cppm
-    src/http/url.cppm
-    src/http/header.cppm
-    src/http/query.cppm
-    src/http/cookie.cppm
-    src/http/message.cppm
     src/http.cppm
     src/websocket.cppm
     src/coro/base.cppm
@@ -124,14 +108,7 @@ target_sources(
          FILES
          ${NCREQUEST_MODULE_FILES})
 
-target_sources(
-  ncrequest
-  PRIVATE src/http/url.cpp
-          src/http/header.cpp
-          src/http/query.cpp
-          src/http/cookie.cpp
-          src/http/message.cpp
-          src/request.cpp)
+target_sources(ncrequest PRIVATE src/request.cpp)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "curl")
   target_sources(
@@ -164,7 +141,7 @@ endif()
 
 target_link_libraries(
   ncrequest
-  PRIVATE ncrequest_http_parser
+  PUBLIC lihttpto::lihttpto
   PUBLIC rstd::rstd rstd.cppstd)
 
 if(NCREQUEST_CLIENT_BACKEND STREQUAL "qt")

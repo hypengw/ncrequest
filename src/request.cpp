@@ -32,23 +32,24 @@ Request::Request() noexcept
                req_opt::SSL { .verify_certificate = true },
                req_opt::Read {},
                req_opt::Share {} } {}
-Request::Request(http::Url url) noexcept: Request() { m_url = rstd::move(url); }
+Request::Request(lihttpto::Url url) noexcept: Request() { m_url = rstd::move(url); }
 Request::~Request() noexcept {}
 Request::Request(Request&&) noexcept            = default;
 Request& Request::operator=(Request&&) noexcept = default;
 
-auto Request::from_url(rstd::ref<rstd::str> input) -> rstd::Result<Request, http::UrlError> {
-    auto parsed = http::Url::parse_http(input);
+auto Request::from_url(rstd::ref<rstd::str> input) -> rstd::Result<Request, lihttpto::UrlError> {
+    auto parsed = lihttpto::Url::parse_http(input);
     if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
     return rstd::Ok(Request { rstd::move(parsed).unwrap() });
 }
 
 std::string_view Request::url() const { return rstd::cppstd::as_string_view(m_url.as_ref()); }
 
-auto Request::url_info() const -> const http::Url& { return m_url; }
+auto Request::url_info() const -> const lihttpto::Url& { return m_url; }
 
-auto Request::try_set_url(rstd::ref<rstd::str> input) -> rstd::Result<rstd::empty, http::UrlError> {
-    auto parsed = http::Url::parse_http(input);
+auto Request::try_set_url(rstd::ref<rstd::str> input)
+    -> rstd::Result<rstd::empty, lihttpto::UrlError> {
+    auto parsed = lihttpto::Url::parse_http(input);
     if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
     m_url = rstd::move(parsed).unwrap();
     return rstd::Ok(rstd::empty {});
@@ -59,27 +60,20 @@ std::string Request::header(std::string_view name) const {
     if (name_text.is_err()) return {};
     auto value = m_header.get(rstd::move(name_text).unwrap());
     if (value.is_none()) return {};
-    auto bytes = (**value).as_bytes();
+    auto bytes = (**value).as_slice();
     return { reinterpret_cast<const char*>(bytes.as_raw_ptr()), bytes.len().to_primitive() };
 }
 
-auto Request::header() const -> const http::Header& { return m_header; }
+auto Request::header() const -> const lihttpto::Headers& { return m_header; }
 
-auto Request::update_header(const http::Header& h) -> Request& {
-    auto removals = h.iter();
-    for (auto field = removals.next(); field.is_some(); field = removals.next()) {
-        (void)m_header.remove((**field).name().as_ref());
-    }
-
-    auto additions = h.iter();
-    for (auto field = additions.next(); field.is_some(); field = additions.next()) {
-        m_header.append((**field).clone());
-    }
+auto Request::update_header(const lihttpto::Headers& h) -> Request& {
+    for (const auto& field : h) (void)m_header.remove(field.name.as_str());
+    for (const auto& field : h) m_header.push(field.clone());
     return *this;
 }
 
 auto Request::try_set_header(rstd::ref<rstd::str> name, rstd::ref<rstd::str> value)
-    -> rstd::Result<rstd::empty, http::HeaderError> {
+    -> rstd::Result<rstd::empty, lihttpto::HeaderError> {
     return m_header.set(name, value);
 }
 
@@ -88,7 +82,7 @@ Request& Request::remove_header(rstd::ref<rstd::str> name) {
     return *this;
 }
 
-void Request::set_opt(const http::Header& header) { m_header = header.clone(); }
+void Request::set_opt(const lihttpto::Headers& header) { m_header = header.clone(); }
 
 void Request::set_opt(RequestOpt&& opt) {
     RSTD_MATCH(rstd::move(opt)) {

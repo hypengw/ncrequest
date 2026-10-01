@@ -22,7 +22,7 @@ class WebSocketBackend::Impl {
     };
 
     struct SendCommand {
-        rstd::rc::Rc<const rstd::byte[]> message;
+        rstd::bytes::Bytes message;
     };
 
     struct DisconnectCommand {
@@ -285,8 +285,7 @@ public:
     void send(ref<str> message) { send(message.as_bytes()); }
 
     void send(slice<u8> in) {
-        auto msg = rstd::rc::allocate_make_rc<byte[]>(m_alloc, in.len(), byte {});
-        rstd::mem::memcpy(msg.get(), in.as_raw_ptr(), in.len());
+        auto msg = rstd::bytes::Bytes::copy_from_slice(in);
         (void)m_commands.push(Command::Send(SendCommand { rstd::move(msg) }));
     }
 
@@ -490,11 +489,11 @@ private:
         if (! m_curl || ! is_connected()) return false;
 
         while (! m_msgs.empty()) {
-            auto msg = m_msgs.front();
+            auto& msg = m_msgs.front();
 
             for (;;) {
                 rstd::size_t sent {};
-                auto         data   = msg.get() + m_sent_len;
+                auto         data   = msg.data() + m_sent_len;
                 auto         size   = msg.size().to_primitive() - m_sent_len;
                 auto         result = curl_ws_send(m_curl, data, size, &sent, 0, CURLWS_BINARY);
 
@@ -616,11 +615,11 @@ private:
         emit_error(m_error_message.as_str());
     }
 
-    std::pmr::polymorphic_allocator<rstd::byte>       m_alloc;
-    std::pmr::vector<rstd::byte>                      m_read_buffer;
-    rstd::size_t                                      m_read_len {};
-    std::pmr::deque<rstd::rc::Rc<const rstd::byte[]>> m_msgs;
-    rstd::size_t                                      m_sent_len {};
+    std::pmr::polymorphic_allocator<rstd::byte> m_alloc;
+    std::pmr::vector<rstd::byte>                m_read_buffer;
+    rstd::size_t                                m_read_len {};
+    std::pmr::deque<rstd::bytes::Bytes>         m_msgs;
+    rstd::size_t                                m_sent_len {};
 
     ::curl::CURL*                                m_curl {};
     rstd::Option<Arc<rstd::async::Registration>> m_registration;

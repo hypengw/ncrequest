@@ -94,7 +94,7 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
     co_return Result<rstd::empty>(Ok(rstd::empty {}));
 }
 
-auto SessionBackend::start_request(const Request& req, http::Operation operation,
+auto SessionBackend::start_request(const Request& req, Operation operation,
                                    rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
     Arc<ResponseBackend> res = ResponseBackend::make_response(prepare_req(req), operation, *this);
@@ -111,7 +111,7 @@ auto SessionBackend::start_request(const Request& req, http::Operation operation
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = ResponseBackend::make_response(prepare_req(req), http::Operation::Get(), *this);
+    auto res = ResponseBackend::make_response(prepare_req(req), Operation::Get(), *this);
 
     auto performed = co_await perform(res);
     if (performed.is_ok()) {
@@ -122,7 +122,7 @@ auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>
 
 auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
     Arc<ResponseBackend> res =
-        ResponseBackend::make_response(prepare_req(req), http::Operation::Post(), *this);
+        ResponseBackend::make_response(prepare_req(req), Operation::Post(), *this);
     auto performed = co_await perform(res);
     if (performed.is_ok()) {
         co_return Result<Arc<ResponseBackend>>(Ok(rstd::move(res)));
@@ -133,7 +133,7 @@ auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend
 auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     -> coro<Result<Arc<ResponseBackend>>> {
     Arc<ResponseBackend> res =
-        ResponseBackend::make_response(prepare_req(req), http::Operation::Post(), *this);
+        ResponseBackend::make_response(prepare_req(req), Operation::Post(), *this);
     res->add_send_buffer(rstd::move(body));
 
     auto performed = co_await perform(res);

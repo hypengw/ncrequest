@@ -256,9 +256,9 @@ public:
     auto& channel() { return m_session_channel; }
 
     auto& header() const { return *m_header; }
-    auto  trailers() const -> Option<ref<http::Header>> {
-        if (m_trailers.is_none()) return None<ref<http::Header>>();
-        return Some(ref<http::Header>::from_raw_parts(&*m_trailers));
+    auto  trailers() const -> Option<ref<lihttpto::Headers>> {
+        if (m_trailers.is_none()) return None<ref<lihttpto::Headers>>();
+        return Some(ref<lihttpto::Headers>::from_raw_parts(&*m_trailers));
     }
     void set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
 
@@ -458,7 +458,7 @@ private:
             self->m_header      = Some(rstd::move(completed.head));
             self->m_header_done = true;
 
-            self->m_header_parser = http::Http1HeadParser {};
+            self->m_header_parser = lihttpto::Http1HeadParser { true };
         }
         return header.len().to_primitive();
     }
@@ -646,15 +646,15 @@ private:
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 
-    http::Http1HeadParser         m_header_parser;
-    http::Http1FieldSectionParser m_trailer_parser;
-    Option<http::MessageHead>     m_header;
-    Option<http::Header>          m_trailers;
-    Option<http::HttpParseError>  m_header_error;
-    bool                          m_header_done { false };
-    bool                          m_body_started { false };
-    bool                          m_trailer_started { false };
-    Buffer<allocator_type>        m_recv_buf;
+    lihttpto::Http1HeadParser         m_header_parser { true };
+    lihttpto::Http1FieldSectionParser m_trailer_parser;
+    Option<lihttpto::MessageHead>     m_header;
+    Option<lihttpto::Headers>         m_trailers;
+    Option<lihttpto::HttpParseError>  m_header_error;
+    bool                              m_header_done { false };
+    bool                              m_body_started { false };
+    bool                              m_trailer_started { false };
+    Buffer<allocator_type>            m_recv_buf;
 
     req_opt::Read::Callback m_send_callback;
     Buffer<allocator_type>  m_send_buf;

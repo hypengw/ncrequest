@@ -43,11 +43,6 @@ when = [
   { condition = "feature.qt", source-groups = ["qt"] },
 ]
 sources = [
-  "src/http/parser/cursor.cppm",
-  "src/http/parser/ascii.cppm",
-  "src/http/parser/uri.cppm",
-  "src/http/parser/http1.cppm",
-  "src/http/parser/mod.cppm",
   "src/type.cppm",
   "src/error.cppm",
   "src/session_share.cppm",
@@ -57,22 +52,11 @@ sources = [
   "src/client/websocket_backend.cppm",
   "src/response.cppm",
   "src/session.cppm",
-  "src/http/error.cppm",
-  "src/http/url.cppm",
-  "src/http/header.cppm",
-  "src/http/query.cppm",
-  "src/http/cookie.cppm",
-  "src/http/message.cppm",
   "src/http.cppm",
   "src/websocket.cppm",
   "src/coro/base.cppm",
   "src/coro/mod.cppm",
   "src/mod.cppm",
-  "src/http/url.cpp",
-  "src/http/header.cpp",
-  "src/http/query.cpp",
-  "src/http/cookie.cpp",
-  "src/http/message.cpp",
   "src/request.cpp",
 ]
 
@@ -97,11 +81,11 @@ condition = "feature.qt"
 public-definitions = ["NCREQUEST_CLIENT_BACKEND_QT_NETWORK"]
 
 [dependencies.rstd-std]
-version = "0.1.0"
+version = "0.1.2"
 pub = true
 
 [dependencies.rstd-cppstd]
-version = "0.1.0"
+version = "0.1.2"
 pub = true
 
 [external-dependencies.pkg-config.libcurl]
@@ -118,3 +102,7 @@ targets = [
   { name = "Qt6::Network", pub = true },
   { name = "Qt6::WebSockets", pub = true },
 ]
+
+[dependencies.lihttpto]
+path = "../lihttpto"
+pub = true

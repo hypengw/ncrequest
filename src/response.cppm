@@ -31,11 +31,12 @@ public:
 
     auto code() const -> rstd::Option<i32> { return Backend::code(); }
 
-    auto set_cookies() const -> rstd::Result<rstd::vec::Vec<http::SetCookie>, http::CookieError> {
-        auto cookies = rstd::vec::Vec<http::SetCookie>::make();
-        auto values  = this->header().values("set-cookie"_str);
-        for (auto value = values.next(); value.is_some(); value = values.next()) {
-            auto parsed = http::SetCookie::parse_bytes((**value).as_bytes());
+    auto set_cookies() const
+        -> rstd::Result<rstd::vec::Vec<lihttpto::SetCookie>, lihttpto::CookieError> {
+        auto cookies = rstd::vec::Vec<lihttpto::SetCookie>::make();
+        auto values  = this->header().get_all("set-cookie"_str);
+        for (const auto& value : values) {
+            auto parsed = lihttpto::SetCookie::parse_bytes(value->as_slice());
             if (parsed.is_err()) {
                 return rstd::Err(rstd::move(parsed).unwrap_err());
             }

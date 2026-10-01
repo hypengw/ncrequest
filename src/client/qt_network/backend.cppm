@@ -51,8 +51,8 @@ auto make_qt_executor(QObject* target) -> rstd::Option<rstd::async::AnyExecutor>
 }
 
 struct BodyEvent {
-    RSTD_ENUM(BodyEvent, (Header, (http::MessageHead value;)), (Chunk, (rstd::bytes::Bytes value;)),
-              (Finished), (Failed, (Error value;)))
+    RSTD_ENUM(BodyEvent, (Header, (lihttpto::MessageHead value;)),
+              (Chunk, (rstd::bytes::Bytes value;)), (Finished), (Failed, (Error value;)))
 };
 
 struct DirectReplyState {
@@ -61,7 +61,7 @@ struct DirectReplyState {
 
 struct OperationState {
     Request                                            request;
-    http::Operation                                    operation;
+    Operation                                          operation;
     Weak<QtNetworkDriver>                              driver;
     rstd::Option<rstd::async::AnyExecutor>             executor;
     Option<Arc<DirectReplyState>>                      direct;
@@ -71,7 +71,7 @@ struct OperationState {
     Atomic<bool>                                       finished { false };
     Atomic<bool>                                       cancel_requested { false };
 
-    OperationState(Request request, http::Operation operation, Weak<QtNetworkDriver> driver,
+    OperationState(Request request, Operation operation, Weak<QtNetworkDriver> driver,
                    rstd::Option<rstd::async::AnyExecutor>             executor,
                    rstd::Option<req_opt::Proxy>                       proxy,
                    rstd::async::CompletionHandle<rstd::Option<Error>> ready,
@@ -109,11 +109,10 @@ auto make_qnetwork_request(const Request& req) -> Result<QNetworkRequest> {
 
     auto raw_headers = QList<std::pair<QByteArray, QByteArray>> {};
     raw_headers.reserve(static_cast<qsizetype>(req.header().len().to_primitive()));
-    auto fields = req.header().iter();
-    for (auto field = fields.next(); field.is_some(); field = fields.next()) {
-        auto name  = (**field).name().as_ref();
-        auto value = (**field).value().as_bytes();
-        if (req.header().values(name).count() > usize(1)) {
+    for (const auto& field : req.header()) {
+        auto name  = field.name.as_str();
+        auto value = field.value.as_slice();
+        if (req.header().get_all(name).len() > usize(1)) {
             return Err(
                 Error::Unsupported("Qt Network cannot preserve repeated request header fields"));
         }
@@ -178,9 +177,8 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
     manager->setProxy(qproxy);
 }
 
-auto send_request(QNetworkAccessManager* manager, QNetworkRequest request,
-                  http::Operation operation, rstd::Option<rstd::bytes::Bytes> body)
-    -> QNetworkReply* {
+auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, Operation operation,
+                  rstd::Option<rstd::bytes::Bytes> body) -> QNetworkReply* {
     if (manager == nullptr) return nullptr;
     if (! operation.is_Post()) {
         return manager->get(rstd::move(request));
@@ -255,16 +253,16 @@ private:
 };
 
 auto read_header(QNetworkReply* reply)
-    -> rstd::Result<rstd::Option<http::MessageHead>, http::HttpParseError> {
-    if (reply == nullptr) return rstd::Ok(rstd::None<http::MessageHead>());
+    -> rstd::Result<rstd::Option<lihttpto::MessageHead>, lihttpto::HttpParseError> {
+    if (reply == nullptr) return rstd::Ok(rstd::None<lihttpto::MessageHead>());
 
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-    if (! status.isValid()) return rstd::Ok(rstd::None<http::MessageHead>());
+    if (! status.isValid()) return rstd::Ok(rstd::None<lihttpto::MessageHead>());
 
-    auto status_code = http::StatusCode::make(static_cast<rstd::u16>(status.toInt()));
+    auto status_code = lihttpto::StatusCode::make(static_cast<rstd::u16>(status.toInt()));
     if (status_code.is_err()) return rstd::Err(rstd::move(status_code).unwrap_err());
 
-    auto headers = http::Header {};
+    auto headers = lihttpto::Headers {};
 
     for (auto const& pair : reply->headers().toListOfPairs()) {
         auto name_bytes = rstd::slice<rstd::u8>::from_raw_parts(
@@ -272,31 +270,32 @@ auto read_header(QNetworkReply* reply)
             static_cast<rstd::usize>(pair.first.size()));
         auto name_text = rstd::str_::from_utf8(name_bytes);
         if (name_text.is_err()) {
-            return rstd::Err(http::HttpParseError {
-                http::HttpParseErrorKind::InvalidHeaderLine(),
+            return rstd::Err(lihttpto::HttpParseError {
+                lihttpto::HttpParseErrorKind::InvalidHeaderLine(),
                 name_text.unwrap_err().valid_up_to(),
             });
         }
-        auto name = http::HeaderName::parse(rstd::move(name_text).unwrap());
+        auto name = lihttpto::HeaderName::make(rstd::move(name_text).unwrap());
         if (name.is_err()) {
-            return rstd::Err(http::HttpParseError { http::HttpParseErrorKind::InvalidHeaderLine(),
-                                                    name.unwrap_err().offset() });
+            return rstd::Err(lihttpto::HttpParseError {
+                lihttpto::HttpParseErrorKind::InvalidHeaderLine(), usize() });
         }
 
-        auto value = http::HeaderValue::from_bytes(rstd::slice<rstd::u8>::from_raw_parts(
+        auto value = lihttpto::HeaderValue::make(rstd::slice<rstd::u8>::from_raw_parts(
             reinterpret_cast<const rstd::byte*>(pair.second.constData()),
             static_cast<rstd::usize>(pair.second.size())));
         if (value.is_err()) {
-            return rstd::Err(http::HttpParseError { http::HttpParseErrorKind::InvalidHeaderLine(),
-                                                    value.unwrap_err().offset() });
+            return rstd::Err(lihttpto::HttpParseError {
+                lihttpto::HttpParseErrorKind::InvalidHeaderLine(), usize() });
         }
-        headers.append(http::HeaderField { rstd::move(name).unwrap(), rstd::move(value).unwrap() });
+        headers.push(lihttpto::Header { rstd::move(name).unwrap(), rstd::move(value).unwrap() });
     }
 
-    auto start = http::StartLine::Response(http::StatusLine { rstd::None<http::Version>(),
-                                                              rstd::move(status_code).unwrap(),
-                                                              rstd::None<http::HeaderValue>() });
-    return rstd::Ok(rstd::Some(http::MessageHead { rstd::move(start), rstd::move(headers) }));
+    auto start =
+        lihttpto::StartLine::Response(lihttpto::StatusLine { rstd::None<lihttpto::MessageVersion>(),
+                                                             rstd::move(status_code).unwrap(),
+                                                             rstd::None<lihttpto::HeaderValue>() });
+    return rstd::Ok(rstd::Some(lihttpto::MessageHead { rstd::move(start), rstd::move(headers) }));
 }
 
 auto transport_error(QNetworkReply* reply) -> rstd::Option<Error> {
@@ -607,7 +606,7 @@ public:
         return Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
     }
 
-    auto start_request(const Request& req, http::Operation operation,
+    auto start_request(const Request& req, Operation operation,
                        rstd::Option<rstd::bytes::Bytes> body) -> coro<Result<ResponseBackend>>;
 
     auto get(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
@@ -619,7 +618,7 @@ public:
 
 private:
     auto prepare_req(const Request&) const -> Request;
-    auto start_request_direct(const Request&, http::Operation, rstd::Option<rstd::bytes::Bytes>)
+    auto start_request_direct(const Request&, Operation, rstd::Option<rstd::bytes::Bytes>)
         -> coro<Result<ResponseBackend>>;
 
 private:
@@ -657,15 +656,15 @@ public:
         return *this;
     }
 
-    auto header() const -> const http::Header& {
+    auto header() const -> const lihttpto::Headers& {
         return m_header.is_some() ? m_header->headers() : m_empty_header;
     }
-    auto head() const -> rstd::Option<rstd::ref<http::MessageHead>> {
-        if (m_header.is_none()) return None<rstd::ref<http::MessageHead>>();
-        return Some(rstd::ref<http::MessageHead>::from_raw_parts(&*m_header));
+    auto head() const -> rstd::Option<rstd::ref<lihttpto::MessageHead>> {
+        if (m_header.is_none()) return None<rstd::ref<lihttpto::MessageHead>>();
+        return Some(rstd::ref<lihttpto::MessageHead>::from_raw_parts(&*m_header));
     }
-    auto trailers() const -> rstd::Option<rstd::ref<http::Header>> {
-        return None<rstd::ref<http::Header>>();
+    auto trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>> {
+        return None<rstd::ref<lihttpto::Headers>>();
     }
     auto code() const -> rstd::Option<i32> {
         if (m_header.is_none()) return None<i32>();
@@ -677,7 +676,7 @@ public:
     auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
     auto is_finished() const -> bool { return ! m_state || m_state->finished.load(); }
     auto request() const -> const Request& { return m_req; }
-    auto operation() const -> http::Operation { return m_operation; }
+    auto operation() const -> Operation { return m_operation; }
 
     void cancel() {
         if (m_state) m_state->cancel();
@@ -691,11 +690,11 @@ private:
           m_body(Some(rstd::move(body))) {}
 
     Request                                               m_req;
-    http::Operation                                       m_operation;
+    Operation                                             m_operation;
     Arc<OperationState>                                   m_state;
     rstd::Option<rstd::async::CompletionQueue<BodyEvent>> m_body;
-    rstd::Option<http::MessageHead>                       m_header;
-    http::Header                                          m_empty_header;
+    rstd::Option<lihttpto::MessageHead>                   m_header;
+    lihttpto::Headers                                     m_empty_header;
 };
 
 auto SessionBackend::prepare_req(const Request& req) const -> Request {
@@ -715,7 +714,7 @@ SessionBackend::~SessionBackend() {
     }
 }
 
-auto SessionBackend::start_request_direct(const Request& req, http::Operation operation,
+auto SessionBackend::start_request_direct(const Request& req, Operation operation,
                                           rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
     if (m_executor.is_none()) {
@@ -829,7 +828,7 @@ auto SessionBackend::start_request_direct(const Request& req, http::Operation op
         Ok(ResponseBackend(rstd::move(state), rstd::move(body_pair.get<0>()))));
 }
 
-auto SessionBackend::start_request(const Request& req, http::Operation operation,
+auto SessionBackend::start_request(const Request& req, Operation operation,
                                    rstd::Option<rstd::bytes::Bytes> body)
     -> coro<Result<ResponseBackend>> {
     if (m_driver.is_none()) {
@@ -885,7 +884,7 @@ auto SessionBackend::start_request(const Request& req, http::Operation operation
 }
 
 auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, http::Operation::Get(), None<rstd::bytes::Bytes>());
+    auto res = co_await start_request(req, Operation::Get(), None<rstd::bytes::Bytes>());
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
     }
@@ -899,7 +898,7 @@ auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend
 
 auto SessionBackend::post(const Request& req, rstd::bytes::Bytes body)
     -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, http::Operation::Post(), Some(rstd::move(body)));
+    auto res = co_await start_request(req, Operation::Post(), Some(rstd::move(body)));
     if (res.is_err()) {
         co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
     }

@@ -16,6 +16,10 @@ export import ncrequest.type;
 namespace ncrequest
 {
 
+export struct Operation {
+    RSTD_ENUM(Operation, (Get), (Post), (Delete), (Head))
+};
+
 namespace req_opt
 {
 export struct Timeout {
@@ -93,25 +97,25 @@ namespace ncrequest
 export class Request : public rstd::DefaultInClass<Request, rstd::clone::Clone> {
 public:
     Request() noexcept;
-    explicit Request(http::Url url) noexcept;
+    explicit Request(lihttpto::Url url) noexcept;
     Request(Request&&) noexcept;
     ~Request() noexcept;
     Request& operator=(Request&&) noexcept;
 
     [[nodiscard]]
-    static auto from_url(rstd::ref<rstd::str>) -> rstd::Result<Request, http::UrlError>;
+    static auto from_url(rstd::ref<rstd::str>) -> rstd::Result<Request, lihttpto::UrlError>;
 
     auto url() const -> std::string_view;
-    auto url_info() const -> const http::Url&;
-    auto try_set_url(rstd::ref<rstd::str>) -> rstd::Result<rstd::empty, http::UrlError>;
+    auto url_info() const -> const lihttpto::Url&;
+    auto try_set_url(rstd::ref<rstd::str>) -> rstd::Result<rstd::empty, lihttpto::UrlError>;
 
-    auto header() const -> const http::Header&;
+    auto header() const -> const lihttpto::Headers&;
     auto header(std::string_view name) const -> std::string;
-    auto update_header(const http::Header&) -> Request&;
+    auto update_header(const lihttpto::Headers&) -> Request&;
     auto try_set_header(rstd::ref<rstd::str> name, rstd::ref<rstd::str> value)
-        -> rstd::Result<rstd::empty, http::HeaderError>;
+        -> rstd::Result<rstd::empty, lihttpto::HeaderError>;
     auto remove_header(rstd::ref<rstd::str> name) -> Request&;
-    void set_opt(const http::Header&);
+    void set_opt(const lihttpto::Headers&);
 
     template<RequestOption T>
     T& get_opt() {
@@ -134,9 +138,9 @@ public:
     auto clone() const -> ncrequest::Request;
 
 private:
-    http::Url    m_url;
-    http::Header m_header;
-    RequestOpts  m_opts;
+    lihttpto::Url     m_url;
+    lihttpto::Headers m_header;
+    RequestOpts       m_opts;
 };
 
 } // namespace ncrequest
