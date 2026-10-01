@@ -8,6 +8,7 @@ export import :client_curl_session;
 #endif
 export import :client_http_backend;
 
+using namespace rstd::literals;
 using rstd::bytes::Bytes;
 using rstd::sync::atomic::Atomic;
 
@@ -57,15 +58,22 @@ public:
     static auto make() -> Arc<Session> { return Arc<Session>::make(); }
 
     auto get(Request req) -> coro<Result<Arc<Response>>> {
-        return send(state_.clone(), rstd::move(req), Operation::Get(), None<Bytes>());
+        req.set_method(lihttpto::Method::parse("GET"_str).unwrap());
+        return send(rstd::move(req));
     }
 
     auto post(Request req) -> coro<Result<Arc<Response>>> {
-        return post(rstd::move(req), Bytes::make());
+        req.set_method(lihttpto::Method::parse("POST"_str).unwrap());
+        return send(rstd::move(req));
     }
 
     auto post(Request req, Bytes body) -> coro<Result<Arc<Response>>> {
-        return send(state_.clone(), rstd::move(req), Operation::Post(), Some(rstd::move(body)));
+        req.set_body(rstd::move(body));
+        return post(rstd::move(req));
+    }
+
+    auto send(Request req) -> coro<Result<Arc<Response>>> {
+        return send_request(state_.clone(), rstd::move(req));
     }
 
 private:
@@ -76,10 +84,11 @@ private:
         }
     }
 
-    static auto send(Arc<State> state, Request req, Operation operation, rstd::Option<Bytes> body)
-        -> coro<Result<Arc<Response>>> {
+    static auto send_request(Arc<State> state, Request req) -> coro<Result<Arc<Response>>> {
         if (state->closed.load()) co_return Err(Error::Canceled());
-        auto res = co_await state->backend.start_request(req, operation, rstd::move(body));
+        auto valid = req.validate();
+        if (valid.is_err()) co_return Err(rstd::move(valid).unwrap_err());
+        auto res = co_await state->backend.start_request(rstd::move(req));
         if (res.is_err()) {
             co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
         }

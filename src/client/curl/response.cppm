@@ -30,15 +30,14 @@ public:
     auto next_chunk() -> coro<Result<rstd::Option<Bytes>>>;
     auto ready_head() -> coro<Result<rstd::empty>> { co_return Ok(rstd::empty {}); }
 
-    static auto make_response(const Request&, Operation, SessionBackend&) -> Arc<ResponseBackend>;
-    ResponseBackend(const Request&, Operation, SessionBackend&) noexcept;
+    static auto make_response(Request, SessionBackend&) -> Arc<ResponseBackend>;
+    ResponseBackend(Request, SessionBackend&) noexcept;
     ResponseBackend(ResponseBackend&&) noexcept;
     ~ResponseBackend() noexcept;
     ResponseBackend& operator=(ResponseBackend&&) noexcept;
 
     auto is_finished() const -> bool;
     auto request() const -> const Request&;
-    auto operation() const -> Operation;
 
     auto pause_send(bool) -> bool;
     auto pause_recv(bool) -> bool;
@@ -47,8 +46,7 @@ public:
     auto allocator() const -> const allocator_type&;
 
 private:
-    void prepare_perform();
-    void add_send_buffer(Bytes);
+    auto prepare_perform() -> Result<rstd::empty>;
 
     auto connection() -> Connection&;
     auto connection() const -> const Connection&;
@@ -59,21 +57,15 @@ private:
 
 class ResponseBackend::Inner {
 public:
-    Inner(ResponseBackend*, const Request&, Operation, SessionBackend&);
+    Inner(ResponseBackend*, Request, SessionBackend&);
     friend class ResponseBackend;
-
-    void set_share(rstd::Option<SessionShare> share) { m_share = rstd::move(share); }
 
 private:
     ResponseBackend* m_q;
-    Request          m_req;
 
-    Operation m_operation;
-    bool      m_finished;
+    bool m_finished;
 
-    Bytes                      m_send_buffer;
-    Arc<Connection>            m_connect;
-    rstd::Option<SessionShare> m_share;
+    Arc<Connection> m_connect;
 
     polymorphic_allocator<char> m_allocator;
 };

@@ -17,6 +17,7 @@ using rstd::async::Completion;
 using rstd::async::CompletionHandle;
 using rstd::async::CompletionQueue;
 using rstd::async::CompletionQueueHandle;
+using namespace rstd::literals;
 using rstd::async::ExecutorJob;
 using rstd::bytes::Bytes;
 using rstd::collections::HashMap;
@@ -69,7 +70,6 @@ struct DirectReplyState {
 
 struct OperationState {
     Request                               request;
-    Operation                             operation;
     Weak<QtNetworkDriver>                 driver;
     rstd::Option<AnyExecutor>             executor;
     Option<Arc<DirectReplyState>>         direct;
@@ -79,12 +79,11 @@ struct OperationState {
     Atomic<bool>                          finished { false };
     Atomic<bool>                          cancel_requested { false };
 
-    OperationState(Request request, Operation operation, Weak<QtNetworkDriver> driver,
+    OperationState(Request request, Weak<QtNetworkDriver> driver,
                    rstd::Option<AnyExecutor> executor, rstd::Option<req_opt::Proxy> proxy,
                    CompletionHandle<rstd::Option<Error>> ready,
                    CompletionQueueHandle<BodyEvent>      body)
         : request(rstd::move(request)),
-          operation(operation),
           driver(rstd::move(driver)),
           executor(rstd::move(executor)),
           proxy(rstd::move(proxy)),
@@ -184,25 +183,23 @@ void apply_proxy(QNetworkAccessManager* manager, const req_opt::Proxy& proxy) {
     manager->setProxy(qproxy);
 }
 
-auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, Operation operation,
-                  rstd::Option<Bytes> body) -> QNetworkReply* {
+auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, const Request& source)
+    -> QNetworkReply* {
     if (manager == nullptr) return nullptr;
-    if (! operation.is_Post()) {
-        return manager->get(rstd::move(request));
-    }
-
-    if (! request.hasRawHeader("Content-Type")) {
-        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
-    }
-
+    auto method = source.method().as_ref();
+    if (method == "HEAD"_str) return manager->head(request);
     auto payload = QByteArray {};
-    if (body.is_some()) {
-        auto bytes = rstd::move(body).unwrap();
-        auto raw   = bytes.as_slice();
-        payload    = QByteArray(reinterpret_cast<const char*>(raw.as_raw_ptr()),
-                                static_cast<qsizetype>(raw.len().to_primitive()));
+    if (source.body().is_some()) {
+        auto raw = source.body()->as_slice();
+        payload  = QByteArray(reinterpret_cast<const char*>(raw.as_raw_ptr()),
+                              static_cast<qsizetype>(raw.len().to_primitive()));
     }
-    return manager->post(request, payload);
+    if (method == "GET"_str && source.body().is_none()) return manager->get(request);
+    if (method == "POST"_str) return manager->post(request, payload);
+    auto raw  = method.as_bytes();
+    auto verb = QByteArray(reinterpret_cast<const char*>(raw.as_raw_ptr()),
+                           static_cast<qsizetype>(raw.len().to_primitive()));
+    return manager->sendCustomRequest(request, verb, payload);
 }
 
 class QtNetworkManagerRouter : public QObject {
@@ -394,7 +391,7 @@ public:
         }
     }
 
-    void start(Arc<OperationState> state, rstd::Option<Bytes> body) {
+    void start(Arc<OperationState> state) {
         ensure_manager();
 
         auto manager_result = m_router->manager_for(state->request);
@@ -412,8 +409,7 @@ public:
             return;
         }
 
-        auto* reply =
-            send_request(manager, rstd::move(request).unwrap(), state->operation, rstd::move(body));
+        auto* reply = send_request(manager, rstd::move(request).unwrap(), state->request);
 
         if (reply == nullptr) {
             fail_start(rstd::move(state), Error::InvalidState("Qt did not create a reply"));
@@ -537,17 +533,15 @@ public:
         }
     }
 
-    auto start(const Arc<OperationState>& state, rstd::Option<Bytes> body) -> bool {
+    auto start(const Arc<OperationState>& state) -> bool {
         if (m_worker == nullptr || ! m_thread.isRunning()) {
             return false;
         }
 
-        auto body_state = Arc<rstd::Option<Bytes>>::make(rstd::move(body));
         return QMetaObject::invokeMethod(
             m_worker,
-            [worker  = m_worker,
-             capture = make_clone_tuple(state.clone(), rstd::move(body_state))]() mutable {
-                worker->start(rstd::move(capture.get<0>()), rstd::move(*capture.get<1>()));
+            [worker = m_worker, capture = make_clone_tuple(state.clone())]() mutable {
+                worker->start(rstd::move(capture.get<0>()));
             },
             Qt::QueuedConnection);
     }
@@ -614,20 +608,14 @@ public:
         return Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
     }
 
-    auto start_request(const Request& req, Operation operation, rstd::Option<Bytes> body)
-        -> coro<Result<ResponseBackend>>;
-
-    auto get(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request& req) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>>;
+    auto start_request(Request req) -> coro<Result<ResponseBackend>>;
 
     void set_proxy(const req_opt::Proxy&);
     void set_verify_certificate(bool);
 
 private:
-    auto prepare_req(const Request&) const -> Request;
-    auto start_request_direct(const Request&, Operation, rstd::Option<Bytes>)
-        -> coro<Result<ResponseBackend>>;
+    auto prepare_req(Request) const -> Request;
+    auto start_request_direct(Request) -> coro<Result<ResponseBackend>>;
 
 private:
     Option<Arc<QtNetworkDriver>>     m_driver;
@@ -646,9 +634,7 @@ public:
 
     ~ResponseBackend() noexcept { cancel(); }
     ResponseBackend(ResponseBackend&& other) noexcept
-        : m_req(rstd::move(other.m_req)),
-          m_operation(other.m_operation),
-          m_state(rstd::move(other.m_state)),
+        : m_state(rstd::move(other.m_state)),
           m_body(other.m_body.take()),
           m_header(other.m_header.take()) {}
 
@@ -656,11 +642,9 @@ public:
         if (this == &other) return *this;
 
         cancel();
-        m_req       = rstd::move(other.m_req);
-        m_operation = other.m_operation;
-        m_state     = rstd::move(other.m_state);
-        m_body      = other.m_body.take();
-        m_header    = other.m_header.take();
+        m_state  = rstd::move(other.m_state);
+        m_body   = other.m_body.take();
+        m_header = other.m_header.take();
         return *this;
     }
 
@@ -684,8 +668,7 @@ public:
     auto next_chunk() -> coro<Result<rstd::Option<Bytes>>>;
     auto ready_head() -> coro<Result<rstd::empty>>;
     auto is_finished() const -> bool { return ! m_state || m_state->finished.load(); }
-    auto request() const -> const Request& { return m_req; }
-    auto operation() const -> Operation { return m_operation; }
+    auto request() const -> const Request& { return m_state->request; }
 
     void cancel() {
         if (m_state) m_state->cancel();
@@ -693,21 +676,15 @@ public:
 
 private:
     ResponseBackend(Arc<OperationState> state, CompletionQueue<BodyEvent> body)
-        : m_req(state->request.clone()),
-          m_operation(state->operation),
-          m_state(rstd::move(state)),
-          m_body(Some(rstd::move(body))) {}
+        : m_state(rstd::move(state)), m_body(Some(rstd::move(body))) {}
 
-    Request                                  m_req;
-    Operation                                m_operation;
     Arc<OperationState>                      m_state;
     rstd::Option<CompletionQueue<BodyEvent>> m_body;
     rstd::Option<lihttpto::MessageHead>      m_header;
     lihttpto::Headers                        m_empty_header;
 };
 
-auto SessionBackend::prepare_req(const Request& req) const -> Request {
-    auto out = req.clone();
+auto SessionBackend::prepare_req(Request out) const -> Request {
     if (m_proxy) out.set_opt(m_proxy.clone().unwrap());
     out.get_opt<req_opt::SSL>().verify_certificate = m_verify_certificate;
     return out;
@@ -727,9 +704,7 @@ void SessionBackend::close() {
     }
 }
 
-auto SessionBackend::start_request_direct(const Request& req, Operation operation,
-                                          rstd::Option<Bytes> body)
-    -> coro<Result<ResponseBackend>> {
+auto SessionBackend::start_request_direct(Request req) -> coro<Result<ResponseBackend>> {
     if (m_executor.is_none()) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt executor is unavailable")));
     }
@@ -752,7 +727,7 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt executor rejected request")));
     }
 
-    auto  prepared = prepare_req(req);
+    auto  prepared = prepare_req(rstd::move(req));
     auto* router   = m_router.data();
     if (router == nullptr) {
         co_return Result<ResponseBackend>(
@@ -781,14 +756,13 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
     }
 
     auto state = Arc<OperationState>::make(rstd::move(prepared),
-                                           operation,
                                            Weak<QtNetworkDriver>::make(),
                                            Some(m_executor->clone()),
                                            rstd::move(proxy),
                                            rstd::move(ready_pair.get<1>()),
                                            rstd::move(body_pair.get<1>()));
 
-    auto* reply = send_request(manager, rstd::move(request).unwrap(), operation, rstd::move(body));
+    auto* reply = send_request(manager, rstd::move(request).unwrap(), state->request);
 
     if (reply == nullptr) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt did not create a reply")));
@@ -841,13 +815,14 @@ auto SessionBackend::start_request_direct(const Request& req, Operation operatio
         Ok(ResponseBackend(rstd::move(state), rstd::move(body_pair.get<0>()))));
 }
 
-auto SessionBackend::start_request(const Request& req, Operation operation,
-                                   rstd::Option<Bytes> body) -> coro<Result<ResponseBackend>> {
+auto SessionBackend::start_request(Request req) -> coro<Result<ResponseBackend>> {
+    if (req.get_opt<req_opt::Read>().callback)
+        co_return Err(Error::Unsupported("Qt Network does not support read callbacks"));
     if (m_driver.is_none()) {
-        co_return co_await start_request_direct(req, operation, rstd::move(body));
+        co_return co_await start_request_direct(rstd::move(req));
     }
 
-    auto prepared = prepare_req(req);
+    auto prepared = prepare_req(rstd::move(req));
 
     auto proxy = rstd::Option<req_opt::Proxy> {};
     if (m_proxy) {
@@ -869,14 +844,13 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
     auto body_pair = rstd::move(body_completion).unwrap_unchecked();
 
     auto state = Arc<OperationState>::make(rstd::move(prepared),
-                                           operation,
                                            m_driver->downgrade(),
                                            None<AnyExecutor>(),
                                            rstd::move(proxy),
                                            rstd::move(ready_pair.get<1>()),
                                            rstd::move(body_pair.get<1>()));
 
-    if (! (*m_driver)->start(state, rstd::move(body))) {
+    if (! (*m_driver)->start(state)) {
         state->close_body();
         co_return Result<ResponseBackend>(
             Err(Error::InvalidState("Qt network driver is not running")));
@@ -893,28 +867,6 @@ auto SessionBackend::start_request(const Request& req, Operation operation,
 
     co_return Result<ResponseBackend>(
         Ok(ResponseBackend(rstd::move(state), rstd::move(body_pair.get<0>()))));
-}
-
-auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, Operation::Get(), None<Bytes>());
-    if (res.is_err()) {
-        co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
-    }
-    co_return Result<Arc<ResponseBackend>>(
-        Ok(Arc<ResponseBackend>::make(rstd::move(res).unwrap())));
-}
-
-auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    co_return co_await post(req, Bytes::make());
-}
-
-auto SessionBackend::post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = co_await start_request(req, Operation::Post(), Some(rstd::move(body)));
-    if (res.is_err()) {
-        co_return Result<Arc<ResponseBackend>>(Err(rstd::move(res).unwrap_err()));
-    }
-    co_return Result<Arc<ResponseBackend>>(
-        Ok(Arc<ResponseBackend>::make(rstd::move(res).unwrap())));
 }
 
 void SessionBackend::set_proxy(const req_opt::Proxy& proxy) { m_proxy = Some(proxy.clone()); }

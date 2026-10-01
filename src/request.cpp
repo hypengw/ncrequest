@@ -10,6 +10,8 @@ import ncrequest.curl;
 #endif
 
 using namespace ncrequest;
+using namespace rstd::literals;
+using rstd::bytes::Bytes;
 using rstd::clone::Clone;
 using rstd::cppstd::as_str;
 using rstd::cppstd::as_string_view;
@@ -29,7 +31,8 @@ auto ncrequest::global_init(memory_resource* resource) -> Result<rstd::empty> {
 }
 
 Request::Request() noexcept
-    : m_opts { req_opt::Timeout {
+    : m_method(lihttpto::Method::parse("GET"_str).unwrap()),
+      m_opts { req_opt::Timeout {
                    .low_speed = i64(30), .connect_timeout = i64(180), .transfer_timeout = i64() },
                req_opt::Proxy {},
                req_opt::Tcp { .keepalive = false, .keepidle = i64(120), .keepintvl = i64(60) },
@@ -45,6 +48,39 @@ auto Request::from_url(rstd::ref<rstd::str> input) -> rstd::Result<Request, liht
     auto parsed = lihttpto::Url::parse_http(input);
     if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
     return rstd::Ok(Request { rstd::move(parsed).unwrap() });
+}
+
+auto Request::method() const -> const lihttpto::Method& { return m_method; }
+auto Request::set_method(lihttpto::Method method) -> Request& {
+    m_method = rstd::move(method);
+    return *this;
+}
+auto Request::try_set_method(rstd::ref<rstd::str> method)
+    -> rstd::Result<rstd::empty, lihttpto::HttpParseError> {
+    auto parsed = lihttpto::Method::parse(method);
+    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+    m_method = rstd::move(parsed).unwrap();
+    return Ok(rstd::empty {});
+}
+auto Request::body() const -> const rstd::Option<Bytes>& { return m_body; }
+auto Request::set_body(Bytes body) -> Request& {
+    m_body = Some(rstd::move(body));
+    return *this;
+}
+auto Request::clear_body() -> Request& {
+    m_body = None();
+    return *this;
+}
+auto Request::validate() const -> Result<rstd::empty> {
+    if (m_url.as_ref().size() == usize()) return Err(Error::InvalidState("request URL is empty"));
+    const auto& reader = get_opt<req_opt::Read>();
+    if (reader.callback && m_body.is_some())
+        return Err(Error::InvalidState("request cannot combine byte body and read callback"));
+    if (reader.callback && m_method.as_ref() != "POST"_str)
+        return Err(Error::Unsupported("read callback requires POST"));
+    if (m_method.as_ref() == "HEAD"_str && m_body.is_some() && m_body->size() != usize())
+        return Err(Error::InvalidState("HEAD request cannot contain a body"));
+    return Ok(rstd::empty {});
 }
 
 std::string_view Request::url() const { return as_string_view(m_url.as_ref()); }
@@ -102,6 +138,8 @@ void Request::set_opt(RequestOpt&& opt) {
 auto Request::clone() const -> ncrequest::Request {
     auto  req    = ncrequest::Request {};
     auto& self   = *this;
+    req.m_method = self.m_method.clone();
+    if (self.m_body.is_some()) req.m_body = Some(Bytes::copy_from_slice(self.m_body->as_slice()));
     req.m_url    = self.m_url.clone();
     req.m_header = self.m_header.clone();
     req.m_opts   = as<Clone>(self.m_opts).clone();

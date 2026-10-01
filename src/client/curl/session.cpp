@@ -81,16 +81,16 @@ SessionBackend::~SessionBackend() {
 
 auto SessionBackend::allocator() -> polymorphic_allocator<byte> { return { (m_d->m_memory) }; }
 
-auto SessionBackend::prepare_req(const Request& req) const -> Request {
-    Request o { req.clone() };
+auto SessionBackend::prepare_req(Request o) const -> Request {
     if (m_d->m_proxy) o.set_opt(m_d->m_proxy.clone().unwrap());
     if (m_d->m_ignore_certificate) o.get_opt<req_opt::SSL>().verify_certificate = false;
     return o;
 }
 
 auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::empty>> {
-    auto& con = rsp->connection();
-    rsp->prepare_perform();
+    auto& con      = rsp->connection();
+    auto  prepared = rsp->prepare_perform();
+    if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
 
     auto msg = SessionMessage::ConnectAction(con.get_arc(), sm::Action::Add);
     if (! channel().try_send(rstd::move(msg))) co_return Err(Error::Canceled());
@@ -103,51 +103,11 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
     co_return Result<rstd::empty>(Ok(rstd::empty {}));
 }
 
-auto SessionBackend::start_request(const Request& req, Operation operation,
-                                   rstd::Option<Bytes> body) -> coro<Result<ResponseBackend>> {
-    Arc<ResponseBackend> res = ResponseBackend::make_response(prepare_req(req), operation, *this);
-    if (body.is_some()) {
-        res->add_send_buffer(rstd::move(body).unwrap_unchecked());
-    }
-
+auto SessionBackend::start_request(Request req) -> coro<Result<ResponseBackend>> {
+    auto res       = ResponseBackend::make_response(prepare_req(rstd::move(req)), *this);
     auto performed = co_await perform(res);
-    if (performed.is_err()) {
-        co_return Result<ResponseBackend>(Err(rstd::move(performed).unwrap_err()));
-    }
-
-    co_return Result<ResponseBackend>(Ok(rstd::move(*res)));
-}
-
-auto SessionBackend::get(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    auto res = ResponseBackend::make_response(prepare_req(req), Operation::Get(), *this);
-
-    auto performed = co_await perform(res);
-    if (performed.is_ok()) {
-        co_return Result<Arc<ResponseBackend>>(Ok(rstd::move(res)));
-    }
-    co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
-}
-
-auto SessionBackend::post(const Request& req) -> coro<Result<Arc<ResponseBackend>>> {
-    Arc<ResponseBackend> res =
-        ResponseBackend::make_response(prepare_req(req), Operation::Post(), *this);
-    auto performed = co_await perform(res);
-    if (performed.is_ok()) {
-        co_return Result<Arc<ResponseBackend>>(Ok(rstd::move(res)));
-    }
-    co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
-}
-
-auto SessionBackend::post(const Request& req, Bytes body) -> coro<Result<Arc<ResponseBackend>>> {
-    Arc<ResponseBackend> res =
-        ResponseBackend::make_response(prepare_req(req), Operation::Post(), *this);
-    res->add_send_buffer(rstd::move(body));
-
-    auto performed = co_await perform(res);
-    if (performed.is_ok()) {
-        co_return Result<Arc<ResponseBackend>>(Ok(rstd::move(res)));
-    }
-    co_return Result<Arc<ResponseBackend>>(Err(rstd::move(performed).unwrap_err()));
+    if (performed.is_err()) co_return Err(rstd::move(performed).unwrap_err());
+    co_return Ok(rstd::move(*res));
 }
 
 SessionBackend::Private::Private(memory_resource* mem_pool, CurlOptions options) noexcept

@@ -33,12 +33,7 @@ public:
 
     void start();
 
-    auto start_request(const Request&, Operation, rstd::Option<Bytes>)
-        -> coro<Result<ResponseBackend>>;
-
-    auto get(const Request&) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request&) -> coro<Result<Arc<ResponseBackend>>>;
-    auto post(const Request&, Bytes) -> coro<Result<Arc<ResponseBackend>>>;
+    auto start_request(Request) -> coro<Result<ResponseBackend>>;
 
     auto cookies() -> Vec<String>;
     void load_cookie(ref<Path> path);
@@ -55,7 +50,7 @@ public:
 
 private:
     auto perform(Arc<ResponseBackend>&) -> coro<Result<rstd::empty>>;
-    auto prepare_req(const Request&) const -> Request;
+    auto prepare_req(Request) const -> Request;
 
     Box<Private> m_d;
 };

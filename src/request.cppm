@@ -13,6 +13,7 @@ export import :error;
 export import :session_share;
 export import ncrequest.type;
 
+using rstd::bytes::Bytes;
 using rstd::clone::Clone;
 using rstd::mtp::decay;
 using rstd::mtp::same_as;
@@ -20,10 +21,6 @@ using std::pmr::memory_resource;
 
 namespace ncrequest
 {
-
-export struct Operation {
-    RSTD_ENUM(Operation, (Get), (Post), (Delete), (Head))
-};
 
 namespace req_opt
 {
@@ -107,6 +104,15 @@ public:
     [[nodiscard]]
     static auto from_url(rstd::ref<rstd::str>) -> rstd::Result<Request, lihttpto::UrlError>;
 
+    auto method() const -> const lihttpto::Method&;
+    auto set_method(lihttpto::Method method) -> Request&;
+    auto try_set_method(rstd::ref<rstd::str> method)
+        -> rstd::Result<rstd::empty, lihttpto::HttpParseError>;
+    auto body() const -> const rstd::Option<Bytes>&;
+    auto set_body(Bytes body) -> Request&;
+    auto clear_body() -> Request&;
+    auto validate() const -> Result<rstd::empty>;
+
     auto url() const -> std::string_view;
     auto url_info() const -> const lihttpto::Url&;
     auto try_set_url(rstd::ref<rstd::str>) -> rstd::Result<rstd::empty, lihttpto::UrlError>;
@@ -140,9 +146,11 @@ public:
     auto clone() const -> ncrequest::Request;
 
 private:
-    lihttpto::Url     m_url;
-    lihttpto::Headers m_header;
-    RequestOpts       m_opts;
+    lihttpto::Method    m_method;
+    rstd::Option<Bytes> m_body;
+    lihttpto::Url       m_url;
+    lihttpto::Headers   m_header;
+    RequestOpts         m_opts;
 };
 
 } // namespace ncrequest

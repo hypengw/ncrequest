@@ -228,18 +228,20 @@ public:
         Allocator     m_alloc;
     };
 
-    static auto make(Arc<SessionChannel> session_channel, allocator_type allocator)
+    static auto make(Request request, Arc<SessionChannel> session_channel, allocator_type allocator)
         -> Arc<Connection> {
-        auto connection    = Arc<Connection>::make(rstd::move(session_channel), allocator);
+        auto connection =
+            Arc<Connection>::make(rstd::move(request), rstd::move(session_channel), allocator);
         connection->m_self = connection.downgrade();
         return connection;
     }
 
-    Connection(Arc<SessionChannel> session_channel, allocator_type allocator)
+    Connection(Request request, Arc<SessionChannel> session_channel, allocator_type allocator)
         : m_finish_ec(CURLcode::CURLE_OK),
           m_state(State::NotStarted),
           m_recv_paused(false),
           m_send_paused(false),
+          m_request(rstd::move(request)),
           m_easy(Box<CurlEasy>::make()),
           m_session_channel(rstd::move(session_channel)),
           m_recv_buf(RECV_LIMIT, allocator),
@@ -265,6 +267,7 @@ public:
     }
 
     auto& easy() { return *m_easy; }
+    auto  request() const -> const Request& { return m_request; }
     auto& easy() const { return *m_easy; }
     auto& channel() { return m_session_channel; }
 
@@ -661,6 +664,8 @@ private:
     Atomic<bool> m_recv_paused;
     Atomic<bool> m_send_paused;
 
+    // Keep upload bytes and callbacks alive until easy cleanup, including queued cancellation.
+    Request             m_request;
     Box<CurlEasy>       m_easy;
     Arc<SessionChannel> m_session_channel;
 

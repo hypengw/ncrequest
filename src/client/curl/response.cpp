@@ -1,5 +1,6 @@
 module;
 #include <curl/curl.h>
+#include <limits>
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;
@@ -7,6 +8,7 @@ import :session_share_backend;
 import ncrequest.coro;
 import rstd.cppstd;
 
+using namespace rstd::literals;
 using rstd::async::yield_now;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
@@ -20,7 +22,7 @@ namespace ncrequest::client::curl
 namespace
 {
 
-void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Request& req) {
+void apply_easy_request(CurlEasy& easy, const Request& req) {
     auto url_bytes = Vec<u8>::make();
     url_bytes.extend_from_slice(req.url_info().as_ref().as_bytes());
     auto url = CString::from_vec_unchecked(rstd::move(url_bytes));
@@ -59,44 +61,23 @@ void apply_easy_request(ResponseBackend::Inner* rsp, CurlEasy& easy, const Reque
             easy.setopt<CURLoption::CURLOPT_SHARE>(
                 detail::SessionShareAccess::curl_handle(*p.share));
         }
-        rsp->set_share(p.share.clone());
     }
     easy.set_header(req.header());
 }
 
 } // namespace
 
-ResponseBackend::Inner::Inner(ResponseBackend* res, const Request& req, Operation oper,
-                              SessionBackend& ses)
+ResponseBackend::Inner::Inner(ResponseBackend* res, Request req, SessionBackend& ses)
     : m_q(res),
-      m_req(req.clone()),
-      m_operation(oper),
       m_finished(false),
-      m_connect(Connection::make(ses.channel_rc(), ses.allocator())),
+      m_connect(Connection::make(rstd::move(req), ses.channel_rc(), ses.allocator())),
       m_allocator(ses.allocator()) {}
 
-ResponseBackend::ResponseBackend(const Request& req, Operation oper, SessionBackend& ses) noexcept
-    : m_inner(Arc<Inner>::make(this, req, oper, ses)) {
-    auto* d    = m_inner.as_ptr().as_raw_ptr();
-    auto& easy = connection().easy();
-    switch (oper.tag()) {
-    case Operation::Tag::Get: break;
-    case Operation::Tag::Post:
-        easy.setopt(CURLoption::CURLOPT_POST, 1);
-        easy.setopt(CURLoption::CURLOPT_POSTFIELDS, nullptr);
-        easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(0));
-        break;
-    case Operation::Tag::Delete:
-    case Operation::Tag::Head:
-    default: break;
-    }
-    apply_easy_request(d, easy, req);
-    {
-        auto& p = req.get_opt<req_opt::Read>();
-        if (p.callback) {
-            connection().set_send_callback(p.callback);
-        }
-    }
+ResponseBackend::ResponseBackend(Request req, SessionBackend& ses) noexcept
+    : m_inner(Arc<Inner>::make(this, rstd::move(req), ses)) {
+    apply_easy_request(connection().easy(), request());
+    auto& reader = request().get_opt<req_opt::Read>();
+    if (reader.callback) connection().set_send_callback(reader.callback);
 }
 
 ResponseBackend::ResponseBackend(ResponseBackend&& other) noexcept
@@ -123,12 +104,11 @@ auto ResponseBackend::allocator() const -> const polymorphic_allocator<char>& {
     return m_inner->m_allocator;
 }
 
-Arc<ResponseBackend> ResponseBackend::make_response(const Request& req, Operation oper,
-                                                    SessionBackend& ses) {
-    return Arc<ResponseBackend>::make(req, oper, ses);
+Arc<ResponseBackend> ResponseBackend::make_response(Request req, SessionBackend& ses) {
+    return Arc<ResponseBackend>::make(rstd::move(req), ses);
 }
 
-const Request& ResponseBackend::request() const { return m_inner->m_req; }
+const Request& ResponseBackend::request() const { return connection().request(); }
 
 bool ResponseBackend::pause_send(bool pause) {
     connection().send_action(pause ? Connection::Action::PauseSend
@@ -141,34 +121,49 @@ bool ResponseBackend::pause_recv(bool pause) {
     return true;
 }
 
-void ResponseBackend::add_send_buffer(Bytes buf) { m_inner->m_send_buffer = rstd::move(buf); }
-
-void ResponseBackend::prepare_perform() {
-    auto& easy = connection().easy();
-
-    switch (m_inner->m_operation.tag()) {
-    case Operation::Tag::Get: break;
-    case Operation::Tag::Post: {
-        auto& p = m_inner->m_req.get_opt<req_opt::Read>();
-        if (p.callback) {
-            auto size = p.size == usize() ? static_cast<curl_off_t>(-1)
-                                          : static_cast<curl_off_t>(p.size.to_primitive());
-            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE, size);
+auto ResponseBackend::prepare_perform() -> Result<rstd::empty> {
+    auto&    easy   = connection().easy();
+    auto&    req    = request();
+    auto     method = req.method().as_ref();
+    auto&    body   = req.body();
+    auto&    reader = req.get_opt<req_opt::Read>();
+    CURLcode code   = CURLE_OK;
+    auto     set    = [&](CURLoption option, auto value) {
+        if (code == CURLE_OK) code = easy.setopt(option, value);
+    };
+    if (method == "HEAD"_str) {
+        set(CURLOPT_NOBODY, 1L);
+    } else if (method == "POST"_str || body.is_some()) {
+        set(CURLOPT_POST, 1L);
+        if (reader.callback) {
+            if (reader.size.to_primitive() > std::numeric_limits<curl_off_t>::max())
+                return Err(Error::InvalidState("request body is too large"));
+            set(CURLOPT_POSTFIELDS, static_cast<const char*>(nullptr));
+            set(CURLOPT_POSTFIELDSIZE_LARGE,
+                reader.size == usize() ? static_cast<curl_off_t>(-1)
+                                       : static_cast<curl_off_t>(reader.size.to_primitive()));
         } else {
-            auto& send_buffer = m_inner->m_send_buffer;
-            easy.setopt(CURLoption::CURLOPT_POSTFIELDS, send_buffer.data());
-            easy.setopt(CURLoption::CURLOPT_POSTFIELDSIZE_LARGE,
-                        static_cast<curl_off_t>(send_buffer.size().to_primitive()));
+            auto size = body.is_some() ? body->size().to_primitive() : 0;
+            if (size > std::numeric_limits<curl_off_t>::max())
+                return Err(Error::InvalidState("request body is too large"));
+            set(CURLOPT_POSTFIELDS, size ? reinterpret_cast<const char*>(body->data()) : "");
+            set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(size));
         }
-        break;
+    } else {
+        set(CURLOPT_HTTPGET, 1L);
     }
-    case Operation::Tag::Delete:
-    case Operation::Tag::Head:
-    default: break;
+    if (method != "POST"_str && method != "HEAD"_str && (method != "GET"_str || body.is_some())) {
+        auto bytes = Vec<u8>::make();
+        bytes.extend_from_slice(method.as_bytes());
+        auto token = CString::from_vec_unchecked(rstd::move(bytes));
+        set(CURLOPT_CUSTOMREQUEST, token.as_ptr());
     }
+    if (code != CURLE_OK) {
+        return Err(Error::Client(ClientError {
+            ClientBackend::Curl, i32(static_cast<int>(code)), curl_easy_strerror(code) }));
+    }
+    return Ok(rstd::empty {});
 }
-
-auto ResponseBackend::operation() const -> Operation { return m_inner->m_operation; }
 
 bool ResponseBackend::is_finished() const {
     if (! m_inner) return true;

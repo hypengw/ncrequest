@@ -1365,3 +1365,102 @@ TEST(http, LocalHttpBodyErrorIsNotEof) {
         return zero_limit_empty_body(rstd::move(session), url);
     }));
 }
+
+namespace {
+auto send_method(ncrequest::Arc<ncrequest::Session> session, std::string url,
+                 std::string method, int body_kind) -> ncrequest::coro<bool> {
+    auto payload = body_kind == 2 ? std::string("one\0two", 7) : std::string {};
+    auto pending = [&] {
+        auto request = make_request(url);
+        request.try_set_method(as_rstd_str(method)).unwrap();
+        if (body_kind != 0) request.set_body(bytes_from_string(payload));
+        return session->send(rstd::move(request));
+    }();
+    auto result = co_await rstd::move(pending);
+    if (result.is_err()) co_return false;
+    auto response = rstd::move(result).unwrap();
+    if (response_code(response) != 200) co_return false;
+    auto bytes = co_await response->bytes();
+    if (bytes.is_err()) co_return false;
+    auto received = string_from_bytes(rstd::move(bytes).unwrap());
+    if (method == "HEAD")
+        co_return received.empty() && response->header().contains("x-ncrequest-method"_str);
+    co_return received == method + "\n" + payload;
+}
+
+auto reject_invalid_request(ncrequest::Arc<ncrequest::Session> session)
+    -> ncrequest::coro<bool> {
+    auto missing_url = co_await session->send(ncrequest::Request {});
+    if (missing_url.is_ok() || !missing_url.unwrap_err().is_InvalidState()) co_return false;
+    auto head = make_request("http://127.0.0.1:1/");
+    head.try_set_method("HEAD"_str).unwrap();
+    head.set_body(bytes_from_string("body"));
+    auto response = co_await session->send(rstd::move(head));
+    co_return response.is_err() && response.unwrap_err().is_InvalidState();
+}
+
+auto abort_owned_upload(ncrequest::Arc<ncrequest::Session> session, std::string base)
+    -> ncrequest::coro<bool> {
+    auto pending = [&] {
+        auto request = make_request(local_http_url(base, "/slow-upload"));
+        request.try_set_method("POST"_str).unwrap();
+        request.set_body(bytes_from_string(std::string(8 * 1024 * 1024, 'x')));
+        return spawn_local(session->send(rstd::move(request)));
+    }();
+    co_await sleep(Duration::from_millis(u64(20)));
+    pending.abort();
+    auto canceled = co_await rstd::move(pending);
+    if (canceled.is_ok()) co_return false;
+    co_return co_await send_method(rstd::move(session), local_http_url(base, "/method"), "POST", 2);
+}
+}
+
+TEST(http, RequestMethodAndOwnedBody) {
+    auto request = make_request("http://127.0.0.1/");
+    EXPECT_EQ(as_string_view(request.method().as_ref()), "GET");
+    ASSERT_TRUE(request.try_set_method("REPORT"_str).is_ok());
+    for (auto invalid : {"", "GET /", "POST\r\nX: injected"}) {
+        EXPECT_TRUE(request.try_set_method(as_rstd_str(invalid)).is_err());
+        EXPECT_EQ(as_string_view(request.method().as_ref()), "REPORT");
+    }
+    request.set_method(lihttpto::Method::parse("PATCH"_str).unwrap());
+    request.set_body(bytes_from_string("owned"));
+    auto cloned = request.clone();
+    request.clear_body();
+    EXPECT_TRUE(request.body().is_none());
+    ASSERT_TRUE(cloned.body().is_some());
+    EXPECT_EQ(as_string_view(cloned.method().as_ref()), "PATCH");
+    EXPECT_EQ(string_from_bytes(Bytes::copy_from_slice(cloned.body()->as_slice())), "owned");
+    EXPECT_TRUE(cloned.validate().is_ok());
+    cloned.get_opt<Read>().callback = [](byte*, usize) { return usize(); };
+    EXPECT_TRUE(cloned.validate().is_err());
+    cloned.clear_body();
+    EXPECT_TRUE(cloned.validate().unwrap_err().is_Unsupported());
+}
+
+TEST(http, LocalHttpMethodAndBodyMatrix) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    for (auto method : {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "REPORT", "HEAD"}) {
+        for (int body_kind = 0; body_kind != (std::string_view(method) == "HEAD" ? 2 : 3); ++body_kind) {
+            SCOPED_TRACE(std::string(method) + " body " + std::to_string(body_kind));
+            EXPECT_TRUE(run_http([url = local_http_url(base, "/method"), method, body_kind](auto session) {
+                return send_method(rstd::move(session), url, method, body_kind);
+            }));
+        }
+    }
+}
+
+TEST(http, RequestValidationBeforeNetwork) {
+    EXPECT_TRUE(run_http([](auto session) {
+        return reject_invalid_request(rstd::move(session));
+    }));
+}
+
+TEST(http, LocalHttpAbortOwnedUpload) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([base](auto session) {
+        return abort_owned_upload(rstd::move(session), base);
+    }));
+}

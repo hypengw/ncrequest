@@ -86,7 +86,27 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
+    def method_echo(self) -> None:
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.send_payload(HTTPStatus.OK, self.command.encode("ascii") + b"\n" + body)
+
+    def do_HEAD(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Length", "123")
+        self.send_header("X-Ncrequest-Method", "HEAD")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    do_PUT = method_echo
+    do_PATCH = method_echo
+    do_DELETE = method_echo
+    do_OPTIONS = method_echo
+    do_REPORT = method_echo
+
     def do_GET(self) -> None:
+        if self.path == "/method":
+            self.method_echo()
+            return
         target = urlsplit(self.path)
 
         if target.path == "/delayed-body":
@@ -243,6 +263,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
 
     def do_POST(self) -> None:
+        if self.path == "/slow-upload":
+            remaining = int(self.headers.get("Content-Length", "0"))
+            try:
+                while remaining:
+                    chunk = self.rfile.read(min(4096, remaining))
+                    if not chunk:
+                        return
+                    remaining -= len(chunk)
+                    time.sleep(0.005)
+            except (ConnectionResetError, OSError):
+                return
+            self.send_payload(HTTPStatus.OK, b"uploaded")
+            return
+        if self.path == "/method":
+            self.method_echo()
+            return
         if self.path not in ("/echo", "/upload"):
             self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
             return
