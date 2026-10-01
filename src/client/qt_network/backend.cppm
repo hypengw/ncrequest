@@ -600,6 +600,7 @@ public:
     }
 
     ~SessionBackend();
+    void close();
 
     template<typename... Args>
     static auto make(Args&&... args) -> Arc<SessionBackend> {
@@ -673,7 +674,8 @@ public:
         return Some<i32>(rstd::as_cast<i32>(*status));
     }
 
-    auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
+    auto next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>>;
+    auto ready_head() -> coro<Result<rstd::empty>>;
     auto is_finished() const -> bool { return ! m_state || m_state->finished.load(); }
     auto request() const -> const Request& { return m_req; }
     auto operation() const -> Operation { return m_operation; }
@@ -704,8 +706,12 @@ auto SessionBackend::prepare_req(const Request& req) const -> Request {
     return out;
 }
 
-SessionBackend::~SessionBackend() {
+SessionBackend::~SessionBackend() { close(); }
+
+void SessionBackend::close() {
+    m_driver     = None();
     auto* router = m_router.data();
+    m_router     = nullptr;
     if (router == nullptr) return;
     if (router->thread() == QThread::currentThread()) {
         delete router;
@@ -910,40 +916,38 @@ void SessionBackend::set_proxy(const req_opt::Proxy& proxy) { m_proxy = Some(pro
 
 void SessionBackend::set_verify_certificate(bool value) { m_verify_certificate = value; }
 
-auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
-    rstd::bytes::BytesMut out = rstd::bytes::BytesMut::with_capacity(ReadSize);
-
-    if (m_body.is_none()) {
-        co_return Result<rstd::bytes::Bytes>(
-            Err(Error::InvalidState("Qt response body queue is unavailable")));
-    }
-
+auto ResponseBackend::ready_head() -> coro<Result<rstd::empty>> {
+    if (m_header.is_some()) co_return Ok(rstd::empty {});
+    if (m_body.is_none())
+        co_return Err(Error::InvalidState("Qt response body queue is unavailable"));
     for (;;) {
         auto next = co_await m_body->next();
-        if (next.is_err()) {
-            co_return Result<rstd::bytes::Bytes>(
-                Err(Error::Io(rstd::move(next).unwrap_err_unchecked())));
-        }
-        auto item = rstd::move(next).unwrap_unchecked();
-        if (item.is_none()) {
-            co_return Result<rstd::bytes::Bytes>(
-                Err(Error::InvalidState("Qt response body ended without finished event")));
-        }
+        if (next.is_err()) co_return Err(Error::Io(rstd::move(next).unwrap_err()));
+        auto item = rstd::move(next).unwrap();
+        if (item.is_none()) co_return Err(Error::Protocol(ProtocolError::UnexpectedEof, nullptr));
+        auto event = rstd::move(item).unwrap();
+        if (event.is_Failed()) co_return Err(rstd::move(event).as_Failed().value);
+        if (! event.is_Header())
+            co_return Err(Error::InvalidState("Qt response body arrived before headers"));
+        m_header = Some(rstd::move(event).as_Header().value);
+        co_return Ok(rstd::empty {});
+    }
+}
 
-        auto event = rstd::move(item).unwrap_unchecked();
-        if (event.is_Header()) {
-            m_header = Some(rstd::move(event).as_Header().value);
-            continue;
-        }
-        if (event.is_Chunk()) {
-            auto chunk = rstd::move(event).as_Chunk().value;
-            out.extend_from_slice(chunk.as_slice());
-            continue;
-        }
-        if (event.is_Finished()) {
-            co_return Result<rstd::bytes::Bytes>(Ok(out.freeze()));
-        }
-        co_return Result<rstd::bytes::Bytes>(Err(rstd::move(event).as_Failed().value));
+auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>> {
+    if (m_body.is_none())
+        co_return Err(Error::InvalidState("Qt response body queue is unavailable"));
+    for (;;) {
+        auto next = co_await m_body->next();
+        if (next.is_err()) co_return Err(Error::Io(rstd::move(next).unwrap_err()));
+        auto item = rstd::move(next).unwrap();
+        if (item.is_none()) co_return Err(Error::Protocol(ProtocolError::UnexpectedEof, nullptr));
+        auto event = rstd::move(item).unwrap();
+        // Metadata notifications may repeat; the published response head is immutable.
+        if (event.is_Header()) continue;
+        if (event.is_Chunk()) co_return Ok(Some(rstd::move(event).as_Chunk().value));
+        if (event.is_Finished()) co_return Ok(None<rstd::bytes::Bytes>());
+        co_return Err(rstd::move(event).as_Failed().value);
     }
 }
 

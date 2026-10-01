@@ -193,28 +193,15 @@ void ResponseBackend::cancel() {
     connection().about_to_cancel();
 }
 
-auto ResponseBackend::bytes() -> coro<Result<rstd::bytes::Bytes>> {
-    rstd::bytes::BytesMut out;
-    auto                  chunk = rstd::bytes::BytesMut::with_capacity(ReadSize);
-
+auto ResponseBackend::next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>> {
+    auto chunk = rstd::bytes::BytesMut::with_capacity(ReadSize);
     for (;;) {
-        chunk.clear();
         auto read = co_await connection().read_some(chunk);
-        if (read.error.is_some()) {
-            co_return Result<rstd::bytes::Bytes>(Err(rstd::move(read.error).unwrap_unchecked()));
-        }
-        if (read.eof) {
-            break;
-        }
-        if (read.size == usize()) {
-            co_await rstd::async::yield_now();
-            continue;
-        }
-
-        out.extend_from_slice(chunk.as_slice());
+        if (read.error.is_some()) co_return Err(read.error.take().unwrap());
+        if (read.eof) co_return Ok(None<rstd::bytes::Bytes>());
+        if (read.size != usize()) co_return Ok(Some(chunk.freeze()));
+        co_await rstd::async::yield_now();
     }
-
-    co_return Result<rstd::bytes::Bytes>(Ok(out.freeze()));
 }
 
 } // namespace ncrequest::client::curl

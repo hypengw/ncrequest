@@ -17,31 +17,52 @@ using SelectedSessionBackend = client::qt_network::SessionBackend;
 using SelectedSessionBackend = client::curl::SessionBackend;
 #endif
 
-static_assert(client::HttpSessionBackend<SelectedSessionBackend, Response::Backend>);
+static_assert(client::HttpSessionBackend<SelectedSessionBackend, SelectedResponseBackend>);
 
-export class Session : public SelectedSessionBackend {
+export class Session : public NoCopy {
+    struct ConstructionKey {};
+    struct State {
+        SelectedSessionBackend           backend;
+        rstd::sync::atomic::Atomic<bool> closed { false };
+        State() = default;
+#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+        explicit State(qt::QObject* parent): backend(parent) {}
+        explicit State(qt::QNetworkAccessManager* manager): backend(manager) {}
+#endif
+        void close() {
+            if (! closed.exchange(true)) backend.close();
+        }
+    };
+    Arc<State> state_;
+
 public:
-    using Backend = SelectedSessionBackend;
+    Session(): state_(Arc<State>::make()) { start_backend(state_->backend); }
+    ~Session() { close(); }
+#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+    Session(ConstructionKey, qt::QObject* parent): state_(Arc<State>::make(parent)) {}
+    Session(ConstructionKey, qt::QNetworkAccessManager* manager)
+        : state_(Arc<State>::make(manager)) {}
+    static auto from_qt_parent(qt::QObject* parent) -> Arc<Session> {
+        return Arc<Session>::make(ConstructionKey {}, parent);
+    }
+    static auto from_qt_manager(qt::QNetworkAccessManager* manager) -> Arc<Session> {
+        return Arc<Session>::make(ConstructionKey {}, manager);
+    }
+#endif
+    void close() { state_->close(); }
 
-    using Backend::Backend;
+    static auto make() -> Arc<Session> { return Arc<Session>::make(); }
 
-    template<typename... Args>
-    static auto make(Args&&... args) -> Arc<Session> {
-        auto session = Arc<Session>::make(rstd::forward<Args>(args)...);
-        start_backend(static_cast<Backend&>(*session));
-        return session;
+    auto get(Request req) -> coro<Result<Arc<Response>>> {
+        return send(state_.clone(), rstd::move(req), Operation::Get(), None<rstd::bytes::Bytes>());
     }
 
-    auto get(const Request& req) -> coro<Result<Arc<Response>>> {
-        co_return co_await send(req, Operation::Get(), None<rstd::bytes::Bytes>());
+    auto post(Request req) -> coro<Result<Arc<Response>>> {
+        return post(rstd::move(req), rstd::bytes::Bytes::make());
     }
 
-    auto post(const Request& req) -> coro<Result<Arc<Response>>> {
-        co_return co_await post(req, rstd::bytes::Bytes::make());
-    }
-
-    auto post(const Request& req, rstd::bytes::Bytes body) -> coro<Result<Arc<Response>>> {
-        co_return co_await send(req, Operation::Post(), Some(rstd::move(body)));
+    auto post(Request req, rstd::bytes::Bytes body) -> coro<Result<Arc<Response>>> {
+        return send(state_.clone(), rstd::move(req), Operation::Post(), Some(rstd::move(body)));
     }
 
 private:
@@ -52,13 +73,17 @@ private:
         }
     }
 
-    auto send(const Request& req, Operation operation, rstd::Option<rstd::bytes::Bytes> body)
-        -> coro<Result<Arc<Response>>> {
-        auto res = co_await this->start_request(req, operation, rstd::move(body));
+    static auto send(Arc<State> state, Request req, Operation operation,
+                     rstd::Option<rstd::bytes::Bytes> body) -> coro<Result<Arc<Response>>> {
+        if (state->closed.load()) co_return Err(Error::Canceled());
+        auto res = co_await state->backend.start_request(req, operation, rstd::move(body));
         if (res.is_err()) {
             co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
         }
-        co_return Result<Arc<Response>>(Ok(Arc<Response>::make(rstd::move(res).unwrap())));
+        auto backend = rstd::move(res).unwrap();
+        auto ready   = co_await backend.ready_head();
+        if (ready.is_err()) co_return Err(rstd::move(ready).unwrap_err());
+        co_return Response::make(rstd::move(backend));
     }
 };
 

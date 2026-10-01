@@ -184,7 +184,7 @@ void record_error(ErrorResult& result, const ncrequest::Error& error) {
 auto fetch_text_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Request req)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
-    auto        rsp = co_await session->get(req);
+    auto        rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
         auto error        = rstd::move(rsp).unwrap_err();
         result.got_error  = true;
@@ -261,7 +261,7 @@ auto fetch_after_request_drop(ncrequest::Arc<ncrequest::Session> session, std::s
     auto response = rstd::Option<ncrequest::Arc<ncrequest::Response>> {};
     {
         auto request = request_with_share(rstd::move(url), share);
-        auto started = co_await session->get(request);
+        auto started = co_await session->get(request.clone());
         if (started.is_err()) {
             result.error = "session returned error";
             co_return result;
@@ -348,7 +348,7 @@ auto fetch_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->get(req);
+    auto        rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -374,7 +374,7 @@ auto post_text(ncrequest::Arc<ncrequest::Session> session, std::string url, std:
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->post(req, bytes_from_string(body));
+    auto        rsp = co_await session->post(req.clone(), bytes_from_string(body));
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -400,7 +400,7 @@ auto post_bytes(ncrequest::Arc<ncrequest::Session> session, std::string url, std
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->post(req, bytes_from_string(body));
+    auto        rsp = co_await session->post(req.clone(), bytes_from_string(body));
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -433,7 +433,7 @@ auto timeout_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Requ
     timeout.transfer_timeout = i64(1);
 #endif
 
-    auto rsp = co_await session->get(req);
+    auto rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
         auto error = rstd::move(rsp).unwrap_err();
         record_error(result, error);
@@ -461,7 +461,7 @@ auto cancel_request(ncrequest::Arc<ncrequest::Session> session, ncrequest::Reque
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
 
-    auto rsp = co_await session->get(req);
+    auto rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
         result.error = "session returned error before cancel";
         co_return result;
@@ -488,11 +488,11 @@ auto fetch_then_cancel(ncrequest::Arc<ncrequest::Session> session, std::string u
 }
 
 #ifdef NCREQUEST_CLIENT_BACKEND_CURL
-auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url)
+auto curl_slow_consumer(ncrequest::Arc<ncrequest::Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
     auto        req = make_request(url);
-    auto        rsp = co_await session->get(req);
+    auto        rsp = co_await session->get(req.clone());
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -500,12 +500,11 @@ auto curl_pause_recv(ncrequest::Arc<ncrequest::Session> session, std::string url
 
     auto response       = rstd::move(rsp).unwrap();
     result.got_response = true;
-    response->pause_recv(true);
+    auto body = response->take_body().unwrap();
     co_await rstd::async::sleep(rstd::time::Duration::from_millis(rstd::u64(350)));
     result.finished_while_paused = response->is_finished();
-    response->pause_recv(false);
 
-    auto bytes = co_await response->bytes();
+    auto bytes = co_await body.collect();
     if (bytes.is_err()) {
         result.error = "response bytes read failed after pause";
         co_return result;
@@ -538,7 +537,7 @@ auto curl_streaming_upload(ncrequest::Arc<ncrequest::Session> session, std::stri
         return copied;
     };
 
-    auto rsp = co_await session->post(req);
+    auto rsp = co_await session->post(req.clone());
     if (rsp.is_err()) {
         result.error = "session returned error";
         co_return result;
@@ -1037,9 +1036,9 @@ TEST(http, LocalHttpCancel) {
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Canceled);
 }
 
-TEST(http, LocalHttpCurlPauseRecv) {
+TEST(http, LocalHttpCurlBackpressure) {
 #ifndef NCREQUEST_CLIENT_BACKEND_CURL
-    GTEST_SKIP() << "curl-only recv pause test";
+    GTEST_SKIP() << "curl-only bounded receive queue test";
 #else
     auto base = local_http_base_url();
     if (base.empty()) {
@@ -1047,7 +1046,7 @@ TEST(http, LocalHttpCurlPauseRecv) {
     }
 
     auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
-        return curl_pause_recv(rstd::move(session), url);
+        return curl_slow_consumer(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1078,4 +1077,266 @@ TEST(http, LocalHttpCurlStreamingUpload) {
     EXPECT_EQ(result.body, payload);
     EXPECT_GT(result.upload_callback_count, 1u);
 #endif
+}
+
+static_assert(lihttpto::BodySource<ncrequest::ResponseBody>);
+static_assert(!std::is_copy_constructible_v<ncrequest::ResponseBody>);
+
+namespace
+{
+auto response_before_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto started = std::chrono::steady_clock::now();
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto elapsed = std::chrono::steady_clock::now() - started;
+    auto value = rstd::move(response).unwrap();
+    auto correct = value->head().status.value() == u16(200) &&
+                   value->header().contains("x-ncrequest-test"_str) &&
+                   !value->is_finished() && elapsed < std::chrono::milliseconds(700);
+    auto bytes = co_await value->bytes();
+    co_return correct && bytes.is_ok() && string_from_bytes(*bytes) == "delayed body";
+}
+
+auto owned_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto body = rstd::Option<ncrequest::ResponseBody> {};
+    {
+        auto response = co_await session->get(make_request(url));
+        if (response.is_err()) co_return false;
+        auto value = rstd::move(response).unwrap();
+        body = Some(value->take_body().unwrap());
+        if (value->take_body().is_ok()) co_return false;
+    }
+    std::string contents;
+    std::size_t chunks = 0;
+    for (;;) {
+        auto part = co_await body->next();
+        if (part.is_err()) co_return false;
+        if (part->is_none()) break;
+        ++chunks;
+        contents += string_from_bytes(**part);
+    }
+    auto after_eof = co_await body->next();
+    auto second_collect = co_await body->collect();
+    co_return chunks > 1 && contents == download_body() &&
+              after_eof.is_err() && after_eof.unwrap_err().is_InvalidState() &&
+              second_collect.is_err() && second_collect.unwrap_err().is_InvalidState();
+}
+
+auto limited_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto value = rstd::move(response).unwrap();
+    auto bytes = co_await value->bytes(usize(128));
+    if (bytes.is_ok() || !bytes.unwrap_err().is_Protocol()) co_return false;
+    auto second = co_await value->text();
+    co_return bytes.unwrap_err().as_Protocol().kind == ncrequest::ProtocolError::BodyTooLarge &&
+              second.is_err() && second.unwrap_err().is_InvalidState();
+}
+
+struct StreamingSink {
+    using Error = ncrequest::Error;
+    std::string contents;
+    std::size_t writes {};
+    bool fail {false};
+    auto write(rstd::bytes::Bytes bytes) -> ncrequest::coro<ncrequest::Result<rstd::empty>> {
+        if (fail) co_return Err(Error::InvalidState("sink rejected chunk"));
+        ++writes;
+        contents += string_from_bytes(bytes);
+        co_return Ok(rstd::empty {});
+    }
+};
+
+auto transfer_body_to_sink(ncrequest::Arc<ncrequest::Session> session, std::string url, bool fail)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto value = rstd::move(response).unwrap();
+    StreamingSink sink;
+    sink.fail = fail;
+    auto written = co_await value->read_to_stream(sink);
+    if (fail) co_return written.is_err() && written.unwrap_err().is_Sink();
+    co_return written.is_ok() && written->to_primitive() == download_body().size() &&
+              sink.writes > 1 && sink.contents == download_body();
+}
+
+auto body_drop_cancels(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto value = rstd::move(response).unwrap();
+    {
+        auto body = value->take_body();
+        if (body.is_err()) co_return false;
+    }
+    for (int i = 0; i < 50 && !value->is_finished(); ++i)
+        co_await rstd::async::sleep(rstd::time::Duration::from_millis(u64(10)));
+    co_return value->is_finished();
+}
+}
+
+TEST(http, LocalHttpHeaderBeforeBody) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/delayed-body")](auto session) {
+        return response_before_body(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpOwnedSingleConsumerBody) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/download.bin")](auto session) {
+        return owned_body(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpBodyCollectionLimit) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/download.bin")](auto session) {
+        return limited_body(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpBodySink) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    for (bool fail : {false, true}) {
+        EXPECT_TRUE(run_http([url = local_http_url(base, "/download.bin"), fail](auto session) {
+            return transfer_body_to_sink(rstd::move(session), url, fail);
+        }));
+    }
+}
+
+TEST(http, LocalHttpBodyDropCancels) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/delayed-body")](auto session) {
+        return body_drop_cancels(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpInformationalHead) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto result = run_http([url = local_http_url(base, "/informational")](auto session) {
+        return fetch_text(rstd::move(session), url);
+    });
+    EXPECT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.code, 200);
+    EXPECT_EQ(result.body, "final response");
+}
+
+TEST(http, LocalHttpEmptyBodyTrailer) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto result = run_http([url = local_http_url(base, "/empty-trailer")](auto session) {
+        return fetch_text(rstd::move(session), url);
+    });
+    EXPECT_TRUE(result.got_body) << result.error;
+    EXPECT_TRUE(result.body.empty());
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+    EXPECT_EQ(result.trailer_count, 1u);
+#endif
+}
+
+namespace
+{
+auto concurrent_body_read(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto body = (*response)->take_body().unwrap();
+    auto first = rstd::async::spawn_local(body.next());
+    co_await rstd::async::sleep(rstd::time::Duration::from_millis(u64(20)));
+    auto second = co_await body.next();
+    if (second.is_ok() || !second.unwrap_err().is_InvalidState()) co_return false;
+    first.abort();
+    auto aborted = co_await rstd::move(first);
+    auto after_abort = co_await body.next();
+    co_return aborted.is_err() && after_abort.is_err() && after_abort.unwrap_err().is_InvalidState();
+}
+
+auto close_session(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto pending = rstd::async::spawn_local(session->get(make_request(url)));
+    co_await rstd::async::sleep(rstd::time::Duration::from_millis(u64(20)));
+    session->close();
+    auto joined = co_await rstd::move(pending);
+    if (joined.is_err() || joined->is_ok() || !joined->unwrap_err().is_Canceled()) co_return false;
+    auto rejected = co_await session->get(make_request(url));
+    co_return rejected.is_err() && rejected.unwrap_err().is_Canceled();
+}
+
+auto send_after_session_drop(std::string url) -> ncrequest::coro<bool> {
+    auto pending = [url] {
+        auto session = ncrequest::Session::make();
+        return session->get(make_request(url));
+    }();
+    auto response = co_await rstd::move(pending);
+    co_return response.is_err() && response.unwrap_err().is_Canceled();
+}
+}
+
+TEST(http, LocalHttpConcurrentBodyReaderAndAbort) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/delayed-body")](auto session) {
+        return concurrent_body_read(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpSessionClose) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/delay")](auto session) {
+        return close_session(rstd::move(session), url);
+    }));
+    EXPECT_TRUE(rstd::async::block_on(send_after_session_drop(local_http_url(base, "/text"))));
+}
+
+namespace
+{
+template<class T>
+concept NativeSessionAccess = requires(T& value) { value.channel(); };
+template<class T>
+concept NativeResponseAccess = requires(T& value) { value.pause_recv(true); };
+static_assert(!NativeSessionAccess<ncrequest::Session>);
+static_assert(!NativeResponseAccess<ncrequest::Response>);
+
+auto truncated_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto body = (*response)->take_body().unwrap();
+    std::string partial;
+    for (;;) {
+        auto next = co_await body.next();
+        if (next.is_err()) co_return partial == "partial" && next.unwrap_err().is_Client();
+        if (next->is_none()) co_return false;
+        partial += string_from_bytes(**next);
+    }
+}
+
+auto zero_limit_empty_body(ncrequest::Arc<ncrequest::Session> session, std::string url)
+    -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto empty = co_await (*response)->bytes(usize());
+    co_return empty.is_ok() && empty->size() == usize();
+}
+}
+
+TEST(http, LocalHttpBodyErrorIsNotEof) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/truncated-body")](auto session) {
+        return truncated_body(rstd::move(session), url);
+    }));
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/empty")](auto session) {
+        return zero_limit_empty_body(rstd::move(session), url);
+    }));
 }

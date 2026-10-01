@@ -27,6 +27,7 @@ public:
         // thread safe
         setopt<CURLoption::CURLOPT_NOSIGNAL>(1L);
 
+        setopt<CURLoption::CURLOPT_SUPPRESS_CONNECT_HEADERS>(1L);
         setopt<CURLoption::CURLOPT_FOLLOWLOCATION>(1L);
         setopt<CURLoption::CURLOPT_AUTOREFERER>(1L);
         setopt<CURLoption::CURLOPT_VERBOSE>(0L);

@@ -10,7 +10,8 @@ namespace ncrequest::client
 
 export template<typename T>
 concept HttpResponseBackend = requires(T response, const T const_response) {
-    { response.bytes() } -> rstd::mtp::same_as<coro<Result<rstd::bytes::Bytes>>>;
+    { response.next_chunk() } -> rstd::mtp::same_as<coro<Result<rstd::Option<rstd::bytes::Bytes>>>>;
+    { response.ready_head() } -> rstd::mtp::same_as<coro<Result<rstd::empty>>>;
     { const_response.header() } -> rstd::mtp::same_as<const lihttpto::Headers&>;
     { const_response.head() } -> rstd::mtp::same_as<rstd::Option<rstd::ref<lihttpto::MessageHead>>>;
     { const_response.trailers() } -> rstd::mtp::same_as<rstd::Option<rstd::ref<lihttpto::Headers>>>;

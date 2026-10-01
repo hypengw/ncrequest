@@ -89,6 +89,35 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         target = urlsplit(self.path)
 
+        if target.path == "/delayed-body":
+            self.send_stream(HTTPStatus.OK, b"delayed body", 4096, 1.0, 0.0)
+            return
+
+        if target.path == "/informational":
+            self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+            self.wfile.write(b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>\r\n\r\n")
+            self.wfile.flush()
+            self.send_payload(HTTPStatus.OK, b"final response")
+            return
+
+        if target.path == "/empty-trailer":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"0\r\nX-Ncrequest-Trailer: completed\r\n\r\n")
+            self.wfile.flush()
+            return
+
+        if target.path == "/truncated-body":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Length", "32")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"partial")
+            self.wfile.flush()
+            return
+
         if target.path == "/text":
             self.send_payload(HTTPStatus.OK, b"ncrequest python http server body\n")
             return

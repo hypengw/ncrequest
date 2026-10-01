@@ -24,28 +24,8 @@ public:
     auto trailers() const -> rstd::Option<rstd::ref<lihttpto::Headers>>;
     auto code() const -> rstd::Option<i32>;
 
-    auto bytes() -> coro<Result<rstd::bytes::Bytes>>;
-
-    template<typename SyncWriteStream>
-        requires helper::is_sync_stream<SyncWriteStream>
-    auto read_to_stream(SyncWriteStream& writer) -> coro<usize> {
-        auto data_result = co_await bytes();
-        if (data_result.is_err()) {
-            rstd::panic { "ResponseBackend::read_to_stream failed" };
-        }
-
-        auto  data = rstd::move(data_result).unwrap();
-        usize written {};
-        while (written < data.size()) {
-            auto size = writer.write_some(
-                slice<u8>::from_raw_parts(data.data() + written, data.size() - written));
-            if (size == usize()) {
-                rstd::panic { "ResponseBackend::read_to_stream made no progress" };
-            }
-            written += size;
-        }
-        co_return written;
-    }
+    auto next_chunk() -> coro<Result<rstd::Option<rstd::bytes::Bytes>>>;
+    auto ready_head() -> coro<Result<rstd::empty>> { co_return Ok(rstd::empty {}); }
 
     static auto make_response(const Request&, Operation, SessionBackend&) -> Arc<ResponseBackend>;
     ResponseBackend(const Request&, Operation, SessionBackend&) noexcept;

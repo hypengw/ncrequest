@@ -84,7 +84,7 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<rstd::emp
     rsp->prepare_perform();
 
     auto msg = SessionMessage::ConnectAction(con.get_arc(), sm::Action::Add);
-    channel().try_send(rstd::move(msg));
+    if (! channel().try_send(rstd::move(msg))) co_return Err(Error::Canceled());
 
     auto header_error = co_await con.wait_header();
     if (header_error.is_some()) {

@@ -4,16 +4,17 @@ module;
 export module ncrequest:response;
 
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-export import :client_qt_network;
+import :client_qt_network;
 #else
-export import :client_curl_response;
+import :client_curl_response;
 #endif
 export import :client_http_backend;
 
 namespace ncrequest
 {
-
 using namespace rstd::literals;
+using rstd::bytes::Bytes;
+using rstd::bytes::BytesMut;
 
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
 using SelectedResponseBackend = client::qt_network::ResponseBackend;
@@ -23,40 +24,179 @@ using SelectedResponseBackend = client::curl::ResponseBackend;
 
 static_assert(client::HttpResponseBackend<SelectedResponseBackend>);
 
-export class Response : public SelectedResponseBackend {
-public:
-    using Backend = SelectedResponseBackend;
+export class Response;
+export class Session;
 
-    explicit Response(Backend&& backend): Backend(rstd::move(backend)) {}
-
-    auto code() const -> rstd::Option<i32> { return Backend::code(); }
-
-    auto set_cookies() const
-        -> rstd::Result<rstd::vec::Vec<lihttpto::SetCookie>, lihttpto::CookieError> {
-        auto cookies = rstd::vec::Vec<lihttpto::SetCookie>::make();
-        auto values  = this->header().get_all("set-cookie"_str);
-        for (const auto& value : values) {
-            auto parsed = lihttpto::SetCookie::parse_bytes(value->as_slice());
-            if (parsed.is_err()) {
-                return rstd::Err(rstd::move(parsed).unwrap_err());
+export class ResponseBody : public NoCopy {
+    friend class Response;
+    struct State {
+        Arc<SelectedResponseBackend>     backend;
+        rstd::sync::atomic::Atomic<bool> busy { false };
+        bool                             started { false };
+        bool                             terminal { false };
+        explicit State(Arc<SelectedResponseBackend> value): backend(rstd::move(value)) {}
+    };
+    struct ReadGuard {
+        Arc<State> state;
+        bool       completed { false };
+        ~ReadGuard() {
+            if (! completed) {
+                state->terminal = true;
+                state->backend->cancel();
             }
-            cookies.push(rstd::move(parsed).unwrap());
+            state->busy.store(false);
         }
-        return rstd::Ok(rstd::move(cookies));
+    };
+    Arc<State> state_;
+
+    explicit ResponseBody(Arc<SelectedResponseBackend> backend)
+        : state_(Arc<State>::make(rstd::move(backend))) {}
+
+    static auto next_chunk(State& state) -> coro<Result<Option<Bytes>>> {
+        auto result = co_await state.backend->next_chunk();
+        if (result.is_err() || result->is_none()) state.terminal = true;
+        co_return result;
     }
 
-    auto text() -> coro<Result<std::string>> {
-        auto data_result = co_await this->bytes();
-        if (data_result.is_err()) {
-            auto err = rstd::move(data_result).unwrap_err();
-            co_return Result<std::string>(Err(rstd::move(err)));
-        }
+    static auto read(Arc<State> state) -> coro<Result<Option<Bytes>>> {
+        if (! state) co_return Err(Error::InvalidState("response body was moved"));
+        if (state->busy.exchange(true))
+            co_return Err(Error::InvalidState("response body already has a reader"));
+        auto guard      = ReadGuard { state.clone() };
+        guard.completed = true;
+        if (state->terminal) co_return Err(Error::InvalidState("response body was consumed"));
+        state->started  = true;
+        guard.completed = false;
+        auto result     = co_await next_chunk(*state);
+        guard.completed = result.is_ok();
+        co_return result;
+    }
 
-        auto        data = rstd::move(data_result).unwrap();
-        std::string out;
-        out.assign(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
-        co_return Result<std::string>(Ok(rstd::move(out)));
+    static auto collect_body(Arc<State> state, usize limit) -> coro<Result<Bytes>> {
+        if (! state) co_return Err(Error::InvalidState("response body was moved"));
+        if (state->busy.exchange(true))
+            co_return Err(Error::InvalidState("response body already has a reader"));
+        auto guard      = ReadGuard { state.clone() };
+        guard.completed = true;
+        if (state->started || state->terminal)
+            co_return Err(Error::InvalidState("response body was consumed"));
+        state->started  = true;
+        guard.completed = false;
+        BytesMut out;
+        for (;;) {
+            auto part = co_await next_chunk(*state);
+            if (part.is_err()) co_return Err(rstd::move(part).unwrap_err());
+            if (part->is_none()) {
+                state->terminal = true;
+                guard.completed = true;
+                co_return Ok(out.freeze());
+            }
+            auto bytes = part->take().unwrap();
+            if (bytes.size() > limit - out.size())
+                co_return Err(Error::Protocol(ProtocolError::BodyTooLarge, nullptr));
+            out.extend_from_slice(bytes.as_slice());
+        }
+    }
+
+public:
+    using Error = ncrequest::Error;
+    static constexpr usize DefaultCollectLimit { 8 * 1024 * 1024 };
+
+    ResponseBody(ResponseBody&&) noexcept = default;
+    auto operator=(ResponseBody&& other) noexcept -> ResponseBody& {
+        if (this != &other) {
+            cancel();
+            state_ = rstd::move(other.state_);
+        }
+        return *this;
+    }
+    ~ResponseBody() { cancel(); }
+
+    auto next() -> coro<Result<Option<Bytes>>> { return read(state_.clone()); }
+    auto collect(usize limit = DefaultCollectLimit) -> coro<Result<Bytes>> {
+        return collect_body(state_.clone(), limit);
+    }
+    void cancel() {
+        if (state_) state_->backend->cancel();
     }
 };
 
+static_assert(lihttpto::BodySource<ResponseBody>);
+
+export class Response : public NoCopy {
+    friend class Session;
+    struct ConstructionKey {};
+    Arc<SelectedResponseBackend>     backend_;
+    lihttpto::ResponseHead           head_;
+    rstd::sync::atomic::Atomic<bool> body_taken_ { false };
+
+    static auto collect_body(Result<ResponseBody> body, usize limit) -> coro<Result<Bytes>> {
+        if (body.is_err()) co_return Err(rstd::move(body).unwrap_err());
+        co_return co_await body->collect(limit);
+    }
+    static auto collect_text(Result<ResponseBody> body, usize limit) -> coro<Result<std::string>> {
+        auto data_result = co_await collect_body(rstd::move(body), limit);
+        if (data_result.is_err()) co_return Err(rstd::move(data_result).unwrap_err());
+        auto        data = rstd::move(data_result).unwrap();
+        std::string out;
+        if (data.size() != usize())
+            out.assign(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
+        co_return Ok(rstd::move(out));
+    }
+    template<lihttpto::BodySink Sink>
+    static auto transfer(Result<ResponseBody> body, Sink& sink)
+        -> coro<rstd::Result<u64, lihttpto::BodyTransferError<Error, typename Sink::Error>>> {
+        using TransferError = lihttpto::BodyTransferError<Error, typename Sink::Error>;
+        if (body.is_err()) co_return Err(TransferError::Source(rstd::move(body).unwrap_err()));
+        co_return co_await lihttpto::transfer_body(*body, sink);
+    }
+    static auto make(SelectedResponseBackend backend) -> Result<Arc<Response>> {
+        auto head = backend.head();
+        if (head.is_none()) return Err(Error::InvalidState("response head is unavailable"));
+        auto parsed = (*head)->clone().into_response();
+        if (parsed.is_err()) return Err(Error::Protocol(ProtocolError::InvalidStatusLine, nullptr));
+        return Ok(Arc<Response>::make(
+            ConstructionKey {}, rstd::move(backend), rstd::move(parsed).unwrap()));
+    }
+
+public:
+    Response(ConstructionKey, SelectedResponseBackend backend, lihttpto::ResponseHead head)
+        : backend_(Arc<SelectedResponseBackend>::make(rstd::move(backend))),
+          head_(rstd::move(head)) {}
+
+    auto head() const -> const lihttpto::ResponseHead& { return head_; }
+    auto header() const -> const lihttpto::Headers& { return head_.headers; }
+    auto code() const -> Option<i32> { return Some(rstd::as_cast<i32>(head_.status.value())); }
+    auto trailers() const -> Option<ref<lihttpto::Headers>> { return backend_->trailers(); }
+    auto request() const -> const Request& { return backend_->request(); }
+    auto is_finished() const -> bool { return backend_->is_finished(); }
+    void cancel() { backend_->cancel(); }
+
+    auto take_body() -> Result<ResponseBody> {
+        if (body_taken_.exchange(true))
+            return Err(Error::InvalidState("response body was already taken"));
+        return Ok(ResponseBody(backend_.clone()));
+    }
+    auto bytes(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<Bytes>> {
+        return collect_body(take_body(), limit);
+    }
+    auto text(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<std::string>> {
+        return collect_text(take_body(), limit);
+    }
+    template<lihttpto::BodySink Sink>
+    auto read_to_stream(Sink& sink)
+        -> coro<rstd::Result<u64, lihttpto::BodyTransferError<Error, typename Sink::Error>>> {
+        return transfer(take_body(), sink);
+    }
+    auto set_cookies() const
+        -> rstd::Result<rstd::vec::Vec<lihttpto::SetCookie>, lihttpto::CookieError> {
+        auto cookies = rstd::vec::Vec<lihttpto::SetCookie>::make();
+        for (const auto& value : header().get_all("set-cookie"_str)) {
+            auto parsed = lihttpto::SetCookie::parse_bytes(value->as_slice());
+            if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+            cookies.push(rstd::move(parsed).unwrap());
+        }
+        return Ok(rstd::move(cookies));
+    }
+};
 } // namespace ncrequest

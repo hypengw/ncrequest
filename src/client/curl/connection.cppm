@@ -78,6 +78,8 @@ public:
         WakeCallback wake;
         {
             auto fields = m_fields.lock().unwrap();
+            if (fields->closed) return false;
+            if (msg.is_Stop()) fields->closed = true;
             fields->messages.push(rstd::move(msg));
             wake = fields->wake.clone();
         }
@@ -106,6 +108,7 @@ private:
     struct Fields {
         rstd::vec::Vec<SessionMessage> messages;
         WakeCallback                   wake;
+        bool                           closed { false };
 
         Fields(): messages(rstd::vec::Vec<SessionMessage>::make()) {}
     };
@@ -160,11 +163,12 @@ public:
         bool empty() const { return m_state.load() == State::Empty; }
 
         auto size() const { return m_buf.size(); }
+        auto available() const { return m_limit - m_buf.size(); }
         auto data() const { return m_buf.data(); }
 
         auto commit(slice<u8> in) {
-            auto copied = in.len();
-            m_buf.put_slice(in);
+            auto copied = rstd::min(in.len(), available());
+            m_buf.put_slice(slice<u8>::from_raw_parts(in.as_raw_ptr(), copied));
             m_transferred += copied;
             check_full();
             return copied;
@@ -205,7 +209,7 @@ public:
         void check_full() {
             auto s = size();
             m_state.store(s == usize() ? State::Empty
-                                       : (s > m_limit ? State::Full : State::Normal));
+                                       : (s >= m_limit ? State::Full : State::Normal));
         }
 
         rstd::bytes::BytesMut m_buf;
@@ -257,7 +261,9 @@ public:
 
     auto& header() const { return *m_header; }
     auto  trailers() const -> Option<ref<lihttpto::Headers>> {
-        if (m_trailers.is_none()) return None<ref<lihttpto::Headers>>();
+        auto lock = RawMutexGuard { m_mutex };
+        if (m_state != State::Finished || m_trailers.is_none())
+            return None<ref<lihttpto::Headers>>();
         return Some(ref<lihttpto::Headers>::from_raw_parts(&*m_trailers));
     }
     void set_send_callback(const req_opt::Read::Callback& cb) { m_send_callback = cb; }
@@ -425,11 +431,12 @@ private:
 
     static rstd::size_t header_callback(char* ptr, rstd::size_t size, rstd::size_t nmemb,
                                         Connection* self) {
+        using namespace rstd::literals;
         auto total_size = usize(size * nmemb);
         auto header     = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
         auto lock       = RawMutexGuard { self->m_mutex };
 
-        if (self->m_body_started) {
+        if (self->m_header_done) {
             self->m_trailer_started = true;
             auto parsed             = self->m_trailer_parser.push(header);
             if (parsed.is_err()) {
@@ -442,7 +449,6 @@ private:
             }
             return header.len().to_primitive();
         }
-        if (self->m_header_done) self->m_header_done = false;
 
         auto parsed = self->m_header_parser.push(header);
         if (parsed.is_err()) {
@@ -454,10 +460,18 @@ private:
 
         auto event = rstd::move(parsed).unwrap();
         if (event.is_Complete()) {
-            auto completed      = rstd::move(event).as_Complete();
-            self->m_header      = Some(rstd::move(completed.head));
-            self->m_header_done = true;
-
+            auto completed = rstd::move(event).as_Complete();
+            auto status    = completed.head.status_code();
+            if (status.is_none()) return 0;
+            auto code     = status->to_primitive();
+            auto location = completed.head.headers().get("location"_str);
+            auto redirect = code >= 300 && code < 400 && location.is_some() &&
+                            (*location)->as_slice().len() != usize();
+            if (code >= 200 && ! redirect) {
+                self->m_header      = Some(rstd::move(completed.head));
+                self->m_header_done = true;
+                self->try_header_waiter_locked();
+            }
             self->m_header_parser = lihttpto::Http1HeadParser { true };
         }
         return header.len().to_primitive();
@@ -468,14 +482,11 @@ private:
         auto total_size = usize(size * nmemb);
         auto lock       = RawMutexGuard { self->m_mutex };
 
-        self->m_body_started = true;
-        self->try_header_waiter_locked();
-        if (self->m_recv_buf.is_full()) {
+        if (total_size > self->m_recv_buf.available()) {
             self->m_recv_paused.store(true);
             return static_cast<rstd::size_t>(CURL_WRITEFUNC_PAUSE);
         }
 
-        self->try_header_waiter_locked();
         self->m_recv_buf.commit(
             slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size));
         self->try_read_waiter_locked();
@@ -503,6 +514,7 @@ private:
 
     void finish(CURLcode ec) {
         auto lock = RawMutexGuard { m_mutex };
+        if (m_state == State::Finished || m_state == State::Canceled) return;
         if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
             using namespace rstd::literals;
             auto parsed = m_trailer_parser.push("\r\n"_bytes);
@@ -626,8 +638,7 @@ private:
 
     void try_header_waiter_locked() {
         if (m_header_waiter.is_none()) return;
-        if (m_state != State::Canceled && m_state != State::Finished &&
-            (! m_header_done || ! m_body_started)) {
+        if (m_state != State::Canceled && m_state != State::Finished && ! m_header_done) {
             return;
         }
 
@@ -652,7 +663,6 @@ private:
     Option<lihttpto::Headers>         m_trailers;
     Option<lihttpto::HttpParseError>  m_header_error;
     bool                              m_header_done { false };
-    bool                              m_body_started { false };
     bool                              m_trailer_started { false };
     Buffer<allocator_type>            m_recv_buf;
 

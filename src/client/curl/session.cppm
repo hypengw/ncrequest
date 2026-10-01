@@ -42,6 +42,7 @@ public:
     void set_verify_certificate(bool);
 
     void about_to_stop();
+    void close() { about_to_stop(); }
 
     auto channel() -> channel_type&;
     auto channel_rc() -> Arc<channel_type>;
