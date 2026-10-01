@@ -471,11 +471,8 @@ private:
             auto completed = rstd::move(event).as_Complete();
             auto status    = completed.head.status_code();
             if (status.is_none()) return 0;
-            auto code     = status->to_primitive();
-            auto location = completed.head.headers().get("location"_str);
-            auto redirect = code >= 300 && code < 400 && location.is_some() &&
-                            (*location)->as_slice().len() != usize();
-            if (code >= 200 && ! redirect) {
+            auto code = status->to_primitive();
+            if (code >= 200) {
                 self->m_header      = Some(rstd::move(completed.head));
                 self->m_header_done = true;
                 self->try_header_waiter_locked();

@@ -111,3 +111,20 @@ auto Request::try_clone() const -> Result<Request> {
     req.m_options = m_options.clone();
     return Ok(rstd::move(req));
 }
+
+auto Request::redirected(lihttpto::Url target, bool use_get) const -> Result<Request> {
+    auto out      = Request(rstd::move(target));
+    out.m_header  = m_header.clone();
+    out.m_options = m_options.clone();
+    if (use_get) {
+        ref<str> names[] = { "content-length"_str,    "content-type"_str, "content-encoding"_str,
+                             "transfer-encoding"_str, "trailer"_str,      "expect"_str };
+        for (auto name : names) out.remove_header(name);
+    } else {
+        if (m_body.reader().is_some())
+            return Err(Error::Protocol(ProtocolError::RedirectBodyNotReplayable, nullptr));
+        out.m_method = m_method.clone();
+        out.m_body   = m_body.try_clone().unwrap();
+    }
+    return Ok(rstd::move(out));
+}

@@ -117,6 +117,8 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
     QNetworkRequest request { QUrl(
         QString::fromUtf8(reinterpret_cast<const char*>(url.data()), url.size().to_primitive())) };
     request.setAttribute(QNetworkRequest::AutoDeleteReplyOnFinishAttribute, false);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
 
     auto raw_headers = QList<std::pair<QByteArray, QByteArray>> {};
     raw_headers.reserve(static_cast<qsizetype>(req.header().len().to_primitive()));
@@ -135,58 +137,63 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
     auto const& timeout = options.timeout();
-    if (timeout.transfer_timeout > i64()) {
-        request.setTransferTimeout(static_cast<int>(timeout.transfer_timeout.to_primitive()));
-    }
+    if (timeout.connect.mode() != TimeoutLimit::Mode::BackendDefault)
+        return Err(Error::Unsupported("Qt Network connect timeout policy is not supported"));
+    if (timeout.total.mode() == TimeoutLimit::Mode::After)
+        return Err(Error::Unsupported("Qt Network total timeout is not supported"));
+    if (timeout.low_speed.is_some())
+        return Err(Error::Unsupported("Qt Network low-speed timeout is not supported"));
 
     auto const& ssl = options.tls();
-    if (! ssl.verify_certificate) {
-        auto ssl_config = request.sslConfiguration();
-        ssl_config.setPeerVerifyMode(QSslSocket::VerifyNone);
-        request.setSslConfiguration(ssl_config);
-    }
+    if (! ssl.verify_peer || ! ssl.verify_hostname)
+        return Err(Error::Unsupported(
+            "Qt Network independent TLS verification policies are not supported"));
+    if (ssl.ca_bundle.is_some() || ssl.client_identity.is_some())
+        return Err(
+            Error::Unsupported("Qt Network TLS CA bundle and client identity are not supported"));
+    auto ssl_config = request.sslConfiguration();
+    ssl_config.setPeerVerifyMode(QSslSocket::VerifyPeer);
+    request.setSslConfiguration(ssl_config);
 
     return Ok(rstd::move(request));
 }
 
-void apply_proxy(QNetworkAccessManager* manager, const ProxyOptions& proxy) {
-    if (manager == nullptr) return;
-
-    if (proxy.content.is_empty()) {
-        manager->setProxy(QNetworkProxy { QNetworkProxy::NoProxy });
-        return;
+class SystemProxyFactory final : public QNetworkProxyFactory {
+public:
+    auto queryProxy(const QNetworkProxyQuery& query) -> QList<QNetworkProxy> override {
+        return QNetworkProxyFactory::systemProxyForQuery(query);
     }
+};
 
-    QNetworkProxy::ProxyType type = QNetworkProxy::HttpProxy;
-    switch (proxy.type) {
-    case ProxyOptions::Type::SOCKS4:
-    case ProxyOptions::Type::SOCKS4A:
+auto apply_proxy(QNetworkAccessManager* manager, const ProxyOptions& proxy) -> Result<empty> {
+    if (manager == nullptr) return Err(Error::InvalidState("Qt network manager is unavailable"));
+    switch (proxy.mode()) {
+    case ProxyOptions::Mode::System:
+        manager->setProxyFactory(new SystemProxyFactory);
+        return Ok(empty {});
+    case ProxyOptions::Mode::Disabled:
+        manager->setProxy(QNetworkProxy { QNetworkProxy::NoProxy });
+        return Ok(empty {});
+    case ProxyOptions::Mode::Explicit: break;
+    }
+    auto type = QNetworkProxy::HttpProxy;
+    auto mode = proxy.type().unwrap();
+    switch (mode) {
+    case ProxyOptions::Type::HTTP: break;
     case ProxyOptions::Type::SOCKS5:
     case ProxyOptions::Type::SOCKS5H: type = QNetworkProxy::Socks5Proxy; break;
-    case ProxyOptions::Type::HTTP:
-    case ProxyOptions::Type::HTTPS2: type = QNetworkProxy::HttpProxy; break;
+    default: return Err(Error::Unsupported("Qt Network does not support this proxy type"));
     }
-
-    auto raw  = QString::fromUtf8(reinterpret_cast<const char*>(proxy.content.data()),
-                                  proxy.content.len().to_primitive());
-    auto url  = QUrl::fromUserInput(raw);
-    auto host = url.host();
-    auto port = url.port();
-
-    if (host.isEmpty()) {
-        host       = raw;
-        auto colon = raw.lastIndexOf(':');
-        if (colon > 0) {
-            bool ok = false;
-            port    = raw.mid(colon + 1).toInt(&ok);
-            if (ok) {
-                host = raw.left(colon);
-            }
-        }
-    }
-
-    auto qproxy = QNetworkProxy { type, host, static_cast<quint16>(port > 0 ? port : 0) };
-    manager->setProxy(qproxy);
+    auto host = proxy.url().unwrap()->host().unwrap();
+    if (host.starts_with("["_str)) host = *host.get(usize(1), host.size() - usize(1));
+    auto value = QNetworkProxy { type,
+                                 QString::fromUtf8(reinterpret_cast<const char*>(host.data()),
+                                                   host.size().to_primitive()),
+                                 static_cast<quint16>(proxy.port().unwrap().to_primitive()) };
+    if (mode == ProxyOptions::Type::SOCKS5)
+        value.setCapabilities(value.capabilities() & ~QNetworkProxy::HostNameLookupCapability);
+    manager->setProxy(value);
+    return Ok(empty {});
 }
 
 auto send_request(QNetworkAccessManager* manager, QNetworkRequest request, const Request& source)
@@ -410,7 +417,11 @@ public:
         }
         auto* manager = rstd::move(manager_result).unwrap();
 
-        apply_proxy(manager, state->request.options().proxy());
+        auto proxy = apply_proxy(manager, state->request.options().proxy());
+        if (proxy.is_err()) {
+            fail_start(rstd::move(state), rstd::move(proxy).unwrap_err());
+            return;
+        }
 
         auto request = make_qnetwork_request(state->request);
         if (request.is_err()) {
@@ -755,7 +766,8 @@ auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<Re
         co_return Result<ResponseBackend>(Err(rstd::move(request).unwrap_err()));
     }
 
-    apply_proxy(manager, prepared.options().proxy());
+    auto proxy = apply_proxy(manager, prepared.options().proxy());
+    if (proxy.is_err()) co_return Err(rstd::move(proxy).unwrap_err());
 
     auto state = Arc<OperationState>::make(rstd::move(prepared),
                                            Weak<QtNetworkDriver>::make(),

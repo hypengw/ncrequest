@@ -26,6 +26,10 @@ export enum class ProtocolError {
     BodyTooLarge,
     UnexpectedEof,
     InvalidUtf8,
+    InvalidRedirect,
+    RedirectLimitExceeded,
+    RedirectOriginChanged,
+    RedirectBodyNotReplayable,
 };
 
 export enum class ErrorKind {
@@ -35,6 +39,7 @@ export enum class ErrorKind {
     Unsupported,
     Canceled,
     InvalidState,
+    Timeout,
 };
 
 export enum class ClientBackend {
@@ -52,7 +57,7 @@ export struct Error {
     RSTD_ENUM_DEFAULT(Error, (InvalidState, "uncategorized ncrequest error"),
                       (Client, (ClientError error;)), (Io, (IoError error;)),
                       (Protocol, (ProtocolError kind; const char* msg;)),
-                      (Unsupported, (const char* msg;)), (Canceled),
+                      (Unsupported, (const char* msg;)), (Canceled), (Timeout),
                       (InvalidState, (const char* msg;)))
 
     auto kind() const noexcept -> ErrorKind {
@@ -62,6 +67,7 @@ export struct Error {
         case Tag::Protocol: return ErrorKind::Protocol;
         case Tag::Unsupported: return ErrorKind::Unsupported;
         case Tag::Canceled: return ErrorKind::Canceled;
+        case Tag::Timeout: return ErrorKind::Timeout;
         case Tag::InvalidState: return ErrorKind::InvalidState;
         }
         return ErrorKind::InvalidState;
@@ -79,6 +85,10 @@ constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char
     case ProtocolError::BodyTooLarge: return "HTTP body too large";
     case ProtocolError::UnexpectedEof: return "unexpected EOF";
     case ProtocolError::InvalidUtf8: return "response text is not UTF-8";
+    case ProtocolError::InvalidRedirect: return "invalid redirect location";
+    case ProtocolError::RedirectLimitExceeded: return "redirect limit exceeded";
+    case ProtocolError::RedirectOriginChanged: return "redirect changes HTTP origin";
+    case ProtocolError::RedirectBodyNotReplayable: return "redirect body cannot be replayed";
     }
     return "protocol error";
 }
@@ -130,6 +140,8 @@ struct rstd::Impl<Display, ncrequest::Error> : rstd::ImplBase<ncrequest::Error> 
             constexpr auto msg = "operation canceled"_str;
             return f.write_str(msg);
         }
+        case ncrequest::Error::Tag::Timeout:
+            return f.write_str("request total timeout exceeded"_str);
         case ncrequest::Error::Tag::InvalidState: {
             auto* msg = e.as_InvalidState().msg;
             if (msg == nullptr) msg = "invalid ncrequest state";

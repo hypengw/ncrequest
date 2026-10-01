@@ -7,6 +7,7 @@ export import :session_share;
 export import rstd;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 using rstd::bytes::Bytes;
 
 namespace ncrequest
@@ -50,6 +51,7 @@ public:
         -> rstd::Result<empty, lihttpto::HeaderError>;
     auto remove_header(ref<str> name) -> Request&;
     auto try_clone() const -> Result<Request>;
+    auto redirected(lihttpto::Url target, bool use_get) const -> Result<Request>;
 
 private:
     lihttpto::Method  m_method;
@@ -67,11 +69,21 @@ export class PreparedRequest {
 
 public:
     static auto prepare(Request request, const SessionOptions& session) -> Result<PreparedRequest> {
-        auto valid = request.validate();
-        if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
         auto options = EffectiveOptions::resolve(session, request.options());
         if (options.is_err()) return Err(rstd::move(options).unwrap_err());
-        return Ok(PreparedRequest(rstd::move(request), rstd::move(options).unwrap()));
+        return prepare(rstd::move(request), rstd::move(options).unwrap());
+    }
+    static auto prepare(Request request, EffectiveOptions options) -> Result<PreparedRequest> {
+        auto valid = request.validate();
+        if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
+        if (options.tls().client_identity.is_some()) {
+            auto scheme     = request.url_info().scheme();
+            auto normalized = scheme.is_some() ? String::make(*scheme) : String {};
+            normalized.as_mut_str().make_ascii_lowercase();
+            if (normalized != "https"_str)
+                return Err(Error::InvalidState("TLS client identity requires an HTTPS URL"));
+        }
+        return Ok(PreparedRequest(rstd::move(request), rstd::move(options)));
     }
     auto request() const -> const Request& { return request_; }
     auto options() const -> const EffectiveOptions& { return options_; }

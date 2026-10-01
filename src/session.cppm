@@ -7,6 +7,7 @@ export import :client_qt_network;
 export import :client_curl_session;
 #endif
 export import :client_http_backend;
+import :redirect;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -101,14 +102,22 @@ private:
         if (state->closed.load()) co_return Err(Error::Canceled());
         auto prepared = PreparedRequest::prepare(rstd::move(req), state->options);
         if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
-        auto res = co_await state->backend.start_request(rstd::move(prepared).unwrap());
-        if (res.is_err()) {
-            co_return Result<Arc<Response>>(Err(rstd::move(res).unwrap_err()));
+        auto redirects = RedirectState(prepared->options().clone());
+        for (;;) {
+            if (state->closed.load()) co_return Err(Error::Canceled());
+            auto res = co_await state->backend.start_request(rstd::move(prepared).unwrap());
+            if (res.is_err()) co_return Err(rstd::move(res).unwrap_err());
+            auto backend = rstd::move(res).unwrap();
+            auto ready   = co_await backend.ready_head();
+            if (ready.is_err()) co_return Err(rstd::move(ready).unwrap_err());
+            auto head = backend.head();
+            if (head.is_none()) co_return Err(Error::InvalidState("response head is unavailable"));
+            auto next = redirects.next(backend.request(), **head);
+            if (next.is_err()) co_return Err(rstd::move(next).unwrap_err());
+            if (next->is_none()) co_return Response::make(rstd::move(backend));
+            backend.cancel();
+            prepared = Ok(rstd::move(next).unwrap().unwrap());
         }
-        auto backend = rstd::move(res).unwrap();
-        auto ready   = co_await backend.ready_head();
-        if (ready.is_err()) co_return Err(rstd::move(ready).unwrap_err());
-        co_return Response::make(rstd::move(backend));
     }
 };
 

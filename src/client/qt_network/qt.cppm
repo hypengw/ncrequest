@@ -11,6 +11,8 @@ module;
 #include <QNetworkCookie>
 #include <QNetworkCookieJar>
 #include <QNetworkProxy>
+#include <QNetworkProxyFactory>
+#include <QNetworkProxyQuery>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QObject>
@@ -40,6 +42,8 @@ using ::QNetworkAccessManager;
 using ::QNetworkCookie;
 using ::QNetworkCookieJar;
 using ::QNetworkProxy;
+using ::QNetworkProxyFactory;
+using ::QNetworkProxyQuery;
 using ::QNetworkReply;
 using ::QNetworkRequest;
 using ::QObject;

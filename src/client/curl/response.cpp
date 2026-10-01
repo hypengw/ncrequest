@@ -1,5 +1,6 @@
 module;
 #include <curl/curl.h>
+#include <limits.h>
 module ncrequest;
 import :client_curl_response;
 import :client_curl_session;
@@ -11,8 +12,11 @@ using namespace rstd::literals;
 using rstd::async::yield_now;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
+using rstd::ffi::CStr;
 using rstd::ffi::CString;
+using rstd::path::PathBuf;
 using rstd::sync::Arc;
+using rstd::time::Duration;
 
 namespace ncrequest::client::curl
 {
@@ -20,48 +24,114 @@ namespace ncrequest::client::curl
 namespace
 {
 
-void apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptions& options) {
+auto duration_units(Duration duration, bool milliseconds) -> Result<long> {
+    auto scale   = milliseconds ? u128(1000) : u128(1);
+    auto divisor = milliseconds ? u128(1'000'000) : u128(1'000'000'000);
+    auto nanos   = u128(duration.subsec_nanos().to_primitive());
+    auto value =
+        u128(duration.as_secs().to_primitive()) * scale + (nanos + divisor - u128(1)) / divisor;
+    if (value > u128(LONG_MAX)) return Err(Error::InvalidState("timeout exceeds curl long range"));
+    return Ok(static_cast<long>(value.to_primitive()));
+}
+
+auto apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptions& options)
+    -> Result<empty> {
+    auto code = CURLcode::CURLE_OK;
+    auto set  = [&](CURLoption option, auto value) {
+        if (code == CURLcode::CURLE_OK) code = easy.setopt(option, value);
+    };
     auto url_bytes = Vec<u8>::make();
     url_bytes.extend_from_slice(req.url_info().as_ref().as_bytes());
     auto url = CString::from_vec_unchecked(rstd::move(url_bytes));
-    easy.setopt(CURLoption::CURLOPT_URL, url.as_ptr());
+    set(CURLoption::CURLOPT_URL, url.as_ptr());
     {
         auto& timeout = options.timeout();
 
-        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_LIMIT,
-                    static_cast<long>(timeout.low_speed.to_primitive()));
-        easy.setopt(CURLoption::CURLOPT_LOW_SPEED_TIME,
-                    static_cast<long>(timeout.transfer_timeout.to_primitive()));
-        easy.setopt(CURLoption::CURLOPT_CONNECTTIMEOUT,
-                    static_cast<long>(timeout.connect_timeout.to_primitive()));
+        if (timeout.connect.mode() == TimeoutLimit::Mode::Disabled)
+            return Err(Error::Unsupported("curl cannot disable its connect timeout"));
+        auto connect    = timeout.connect.duration();
+        auto total      = timeout.total.duration();
+        auto connect_ms = connect.is_some() ? duration_units(*connect, true) : Result<long>(Ok(0L));
+        if (connect_ms.is_err()) return Err(rstd::move(connect_ms).unwrap_err());
+        auto total_ms = total.is_some() ? duration_units(*total, true) : Result<long>(Ok(0L));
+        if (total_ms.is_err()) return Err(rstd::move(total_ms).unwrap_err());
+        set(CURLoption::CURLOPT_CONNECTTIMEOUT_MS, connect_ms.unwrap());
+        set(CURLoption::CURLOPT_TIMEOUT_MS, total_ms.unwrap());
+        long speed  = 0;
+        long window = 0;
+        if (timeout.low_speed.is_some()) {
+            auto& low = *timeout.low_speed;
+            if (low.bytes_per_second > u64(LONG_MAX))
+                return Err(Error::InvalidState("low-speed rate exceeds curl long range"));
+            auto seconds = duration_units(low.window, false);
+            if (seconds.is_err()) return Err(rstd::move(seconds).unwrap_err());
+            speed  = static_cast<long>(low.bytes_per_second.to_primitive());
+            window = seconds.unwrap();
+        }
+        set(CURLoption::CURLOPT_LOW_SPEED_LIMIT, speed);
+        set(CURLoption::CURLOPT_LOW_SPEED_TIME, window);
     }
     if (options.endpoint().socket_path().is_none()) {
         auto& tcp = options.tcp();
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive ? 1L : 0L);
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPIDLE,
-                    static_cast<long>(tcp.keepidle.to_primitive()));
-        easy.setopt(CURLoption::CURLOPT_TCP_KEEPINTVL,
-                    static_cast<long>(tcp.keepintvl.to_primitive()));
+        set(CURLoption::CURLOPT_TCP_KEEPALIVE, tcp.keepalive ? 1L : 0L);
+        set(CURLoption::CURLOPT_TCP_KEEPIDLE, static_cast<long>(tcp.keepidle.to_primitive()));
+        set(CURLoption::CURLOPT_TCP_KEEPINTVL, static_cast<long>(tcp.keepintvl.to_primitive()));
     }
-    if (options.endpoint().socket_path().is_none()) {
-        auto& p = options.proxy();
-        easy.setopt(CURLoption::CURLOPT_PROXYTYPE, static_cast<long>(p.type));
-        auto proxy = CString::from_vec_unchecked(Vec<u8>::from(p.content.as_str().as_bytes()));
-        easy.setopt(CURLoption::CURLOPT_PROXY, p.content.is_empty() ? nullptr : proxy.as_ptr());
+    auto& proxy = options.proxy();
+    switch (proxy.mode()) {
+    case ProxyOptions::Mode::System:
+        set(CURLoption::CURLOPT_PROXY, static_cast<const char*>(nullptr));
+        set(CURLoption::CURLOPT_NOPROXY, static_cast<const char*>(nullptr));
+        break;
+    case ProxyOptions::Mode::Disabled: set(CURLoption::CURLOPT_PROXY, ""); break;
+    case ProxyOptions::Mode::Explicit: {
+        auto address = proxy.url().unwrap()->as_ref();
+        auto value   = CString::from_vec_unchecked(Vec<u8>::from(address.as_bytes()));
+        set(CURLoption::CURLOPT_PROXY, value.as_ptr());
+        set(CURLoption::CURLOPT_NOPROXY, "");
+        break;
+    }
     }
     {
         auto& p = options.tls();
-        easy.setopt(CURLoption::CURLOPT_SSL_VERIFYPEER, (long)p.verify_certificate);
-        easy.setopt(CURLoption::CURLOPT_PROXY_SSL_VERIFYPEER, (long)p.verify_certificate);
+        set(CURLoption::CURLOPT_SSL_VERIFYPEER, p.verify_peer ? 1L : 0L);
+        set(CURLoption::CURLOPT_SSL_VERIFYHOST, p.verify_hostname ? 2L : 0L);
+        set(CURLoption::CURLOPT_PROXY_SSL_VERIFYPEER, 1L);
+        set(CURLoption::CURLOPT_PROXY_SSL_VERIFYHOST, 2L);
+        auto set_path = [&](CURLoption option, const PathBuf& path) {
+            auto value = CString::from_vec_unchecked(
+                Vec<u8>::from(path.as_path().as_os_str().as_encoded_bytes()));
+            set(option, value.as_ptr());
+        };
+        if (p.ca_bundle.is_some()) {
+            set_path(CURLoption::CURLOPT_CAINFO, *p.ca_bundle);
+            set(CURLoption::CURLOPT_CAPATH, static_cast<const char*>(nullptr));
+        }
+        if (p.client_identity.is_some()) {
+            auto* version = curl_version_info(CURLVERSION_NOW);
+            if (version != nullptr && version->ssl_version != nullptr) {
+                auto backend = CStr::from_ptr(version->ssl_version).to_str();
+                if (backend.is_ok() && backend.unwrap().starts_with("Schannel"_str))
+                    return Err(
+                        Error::Unsupported("curl Schannel does not support PEM private key files"));
+            }
+            set(CURLoption::CURLOPT_SSLCERTTYPE, "PEM");
+            set(CURLoption::CURLOPT_SSLKEYTYPE, "PEM");
+            set_path(CURLoption::CURLOPT_SSLCERT, p.client_identity->certificate);
+            set_path(CURLoption::CURLOPT_SSLKEY, p.client_identity->private_key);
+        }
     }
+    set(CURLoption::CURLOPT_FOLLOWLOCATION, 0L);
     {
         auto& p = options.share();
-        if (p.share) {
-            easy.setopt<CURLoption::CURLOPT_SHARE>(
+        if (p.share && code == CURLcode::CURLE_OK) {
+            code = easy.setopt<CURLoption::CURLOPT_SHARE>(
                 detail::SessionShareAccess::curl_handle(*p.share));
         }
     }
+    if (code != CURLcode::CURLE_OK) return Err(rstd::into<Error>(code));
     easy.set_header(req.header());
+    return Ok(empty {});
 }
 
 } // namespace
@@ -71,7 +141,6 @@ ResponseBackend::Inner::Inner(ResponseBackend* res, PreparedRequest req, Session
 
 ResponseBackend::ResponseBackend(PreparedRequest req, SessionBackend& ses) noexcept
     : m_inner(Arc<Inner>::make(this, rstd::move(req), ses)) {
-    apply_easy_request(connection().easy(), request(), connection().options());
     auto& reader = request().body().reader();
     if (reader.is_some()) connection().set_send_callback(reader->callback.clone());
 }
@@ -114,6 +183,8 @@ bool ResponseBackend::pause_recv(bool pause) {
 }
 
 auto ResponseBackend::prepare_perform() -> Result<empty> {
+    auto configured = apply_easy_request(connection().easy(), request(), connection().options());
+    if (configured.is_err()) return Err(rstd::move(configured).unwrap_err());
     auto&    easy   = connection().easy();
     auto&    req    = request();
     auto     method = req.method().as_ref();
@@ -131,7 +202,6 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
         auto bytes = Vec<u8>::from(socket->as_os_str().as_encoded_bytes());
         auto path  = CString::from_vec_unchecked(rstd::move(bytes));
         set(CURLOPT_UNIX_SOCKET_PATH, path.as_ptr());
-        set(CURLOPT_PROXY, "");
     }
     if (method == "HEAD"_str) {
         set(CURLOPT_NOBODY, 1L);

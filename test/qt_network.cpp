@@ -23,9 +23,11 @@ using ncrequest::RequestOptions;
 using Timeout = ncrequest::TimeoutOptions;
 using ncrequest::BodyReader;
 using ncrequest::RequestBody;
+using ncrequest::TimeoutLimit;
 using rstd::async::block_on;
 using rstd::async::RuntimeBuilder;
 using rstd::bytes::Bytes;
+using rstd::time::Duration;
 
 namespace
 {
@@ -151,13 +153,14 @@ auto fetch_timeout(Arc<Session> session, std::string url) -> ncrequest::coro<Err
     auto        req             = make_request(url);
     auto        timeout_options = RequestOptions {};
     auto        timeout         = Timeout {};
-    timeout.transfer_timeout    = i64(100);
+    timeout.total               = TimeoutLimit::after(Duration::from_millis(u64(100)));
     timeout_options.timeout     = Some(timeout);
     req.set_options(rstd::move(timeout_options));
 
     auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
-        result.error = "session request failed";
+        result.got_error = true;
+        result.kind      = rsp.unwrap_err().kind();
         co_return result;
     }
     result.got_response = true;
@@ -424,10 +427,9 @@ TEST(qt_network, LocalHttpTimeout) {
     auto result = run_http([url = local_http_url(base, "/delay")](auto session) {
         return fetch_timeout(rstd::move(session), url);
     });
-    ASSERT_TRUE(result.got_response) << result.error;
+    EXPECT_FALSE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_error) << result.error;
-    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
-    EXPECT_EQ(result.backend, ncrequest::ClientBackend::QtNetwork);
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Unsupported);
 }
 
 TEST(qt_network, LocalHttpCancel) {

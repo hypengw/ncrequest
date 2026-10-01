@@ -88,7 +88,24 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
+    def redirect_response(self) -> bool:
+        target = urlsplit(self.path)
+        params = parse_qs(target.query)
+        if target.path == "/redirect-to":
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            code = int(params.get("code", ["302"])[0])
+            self.send_payload(code, b"redirect body", extra_headers={"Location": params.get("to", ["/redirect-echo"])[0]})
+            return True
+        if target.path == "/redirect-echo":
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            headers = [self.headers.get(name, "") for name in ("Authorization", "Cookie", "X-Api-Key", "Content-Type")]
+            self.send_payload(HTTPStatus.OK, self.command.encode() + b"\n" + body + b"\n" + "\n".join(headers).encode())
+            return True
+        return False
+
     def method_echo(self) -> None:
+        if self.redirect_response():
+            return
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.send_payload(HTTPStatus.OK, self.command.encode("ascii") + b"\n" + body)
 
@@ -106,6 +123,30 @@ class Handler(BaseHTTPRequestHandler):
     do_REPORT = method_echo
 
     def do_GET(self) -> None:
+        if self.redirect_response():
+            return
+        if self.path.startswith("/redirect-chain"):
+            params = parse_qs(urlsplit(self.path).query)
+            left = int(params.get("left", ["1"])[0])
+            time.sleep(float(params.get("delay", ["0"])[0]))
+            if left:
+                self.send_payload(302, b"intermediate", extra_headers={"Location": f"/redirect-chain?left={left - 1}&delay={params.get('delay', ['0'])[0]}"})
+            else:
+                self.send_payload(200, b"final")
+            return
+        if self.path == "/redirect-stall":
+            self.send_stream(302, b"x" * 100, 1, 3.0, 0.1, extra_headers={"Location": "/text"})
+            return
+        if self.path in ("/redirect-duplicate", "/redirect-duplicate-same"):
+            self.send_response(302)
+            self.send_header("Location", "/text")
+            self.send_header("Location", "/text" if self.path.endswith("-same") else "/method")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if urlsplit(self.path).scheme == "http":
+            self.send_payload(HTTPStatus.OK, f"proxy\n{self.path}\n".encode())
+            return
         if self.path == "/method":
             self.method_echo()
             return
@@ -218,6 +259,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_payload(HTTPStatus.INTERNAL_SERVER_ERROR, b"server error\n")
             return
 
+        if target.path == "/timeout-stall":
+            self.send_stream(HTTPStatus.OK, b"late body", 4096, 3.0, 0.0)
+            return
+
+        if target.path == "/timeout-trickle":
+            self.send_stream(HTTPStatus.OK, b"x" * 100, 1, 0.0, 0.02)
+            return
+
         if target.path == "/delay":
             time.sleep(0.5)
             self.send_payload(HTTPStatus.OK, b"delayed\n")
@@ -271,6 +320,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
 
     def do_POST(self) -> None:
+        if self.redirect_response():
+            return
         if self.path == "/body-reader":
             body = bytearray()
             if self.headers.get("Transfer-Encoding") == "chunked":
@@ -326,6 +377,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-executable", required=True)
     parser.add_argument("--gtest-filter", default="http.LocalHttp*")
     parser.add_argument("--unix-socket", action="store_true")
+    parser.add_argument("--proxy", action="store_true")
+    parser.add_argument("--timeout", action="store_true")
     parser.add_argument("extra_args", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -340,6 +393,8 @@ def main() -> int:
     unix_server = None
     unix_thread = None
     socket_dir = None
+    stall_server = None
+    stall_thread = None
 
     try:
         env = os.environ.copy()
@@ -358,6 +413,28 @@ def main() -> int:
             env["http_proxy"] = "http://127.0.0.1:1"
             env["no_proxy"] = "127.0.0.1,localhost"
 
+        if args.timeout:
+            class StallHandler(socketserver.BaseRequestHandler):
+                def handle(self):
+                    self.request.recv(4096)
+                    time.sleep(3.0)
+
+            class StallServer(socketserver.ThreadingTCPServer):
+                daemon_threads = True
+
+            stall_server = StallServer(("127.0.0.1", 0), StallHandler)
+            stall_thread = threading.Thread(target=stall_server.serve_forever)
+            stall_thread.start()
+            env["NCREQUEST_TEST_TLS_STALL_URL"] = f"https://127.0.0.1:{stall_server.server_address[1]}/"
+
+        if args.proxy:
+            env["NCREQUEST_TEST_PROXY_URL"] = env["NCREQUEST_TEST_HTTP_BASE_URL"]
+            env["http_proxy"] = env["NCREQUEST_TEST_PROXY_URL"]
+            env["all_proxy"] = env["NCREQUEST_TEST_PROXY_URL"]
+            env["no_proxy"] = "localhost,explicit-bypass.invalid"
+            for key in ("HTTP_PROXY", "ALL_PROXY", "NO_PROXY"):
+                env.pop(key, None)
+
         command = [
             args.test_executable,
             f"--gtest_filter={args.gtest_filter}",
@@ -370,6 +447,11 @@ def main() -> int:
         completed = subprocess.run(command, env=env, check=False)
         return completed.returncode
     finally:
+        if stall_server is not None:
+            stall_server.shutdown()
+            stall_server.server_close()
+        if stall_thread is not None:
+            stall_thread.join()
         if unix_server is not None:
             unix_server.shutdown()
             unix_server.server_close()

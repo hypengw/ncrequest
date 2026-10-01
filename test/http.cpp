@@ -20,9 +20,13 @@ using IoError     = rstd::io::error::Error;
 using IoErrorKind = rstd::io::error::ErrorKind;
 using ncrequest::EffectiveOptions;
 using ncrequest::Endpoint;
+using ncrequest::LowSpeedOptions;
 using ncrequest::PreparedRequest;
+using ncrequest::RedirectOptions;
 using ncrequest::RequestOptions;
 using ncrequest::SessionOptions;
+using ncrequest::TimeoutLimit;
+using ncrequest::TlsClientIdentity;
 using Proxy   = ncrequest::ProxyOptions;
 using Share   = ncrequest::ShareOptions;
 using SSL     = ncrequest::TlsOptions;
@@ -66,21 +70,23 @@ auto as_rstd_str(std::string_view value) -> ref<str> {
 }
 
 struct FetchResult {
-    bool                 got_response { false };
-    bool                 got_body { false };
-    bool                 got_error { false };
-    int                  code { 0 };
-    bool                 has_test_header { false };
-    std::size_t          set_cookie_count { 0 };
-    bool                 finished_while_paused { false };
-    std::size_t          upload_callback_count { 0 };
-    std::size_t          trailer_count { 0 };
-    bool                 initial_has_trailer { false };
-    std::string          body;
-    std::string          first_set_cookie_name;
-    std::string          repeated_header_values;
-    std::string          error;
-    ncrequest::ErrorKind error_kind { ncrequest::ErrorKind::InvalidState };
+    int                      client_code { 0 };
+    ncrequest::ProtocolError protocol_error { ncrequest::ProtocolError::InvalidStatusLine };
+    bool                     got_response { false };
+    bool                     got_body { false };
+    bool                     got_error { false };
+    int                      code { 0 };
+    bool                     has_test_header { false };
+    std::size_t              set_cookie_count { 0 };
+    bool                     finished_while_paused { false };
+    std::size_t              upload_callback_count { 0 };
+    std::size_t              trailer_count { 0 };
+    bool                     initial_has_trailer { false };
+    std::string              body;
+    std::string              first_set_cookie_name;
+    std::string              repeated_header_values;
+    std::string              error;
+    ncrequest::ErrorKind     error_kind { ncrequest::ErrorKind::InvalidState };
 };
 
 struct ErrorResult {
@@ -222,12 +228,14 @@ void record_error(ErrorResult& result, const ncrequest::Error& error) {
 auto fetch_text_request(Arc<ncrequest::Session> session, ncrequest::Request req)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
-    auto        rsp = co_await session->get(req.try_clone().unwrap());
+    auto        rsp = co_await session->send(rstd::move(req));
     if (rsp.is_err()) {
         auto error        = rstd::move(rsp).unwrap_err();
         result.got_error  = true;
         result.error_kind = error.kind();
-        auto message      = rstd::format("{}", error);
+        if (error.is_Protocol()) result.protocol_error = error.as_Protocol().kind;
+        if (error.is_Client()) result.client_code = error.as_Client().error.code.to_primitive();
+        auto message = rstd::format("{}", error);
         result.error.assign(reinterpret_cast<const char*>(message.data()),
                             message.len().to_primitive());
         co_return result;
@@ -238,7 +246,12 @@ auto fetch_text_request(Arc<ncrequest::Session> session, ncrequest::Request req)
 
     auto text = co_await response->text();
     if (text.is_err()) {
-        auto message = rstd::format("response text read failed: {}", text.unwrap_err());
+        auto error        = rstd::move(text).unwrap_err();
+        result.got_error  = true;
+        result.error_kind = error.kind();
+        if (error.is_Protocol()) result.protocol_error = error.as_Protocol().kind;
+        if (error.is_Client()) result.client_code = error.as_Client().error.code.to_primitive();
+        auto message = rstd::format("response text read failed: {}", error);
         result.error.assign(reinterpret_cast<const char*>(message.data()),
                             message.len().to_primitive());
         co_return result;
@@ -287,9 +300,10 @@ auto fetch_text(Arc<ncrequest::Session> session, std::string url) -> ncrequest::
 
 auto request_with_share(std::string url, const ncrequest::SessionShare& share)
     -> ncrequest::Request {
-    auto request  = make_request(url);
-    auto options  = RequestOptions {};
-    options.share = Some(Share { Some(share.clone()) });
+    auto request     = make_request(url);
+    auto options     = RequestOptions {};
+    options.share    = Some(Share { Some(share.clone()) });
+    options.redirect = Some(RedirectOptions::same_origin());
     request.set_options(rstd::move(options));
     return request;
 }
@@ -467,14 +481,9 @@ auto timeout_request(Arc<ncrequest::Session> session, ncrequest::Request req)
     -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
     auto        timeout = Timeout {};
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-    timeout.transfer_timeout = i64(100);
-#else
-    timeout.low_speed        = i64(1);
-    timeout.transfer_timeout = i64(1);
-#endif
-    auto options    = req.options().clone();
-    options.timeout = Some(timeout);
+    timeout.total       = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    auto options        = req.options().clone();
+    options.timeout     = Some(timeout);
     req.set_options(rstd::move(options));
     auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
@@ -717,40 +726,50 @@ TEST(http, ErrorModelVariants) {
 }
 
 TEST(http, UnifiedOptionsInheritanceAndOverride) {
-    auto defaults    = SessionOptions {};
-    defaults.timeout = Timeout { i64(2), i64(3), i64(4) };
-    defaults.proxy   = Proxy { Proxy::Type::SOCKS5, String::make("127.0.0.1:1080"_str) };
-    defaults.tcp     = Tcp { true, i64(12), i64(6) };
-    defaults.tls.verify_certificate = false;
-    defaults.share                  = Share { Some(ncrequest::SessionShare {}) };
-    auto request                    = make_request("http://localhost/");
+    auto defaults              = SessionOptions {};
+    defaults.timeout.connect   = TimeoutLimit::after(Duration::from_secs(u64(3)));
+    defaults.timeout.total     = TimeoutLimit::after(Duration::from_millis(u64(250)));
+    defaults.timeout.low_speed = Some(LowSpeedOptions { u64(2), Duration::from_secs(u64(4)) });
+    defaults.proxy =
+        Proxy::explicit_proxy(lihttpto::Url::parse("socks5://127.0.0.1:1080"_str).unwrap())
+            .unwrap();
+    defaults.tcp             = Tcp { true, i64(12), i64(6) };
+    defaults.tls.verify_peer = false;
+    defaults.share           = Share { Some(ncrequest::SessionShare {}) };
+    auto request             = make_request("http://localhost/");
     auto inherited = PreparedRequest::prepare(request.try_clone().unwrap(), defaults).unwrap();
-    EXPECT_EQ(inherited.options().timeout().connect_timeout, i64(3));
-    EXPECT_EQ(inherited.options().timeout().low_speed, i64(2));
-    EXPECT_EQ(inherited.options().timeout().transfer_timeout, i64(4));
-    EXPECT_EQ(inherited.options().proxy().type, Proxy::Type::SOCKS5);
-    EXPECT_TRUE(inherited.options().proxy().content == "127.0.0.1:1080"_str);
+    EXPECT_TRUE(inherited.options().timeout().connect.duration().unwrap() ==
+                Duration::from_secs(u64(3)));
+    EXPECT_EQ(inherited.options().timeout().low_speed->bytes_per_second, u64(2));
+    EXPECT_TRUE(inherited.options().timeout().total.duration().unwrap() ==
+                Duration::from_millis(u64(250)));
+    EXPECT_TRUE(inherited.options().timeout().low_speed->window == Duration::from_secs(u64(4)));
+    EXPECT_EQ(inherited.options().proxy().type().unwrap(), Proxy::Type::SOCKS5);
+    EXPECT_TRUE(inherited.options().proxy().url().unwrap()->as_ref() ==
+                "socks5://127.0.0.1:1080"_str);
     EXPECT_TRUE(inherited.options().tcp().keepalive);
-    EXPECT_FALSE(inherited.options().tls().verify_certificate);
+    EXPECT_FALSE(inherited.options().tls().verify_peer);
     EXPECT_TRUE(inherited.options().share().share.is_some());
 
     auto overrides    = RequestOptions {};
-    overrides.timeout = Some(Timeout { i64(), i64(), i64() });
-    overrides.proxy   = Some(Proxy {});
+    overrides.timeout = Some(Timeout {});
+    overrides.proxy   = Some(Proxy::disabled());
     overrides.tcp     = Some(Tcp {});
     overrides.tls     = Some(SSL {});
     overrides.share   = Some(Share {});
     request.set_options(rstd::move(overrides));
     auto copy      = request.try_clone().unwrap();
     auto effective = PreparedRequest::prepare(rstd::move(copy), defaults).unwrap();
-    EXPECT_EQ(effective.options().timeout().transfer_timeout, i64());
-    EXPECT_TRUE(effective.options().proxy().content.is_empty());
+    EXPECT_EQ(effective.options().timeout().total.mode(), TimeoutLimit::Mode::Disabled);
+    EXPECT_TRUE(effective.options().timeout().low_speed.is_none());
+    EXPECT_EQ(effective.options().proxy().mode(), Proxy::Mode::Disabled);
     EXPECT_FALSE(effective.options().tcp().keepalive);
-    EXPECT_TRUE(effective.options().tls().verify_certificate);
+    EXPECT_TRUE(effective.options().tls().verify_peer);
     EXPECT_TRUE(effective.options().share().share.is_none());
-    defaults.proxy.content.clear();
-    EXPECT_TRUE(inherited.options().proxy().content == "127.0.0.1:1080"_str);
-    EXPECT_FALSE(inherited.options().tls().verify_certificate);
+    defaults.proxy = Proxy::system();
+    EXPECT_TRUE(inherited.options().proxy().url().unwrap()->as_ref() ==
+                "socks5://127.0.0.1:1080"_str);
+    EXPECT_FALSE(inherited.options().tls().verify_peer);
     EXPECT_TRUE(request.options().share.is_some());
     EXPECT_TRUE(request.options().share->share.is_none());
 }
@@ -809,7 +828,11 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
     ASSERT_TRUE(result.canceled_request.got_error) << result.canceled_request.error;
     EXPECT_EQ(result.canceled_request.kind, ncrequest::ErrorKind::Canceled);
     ASSERT_TRUE(result.timed_out_request.got_error) << result.timed_out_request.error;
+#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+    EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Unsupported);
+#else
     EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Client);
+#endif
 
     ASSERT_TRUE(persisted.has_value());
     EXPECT_FALSE(persisted->empty());
@@ -877,7 +900,11 @@ TEST(http, LocalHttpRedirectUsesFinalMessageHead) {
     }
 
     auto result = run_http([url = local_http_url(base, "/redirect")](auto session) {
-        return fetch_text(rstd::move(session), url);
+        auto req         = make_request(url);
+        auto options     = RequestOptions {};
+        options.redirect = Some(RedirectOptions::same_origin());
+        req.set_options(rstd::move(options));
+        return fetch_text_request(rstd::move(session), rstd::move(req));
     });
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1060,8 +1087,7 @@ TEST(http, LocalHttpTimeout) {
     });
     ASSERT_TRUE(result.got_error) << result.error;
 #ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
-    EXPECT_EQ(result.backend, ncrequest::ClientBackend::QtNetwork);
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Unsupported);
 #else
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
     EXPECT_EQ(result.backend, ncrequest::ClientBackend::Curl);
@@ -1552,12 +1578,13 @@ TEST(http, EndpointInvalidPathsAndConflicts) {
     defaults.endpoint = socket_endpoint("/tmp/session.sock");
     auto request      = make_request("http://localhost/");
     auto overrides    = RequestOptions {};
-    overrides.proxy   = Some(Proxy { Proxy::Type::HTTP, String::make("http://127.0.0.1:1"_str) });
+    overrides.proxy   = Some(
+        Proxy::explicit_proxy(lihttpto::Url::parse("http://127.0.0.1:1"_str).unwrap()).unwrap());
     request.set_options(overrides.clone());
     auto proxy = PreparedRequest::prepare(request.try_clone().unwrap(), defaults);
     ASSERT_TRUE(proxy.is_err());
     EXPECT_TRUE(proxy.unwrap_err().is_InvalidState());
-    overrides.proxy = Some(Proxy {});
+    overrides.proxy = Some(Proxy::disabled());
     overrides.tcp   = Some(Tcp { true, i64(120), i64(60) });
     request.set_options(overrides.clone());
     EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
@@ -1615,16 +1642,19 @@ TEST(http, LocalHttpUnixRequestOverride) {
 }
 
 TEST(http, UnifiedOptionsValidationAndInheritedConflicts) {
-    auto defaults          = SessionOptions {};
-    defaults.endpoint      = socket_endpoint("/tmp/session.sock");
-    defaults.proxy.content = String::make("http://127.0.0.1:1"_str);
-    auto request           = make_request("http://localhost/");
+    auto defaults     = SessionOptions {};
+    defaults.endpoint = socket_endpoint("/tmp/session.sock");
+    defaults.proxy =
+        Proxy::explicit_proxy(lihttpto::Url::parse("http://127.0.0.1:1"_str).unwrap()).unwrap();
+    auto request = make_request("http://localhost/");
     EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
     auto options  = RequestOptions {};
-    options.proxy = Some(Proxy {});
+    options.proxy = Some(Proxy::disabled());
     request.set_options(options.clone());
     EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_ok());
-    options.timeout = Some(Timeout { i64(-1), i64(3), i64(0) });
+    auto invalid_timeout  = Timeout {};
+    invalid_timeout.total = TimeoutLimit::after(Duration {});
+    options.timeout       = Some(invalid_timeout);
     request.set_options(options.clone());
     EXPECT_TRUE(PreparedRequest::prepare(request.try_clone().unwrap(), defaults).is_err());
     options.timeout = None();
@@ -1721,4 +1751,506 @@ TEST(http, LocalHttpTextRejectsInvalidUtf8) {
     EXPECT_TRUE(run_http([url = local_http_url(base, "/download.bin")](auto session) {
         return reject_invalid_text(rstd::move(session), url);
     }));
+}
+
+TEST(http, ProxyModesAndValidation) {
+    EXPECT_EQ(Proxy {}.mode(), Proxy::Mode::System);
+    EXPECT_TRUE(Proxy::system().url().is_none());
+    EXPECT_TRUE(Proxy::disabled().type().is_none());
+    EXPECT_TRUE(Proxy::disabled().port().is_none());
+    for (auto text : { "relative",
+                       "http://",
+                       "http://host:0",
+                       "http://host:65536",
+                       "http://host:",
+                       "http://host/path",
+                       "http://host/?query",
+                       "http://host/#fragment",
+                       "ftp://host",
+                       "http://secret:password@host" }) {
+        auto parsed = lihttpto::Url::parse(as_rstd_str(text));
+        ASSERT_TRUE(parsed.is_ok());
+        auto value = Proxy::explicit_proxy(rstd::move(parsed).unwrap());
+        EXPECT_TRUE(value.is_err()) << text;
+        if (value.is_err()) {
+            auto message = rstd::format("{}", value.unwrap_err());
+            EXPECT_FALSE(message.as_str().contains("secret"_str));
+            EXPECT_FALSE(message.as_str().contains("password"_str));
+        }
+    }
+    auto original =
+        Proxy::explicit_proxy(lihttpto::Url::parse("HtTp://[::1]:3128/"_str).unwrap()).unwrap();
+    auto copy = original.clone();
+    original  = Proxy::disabled();
+    EXPECT_EQ(copy.type().unwrap(), Proxy::Type::HTTP);
+    EXPECT_EQ(copy.port().unwrap(), u16(3128));
+    EXPECT_TRUE(copy.url().unwrap()->host().unwrap() == "[::1]"_str);
+    for (auto text : { "http://host",
+                       "https://host",
+                       "socks4://host",
+                       "socks4a://host",
+                       "socks5://host",
+                       "socks5h://host" }) {
+        auto value =
+            Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(text)).unwrap()).unwrap();
+        EXPECT_EQ(value.mode(), Proxy::Mode::Explicit);
+        EXPECT_EQ(value.port().unwrap(), u16(1080));
+    }
+    auto session     = SessionOptions {};
+    session.endpoint = Endpoint::unix_socket(PathBuf::from("/tmp/proxy-test.sock"_str)).unwrap();
+    auto effective   = EffectiveOptions::resolve(session, RequestOptions {}).unwrap();
+    EXPECT_EQ(effective.proxy().mode(), Proxy::Mode::Disabled);
+}
+
+TEST(http, LocalHttpProxyPolicies) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto* proxy_address = std::getenv("NCREQUEST_TEST_PROXY_URL");
+    if (proxy_address == nullptr) GTEST_SKIP();
+    auto session = ncrequest::Session::make();
+    auto base    = local_http_base_url();
+    auto system  = block_on(fetch_text(session.clone(), local_http_url(base, "/endpoint")));
+    ASSERT_TRUE(system.got_body) << system.error;
+    EXPECT_EQ(system.body, "proxy\n" + local_http_url(base, "/endpoint") + "\n");
+
+    auto direct   = make_request(local_http_url(base, "/endpoint"));
+    auto options  = RequestOptions {};
+    options.proxy = Some(Proxy::disabled());
+    direct.set_options(rstd::move(options));
+    auto disabled = block_on(fetch_text_request(session.clone(), rstd::move(direct)));
+    ASSERT_TRUE(disabled.got_body) << disabled.error;
+    EXPECT_EQ(disabled.body.substr(0, 4), "tcp\n");
+
+    auto bypass_url = base;
+    bypass_url.replace(bypass_url.find("127.0.0.1"), 9, "localhost");
+    auto bypass = block_on(fetch_text(session.clone(), local_http_url(bypass_url, "/endpoint")));
+    ASSERT_TRUE(bypass.got_body) << bypass.error;
+    EXPECT_EQ(bypass.body.substr(0, 4), "tcp\n");
+
+    auto explicit_request  = make_request("http://explicit-bypass.invalid/check?wire=1");
+    auto explicit_options  = RequestOptions {};
+    explicit_options.proxy = Some(
+        Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(proxy_address)).unwrap()).unwrap());
+    explicit_request.set_options(rstd::move(explicit_options));
+    auto explicit_result =
+        block_on(fetch_text_request(session.clone(), rstd::move(explicit_request)));
+    ASSERT_TRUE(explicit_result.got_body) << explicit_result.error;
+    EXPECT_EQ(explicit_result.body, "proxy\nhttp://explicit-bypass.invalid/check?wire=1\n");
+
+    auto inherited = block_on(fetch_text(rstd::move(session), local_http_url(base, "/endpoint")));
+    ASSERT_TRUE(inherited.got_body) << inherited.error;
+    EXPECT_EQ(inherited.body, system.body);
+#else
+    GTEST_SKIP() << "curl proxy runtime test";
+#endif
+}
+
+TEST(http, TimeoutValidationAndOverride) {
+    auto defaults = SessionOptions {};
+    EXPECT_EQ(defaults.timeout.connect.mode(), TimeoutLimit::Mode::BackendDefault);
+    EXPECT_EQ(defaults.timeout.total.mode(), TimeoutLimit::Mode::Disabled);
+    EXPECT_TRUE(defaults.timeout.low_speed.is_none());
+    defaults.timeout.total = TimeoutLimit::after(Duration::from_secs(u64(2)));
+    auto options           = RequestOptions {};
+    auto inherited         = EffectiveOptions::resolve(defaults, options).unwrap();
+    EXPECT_TRUE(inherited.timeout().total.duration().unwrap() == Duration::from_secs(u64(2)));
+    options.timeout = Some(Timeout {});
+    auto reset      = EffectiveOptions::resolve(defaults, options).unwrap();
+    EXPECT_EQ(reset.timeout().total.mode(), TimeoutLimit::Mode::Disabled);
+    EXPECT_TRUE(inherited.timeout().total.duration().is_some());
+    auto value    = Timeout {};
+    value.connect = TimeoutLimit::disabled();
+    EXPECT_TRUE(value.validate().is_ok());
+    value.connect = TimeoutLimit::after(Duration {});
+    EXPECT_TRUE(value.validate().is_err());
+    value.connect = TimeoutLimit::backend_default();
+    value.total   = TimeoutLimit::after(Duration {});
+    EXPECT_TRUE(value.validate().is_err());
+    value.total = TimeoutLimit::after(Duration::from_nanos(u64(1)));
+    EXPECT_TRUE(value.validate().is_ok());
+    value.low_speed = Some(LowSpeedOptions { u64(), Duration::from_secs(u64(1)) });
+    EXPECT_TRUE(value.validate().is_err());
+    value.low_speed = Some(LowSpeedOptions { u64(1), Duration {} });
+    EXPECT_TRUE(value.validate().is_err());
+    value.low_speed = Some(LowSpeedOptions { u64(1), Duration::from_millis(u64(1)) });
+    EXPECT_TRUE(value.validate().is_ok());
+}
+
+TEST(http, LocalHttpTimeoutPolicies) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto session = ncrequest::Session::make();
+    auto fetch   = [&](std::string url, Timeout timeout) {
+        auto request    = make_request(url);
+        auto options    = RequestOptions {};
+        options.proxy   = Some(Proxy::disabled());
+        options.timeout = Some(timeout);
+        request.set_options(rstd::move(options));
+        return block_on(fetch_text_request(session.clone(), rstd::move(request)));
+    };
+    auto policy         = Timeout {};
+    policy.total        = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    auto before_headers = fetch(local_http_url(base, "/slow-first-byte"), policy);
+    EXPECT_FALSE(before_headers.got_response);
+    EXPECT_EQ(before_headers.error_kind, ncrequest::ErrorKind::Client) << before_headers.error;
+    EXPECT_EQ(before_headers.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    auto active = fetch(local_http_url(base, "/timeout-trickle"), policy);
+    EXPECT_TRUE(active.got_response);
+    EXPECT_FALSE(active.got_body);
+    EXPECT_EQ(active.error_kind, ncrequest::ErrorKind::Client) << active.error;
+    EXPECT_EQ(active.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+
+    policy.total   = TimeoutLimit::disabled();
+    policy.connect = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    auto connected = fetch(local_http_url(base, "/delay"), policy);
+    ASSERT_TRUE(connected.got_body) << connected.error;
+    EXPECT_EQ(connected.body, "delayed\n");
+    policy.low_speed = Some(LowSpeedOptions { u64(1000), Duration::from_millis(u64(1)) });
+    auto slow        = fetch(local_http_url(base, "/timeout-stall"), policy);
+    EXPECT_TRUE(slow.got_response);
+    EXPECT_FALSE(slow.got_body);
+    EXPECT_EQ(slow.error_kind, ncrequest::ErrorKind::Client) << slow.error;
+    EXPECT_EQ(slow.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+
+    policy.low_speed = None();
+    auto restored    = fetch(local_http_url(base, "/delayed-body"), policy);
+    ASSERT_TRUE(restored.got_body) << restored.error;
+    EXPECT_EQ(restored.body, "delayed body");
+
+    policy.total = TimeoutLimit::after(Duration::from_nanos(u64(1)));
+    auto tiny    = fetch(local_http_url(base, "/delay"), policy);
+    EXPECT_FALSE(tiny.got_body);
+    EXPECT_EQ(tiny.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    policy.total     = TimeoutLimit::disabled();
+    policy.connect   = TimeoutLimit::disabled();
+    auto unsupported = fetch(local_http_url(base, "/text"), policy);
+    EXPECT_FALSE(unsupported.got_response);
+    EXPECT_EQ(unsupported.error_kind, ncrequest::ErrorKind::Unsupported);
+    policy.connect = TimeoutLimit::backend_default();
+    policy.total   = TimeoutLimit::after(Duration::from_secs(u64::MAX));
+    auto overflow  = fetch(local_http_url(base, "/text"), policy);
+    EXPECT_FALSE(overflow.got_response);
+    EXPECT_EQ(overflow.error_kind, ncrequest::ErrorKind::InvalidState);
+    policy.total        = TimeoutLimit::disabled();
+    policy.low_speed    = Some(LowSpeedOptions { u64::MAX, Duration::from_secs(u64(1)) });
+    auto speed_overflow = fetch(local_http_url(base, "/text"), policy);
+    EXPECT_EQ(speed_overflow.error_kind, ncrequest::ErrorKind::InvalidState);
+    policy.low_speed     = Some(LowSpeedOptions { u64(1), Duration::from_secs(u64::MAX) });
+    auto window_overflow = fetch(local_http_url(base, "/text"), policy);
+    EXPECT_EQ(window_overflow.error_kind, ncrequest::ErrorKind::InvalidState);
+#else
+    GTEST_SKIP() << "curl timeout runtime test";
+#endif
+}
+
+TEST(http, LocalHttpConnectTimeout) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto* url = std::getenv("NCREQUEST_TEST_TLS_STALL_URL");
+    if (url == nullptr) GTEST_SKIP();
+    auto request    = make_request(url);
+    auto options    = RequestOptions {};
+    auto timeout    = Timeout {};
+    timeout.connect = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    timeout.total   = TimeoutLimit::after(Duration::from_secs(u64(2)));
+    options.timeout = Some(timeout);
+    options.proxy   = Some(Proxy::disabled());
+    request.set_options(rstd::move(options));
+    auto started = steady_clock::now();
+    auto result  = block_on(fetch_text_request(ncrequest::Session::make(), rstd::move(request)));
+    auto elapsed = std::chrono::duration_cast<milliseconds>(steady_clock::now() - started);
+    EXPECT_FALSE(result.got_response);
+    EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Client) << result.error;
+    EXPECT_EQ(result.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_LT(elapsed.count(), 1500);
+#else
+    GTEST_SKIP() << "curl connect timeout runtime test";
+#endif
+}
+
+TEST(http, TlsOptionsValidationAndSnapshot) {
+    auto defaults = SessionOptions {};
+    EXPECT_TRUE(defaults.tls.verify_peer);
+    EXPECT_TRUE(defaults.tls.verify_hostname);
+    defaults.tls.ca_bundle       = Some(PathBuf::from("/tmp/root.pem"_str));
+    defaults.tls.client_identity = Some(TlsClientIdentity {
+        PathBuf::from("/tmp/client.pem"_str), PathBuf::from("/tmp/client-key.pem"_str) });
+    auto effective               = EffectiveOptions::resolve(defaults, RequestOptions {}).unwrap();
+    defaults.tls                 = SSL {};
+    EXPECT_TRUE(effective.tls().ca_bundle->as_path() ==
+                PathBuf::from("/tmp/root.pem"_str).as_path());
+    EXPECT_TRUE(effective.tls().client_identity.is_some());
+    EXPECT_FALSE(effective.redirect().enabled());
+    defaults.tls = effective.tls().clone();
+    auto options = RequestOptions {};
+    options.tls  = Some(SSL {});
+    auto reset   = EffectiveOptions::resolve(defaults, options).unwrap();
+    EXPECT_TRUE(reset.tls().ca_bundle.is_none());
+    EXPECT_TRUE(reset.tls().client_identity.is_none());
+    EXPECT_FALSE(reset.redirect().enabled());
+    auto invalid      = SSL {};
+    invalid.ca_bundle = Some(PathBuf {});
+    EXPECT_TRUE(invalid.validate().is_err());
+    invalid.ca_bundle = Some(PathBuf::from("secret\0tail"_str));
+    auto error        = invalid.validate().unwrap_err();
+    EXPECT_FALSE(rstd::format("{}", error).as_str().contains("secret"_str));
+    invalid.ca_bundle = None();
+    invalid.client_identity =
+        Some(TlsClientIdentity { PathBuf::from("/tmp/cert"_str), PathBuf {} });
+    EXPECT_TRUE(invalid.validate().is_err());
+    auto identity = effective.tls().clone();
+    auto request  = make_request("http://localhost/");
+    options.tls   = Some(identity.clone());
+    request.set_options(options.clone());
+    EXPECT_TRUE(PreparedRequest::prepare(rstd::move(request), defaults).is_err());
+    request = make_request("https://localhost/");
+    request.set_options(rstd::move(options));
+    EXPECT_TRUE(PreparedRequest::prepare(rstd::move(request), defaults).is_ok());
+}
+
+TEST(http, LocalHttpsVerificationAndIdentity) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto* base = std::getenv("NCREQUEST_TEST_HTTPS_URL");
+    if (base == nullptr) GTEST_SKIP();
+    auto path = [](const char* name) {
+        return PathBuf::from(as_rstd_str(std::getenv(name)));
+    };
+    auto session = ncrequest::Session::make();
+    auto fetch   = [&](std::string url, SSL tls) {
+        auto request    = make_request(url);
+        auto options    = RequestOptions {};
+        options.proxy   = Some(Proxy::disabled());
+        auto timeout    = Timeout {};
+        timeout.total   = TimeoutLimit::after(Duration::from_secs(u64(3)));
+        options.timeout = Some(timeout);
+        options.tls     = Some(rstd::move(tls));
+        request.set_options(rstd::move(options));
+        return block_on(fetch_text_request(session.clone(), rstd::move(request)));
+    };
+    auto url       = std::string(base) + "/text";
+    auto untrusted = fetch(url, SSL {});
+    EXPECT_EQ(untrusted.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+    auto tls      = SSL {};
+    tls.ca_bundle = Some(path("NCREQUEST_TEST_TLS_CA"));
+    auto trusted  = fetch(url, tls.clone());
+    ASSERT_TRUE(trusted.got_body) << trusted.error;
+
+    auto mismatch_url = url;
+    mismatch_url.replace(mismatch_url.find("localhost"), 9, "127.0.0.1");
+    auto mismatch = fetch(mismatch_url, tls.clone());
+    EXPECT_EQ(mismatch.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+    tls.verify_hostname = false;
+    EXPECT_TRUE(fetch(mismatch_url, tls.clone()).got_body);
+    tls.ca_bundle = Some(path("NCREQUEST_TEST_TLS_CLIENT_CERT"));
+    auto wrong_ca = fetch(mismatch_url, tls.clone());
+    EXPECT_EQ(wrong_ca.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+    tls.ca_bundle       = None();
+    tls.verify_peer     = false;
+    tls.verify_hostname = true;
+    EXPECT_TRUE(fetch(url, tls.clone()).got_body);
+    auto still_mismatch = fetch(mismatch_url, tls.clone());
+    EXPECT_EQ(still_mismatch.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+    tls.verify_hostname = false;
+    EXPECT_TRUE(fetch(mismatch_url, tls.clone()).got_body);
+    EXPECT_EQ(fetch(url, SSL {}).client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+
+    tls              = SSL {};
+    tls.ca_bundle    = Some(path("NCREQUEST_TEST_TLS_CA"));
+    auto mtls_url    = std::string(std::getenv("NCREQUEST_TEST_MTLS_URL"));
+    auto no_identity = fetch(mtls_url + "/text", tls.clone());
+    EXPECT_TRUE(no_identity.got_error);
+    EXPECT_FALSE(no_identity.got_response);
+    tls.client_identity = Some(TlsClientIdentity { path("NCREQUEST_TEST_TLS_CLIENT_CERT"),
+                                                   path("NCREQUEST_TEST_TLS_CLIENT_KEY") });
+    auto authenticated  = fetch(mtls_url + "/text", tls.clone());
+    ASSERT_TRUE(authenticated.got_body) << authenticated.error;
+    auto redirect = fetch(mtls_url + "/redirect", tls.clone());
+    EXPECT_EQ(redirect.code, 302) << redirect.error << " code=" << redirect.client_code;
+    tls.client_identity->private_key = path("NCREQUEST_TEST_TLS_WRONG_KEY");
+    auto bad_key                     = fetch(mtls_url + "/text", tls.clone());
+    EXPECT_TRUE(bad_key.got_error);
+    EXPECT_FALSE(bad_key.got_response);
+    EXPECT_TRUE(bad_key.client_code == static_cast<int>(curl::CURLcode::CURLE_SSL_CERTPROBLEM) ||
+                bad_key.client_code ==
+                    static_cast<int>(curl::CURLcode::CURLE_BAD_FUNCTION_ARGUMENT))
+        << bad_key.error << " code=" << bad_key.client_code;
+    tls.client_identity = None();
+    EXPECT_TRUE(fetch(mtls_url + "/text", tls.clone()).got_error);
+    tls.ca_bundle = Some(PathBuf::from("/no-such-ncrequest-secret-ca"_str));
+    auto missing  = fetch(url, tls.clone());
+    EXPECT_TRUE(missing.got_error);
+    EXPECT_EQ(missing.error.find("secret"), std::string::npos);
+
+    auto proxy_request = make_request("http://unused.invalid/text");
+    auto proxy_options = RequestOptions {};
+    proxy_options.proxy =
+        Some(Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(base)).unwrap()).unwrap());
+    tls.ca_bundle       = Some(path("NCREQUEST_TEST_TLS_CA"));
+    tls.verify_peer     = false;
+    tls.verify_hostname = false;
+    proxy_options.tls   = Some(rstd::move(tls));
+    proxy_request.set_options(rstd::move(proxy_options));
+    auto proxy_result = block_on(fetch_text_request(session.clone(), rstd::move(proxy_request)));
+    EXPECT_EQ(proxy_result.client_code,
+              static_cast<int>(curl::CURLcode::CURLE_PEER_FAILED_VERIFICATION));
+#else
+    GTEST_SKIP() << "curl TLS runtime test";
+#endif
+}
+
+TEST(http, RedirectOriginsAndOptions) {
+    auto base = lihttpto::Url::parse("https://EXAMPLE.com/a"_str).unwrap();
+    EXPECT_TRUE(
+        base.same_http_origin(lihttpto::Url::parse("https://example.com:443/b"_str).unwrap()));
+    EXPECT_FALSE(base.same_http_origin(lihttpto::Url::parse("http://example.com/b"_str).unwrap()));
+    EXPECT_FALSE(
+        base.same_http_origin(lihttpto::Url::parse("https://example.com:444/b"_str).unwrap()));
+    EXPECT_FALSE(
+        base.same_http_origin(lihttpto::Url::parse("https://other.invalid/b"_str).unwrap()));
+    EXPECT_FALSE(base.same_http_origin(lihttpto::Url::parse("ftp://example.com/b"_str).unwrap()));
+    EXPECT_FALSE(
+        base.same_http_origin(lihttpto::Url::parse("https://example.com:65536/b"_str).unwrap()));
+    auto defaults = SessionOptions {};
+    EXPECT_FALSE(defaults.redirect.enabled());
+    defaults.redirect = RedirectOptions::same_origin(u32(2));
+    auto options      = RequestOptions {};
+    auto inherited    = EffectiveOptions::resolve(defaults, options).unwrap();
+    EXPECT_EQ(inherited.redirect().max_hops(), u32(2));
+    options.redirect = Some(RedirectOptions::disabled());
+    EXPECT_FALSE(EffectiveOptions::resolve(defaults, options).unwrap().redirect().enabled());
+    defaults.timeout.total = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    auto timed             = EffectiveOptions::resolve(defaults, RequestOptions {}).unwrap();
+    EXPECT_TRUE(timed.remaining_after(Duration::from_millis(u64(101))).unwrap_err().is_Timeout());
+}
+
+TEST(http, LocalHttpRedirectPolicies) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto session = ncrequest::Session::make();
+    auto fetch   = [&](std::string path, RedirectOptions policy) {
+        auto req         = make_request(local_http_url(base, path));
+        auto options     = RequestOptions {};
+        options.redirect = Some(policy);
+        options.proxy    = Some(Proxy::disabled());
+        auto timeout     = Timeout {};
+        timeout.total    = TimeoutLimit::after(Duration::from_secs(u64(3)));
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+        options.timeout = Some(timeout);
+#endif
+        req.set_options(rstd::move(options));
+        return block_on(fetch_text_request(session.clone(), rstd::move(req)));
+    };
+    auto stopped = fetch("/redirect-to", RedirectOptions::disabled());
+    EXPECT_EQ(stopped.code, 302);
+    EXPECT_EQ(stopped.body, "redirect body");
+    auto followed = fetch("/redirect-chain?left=2", RedirectOptions::same_origin(u32(2)));
+    EXPECT_TRUE(followed.got_body) << followed.error;
+    EXPECT_EQ(followed.body, "final");
+    auto exceeded = fetch("/redirect-chain?left=2", RedirectOptions::same_origin(u32(1)));
+    EXPECT_EQ(exceeded.protocol_error, ncrequest::ProtocolError::RedirectLimitExceeded);
+    auto zero = fetch("/redirect-to", RedirectOptions::same_origin(u32()));
+    EXPECT_EQ(zero.protocol_error, ncrequest::ProtocolError::RedirectLimitExceeded);
+    auto cross =
+        fetch("/redirect-to?to=http://other.invalid/secret", RedirectOptions::same_origin());
+    EXPECT_EQ(cross.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto cross_port =
+        fetch("/redirect-to?to=http://127.0.0.1:1/secret", RedirectOptions::same_origin());
+    EXPECT_EQ(cross_port.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto scheme = fetch("/redirect-to?to=file:///tmp/private", RedirectOptions::same_origin());
+    EXPECT_EQ(scheme.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto invalid = fetch("/redirect-duplicate", RedirectOptions::same_origin());
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+    EXPECT_EQ(invalid.client_code, static_cast<int>(curl::CURLcode::CURLE_WEIRD_SERVER_REPLY));
+#else
+    EXPECT_EQ(invalid.protocol_error, ncrequest::ProtocolError::InvalidRedirect);
+#endif
+    auto duplicate = fetch("/redirect-duplicate-same", RedirectOptions::same_origin());
+    EXPECT_EQ(duplicate.protocol_error, ncrequest::ProtocolError::InvalidRedirect);
+    auto relative = fetch("/redirect-to?to=./a/../text", RedirectOptions::same_origin());
+    EXPECT_EQ(relative.code, 200);
+    auto normal = fetch("/redirect-to?code=300", RedirectOptions::same_origin());
+    EXPECT_EQ(normal.code, 300);
+    auto started = steady_clock::now();
+    auto stall   = fetch("/redirect-stall", RedirectOptions::same_origin());
+    EXPECT_TRUE(stall.got_body) << stall.error;
+    EXPECT_LT(std::chrono::duration_cast<milliseconds>(steady_clock::now() - started).count(),
+              2000);
+}
+
+TEST(http, LocalHttpRedirectMethodsAndBody) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto session = ncrequest::Session::make();
+    for (auto code : { 301, 302, 303, 307, 308 }) {
+        for (auto method : { "POST", "PUT", "PATCH", "DELETE" }) {
+            auto req =
+                make_request(local_http_url(base, "/redirect-to?code=" + std::to_string(code)));
+            ASSERT_TRUE(req.try_set_method(as_rstd_str(method)).is_ok());
+            req.set_body(bytes_from_string("payload"));
+            ASSERT_TRUE(req.try_set_header("Authorization"_str, "Bearer test"_str).is_ok());
+            ASSERT_TRUE(req.try_set_header("Cookie"_str, "custom=test"_str).is_ok());
+            ASSERT_TRUE(req.try_set_header("X-Api-Key"_str, "test-key"_str).is_ok());
+            ASSERT_TRUE(req.try_set_header("Content-Type"_str, "test/type"_str).is_ok());
+            auto options     = RequestOptions {};
+            options.redirect = Some(RedirectOptions::same_origin());
+            req.set_options(rstd::move(options));
+            auto result = block_on(fetch_text_request(session.clone(), rstd::move(req)));
+            ASSERT_TRUE(result.got_body) << result.error;
+            bool get =
+                code == 303 || ((code == 301 || code == 302) && std::string(method) == "POST");
+            auto expected = get ? std::string("GET\n\n") : std::string(method) + "\npayload\n";
+            expected += "Bearer test\ncustom=test\ntest-key\n";
+            if (! get) expected += "test/type";
+            EXPECT_EQ(result.body, expected);
+        }
+    }
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    for (auto code : { 303, 307 }) {
+        auto req = make_request(local_http_url(base, "/redirect-to?code=" + std::to_string(code)));
+        req.try_set_method("POST"_str).unwrap();
+        auto reader     = BodyReader {};
+        reader.size     = Some(usize(1));
+        reader.callback = [sent = false](byte* out, usize capacity) mutable -> usize {
+            if (sent || capacity == usize()) return usize();
+            *out = byte('x');
+            sent = true;
+            return usize(1);
+        };
+        req.set_body(RequestBody::from_reader(rstd::move(reader)).unwrap());
+        auto options     = RequestOptions {};
+        options.redirect = Some(RedirectOptions::same_origin());
+        req.set_options(rstd::move(options));
+        auto result = block_on(fetch_text_request(session.clone(), rstd::move(req)));
+        if (code == 303)
+            EXPECT_TRUE(result.got_body) << result.error;
+        else
+            EXPECT_EQ(result.protocol_error, ncrequest::ProtocolError::RedirectBodyNotReplayable);
+    }
+#endif
+}
+
+TEST(http, LocalHttpRedirectTotalBudget) {
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto req         = make_request(local_http_url(base, "/redirect-chain?left=2&delay=0.12"));
+    auto options     = RequestOptions {};
+    auto timeout     = Timeout {};
+    timeout.total    = TimeoutLimit::after(Duration::from_millis(u64(200)));
+    options.timeout  = Some(timeout);
+    options.redirect = Some(RedirectOptions::same_origin());
+    req.set_options(rstd::move(options));
+    auto result = block_on(fetch_text_request(ncrequest::Session::make(), rstd::move(req)));
+    EXPECT_TRUE(result.got_error);
+    EXPECT_FALSE(result.got_body);
+    EXPECT_TRUE(result.error_kind == ncrequest::ErrorKind::Timeout ||
+                result.client_code == static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+#else
+    GTEST_SKIP() << "curl total timeout runtime test";
+#endif
 }
