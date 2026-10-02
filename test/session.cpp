@@ -91,3 +91,25 @@ TEST(session, BackendStartupErrors) {
     EXPECT_TRUE(failed.unwrap_err().is_InvalidState());
 #endif
 }
+
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+TEST(session, CurlEasyKeepsConfigurationError) {
+    auto session = Session::make().unwrap();
+    auto easy    = ncrequest::CurlEasy {};
+    ASSERT_EQ(easy.status(), curl::CURLcode::CURLE_OK);
+    auto headers = lihttpto::Headers {};
+    headers.add("X-Test"_str, "first"_str).unwrap();
+    EXPECT_EQ(easy.set_header(headers), curl::CURLcode::CURLE_OK);
+    EXPECT_EQ(easy.reset_header(), curl::CURLcode::CURLE_OK);
+    auto code = easy.setopt(static_cast<curl::CURLoption>(99999), 0L);
+    ASSERT_EQ(code, curl::CURLcode::CURLE_UNKNOWN_OPTION);
+    EXPECT_EQ(easy.setopt(curl::CURLoption::CURLOPT_NOSIGNAL, 1L), code);
+    EXPECT_EQ(easy.set_header(headers), code);
+    EXPECT_EQ(easy.status(), code);
+    EXPECT_EQ(easy.perform(), code);
+    auto multi = ncrequest::CurlMulti {};
+    auto added = multi.add_handle(easy);
+    ASSERT_TRUE(added.is_err());
+    EXPECT_EQ(added.unwrap_err().as_Easy().code, code);
+}
+#endif

@@ -23,19 +23,6 @@ namespace ncrequest::client::curl
 constexpr static auto POLL_TIMEOUT { Duration::from_millis(u64(1000)) };
 namespace sm = ncrequest::client::curl::session_message;
 
-namespace
-{
-
-template<typename T>
-T get_curl_private(CURL* c) {
-    T        easy { nullptr };
-    CURLcode rc = curl_easy_getinfo(c, CURLINFO_PRIVATE, &easy);
-    rstd_assert(! rc);
-    return easy;
-}
-
-} // namespace
-
 class SessionBackend::Private {
     friend class SessionBackend;
 
@@ -46,10 +33,11 @@ public:
     auto ensure_worker() -> Result<empty>;
     void join_worker();
     void run();
-    void handle_message(const SessionMessage&);
+    void handle_message(SessionMessage&);
 
-    void add_connect(const Arc<Connection>&);
-    void remove_connect(const Arc<Connection>&);
+    auto add_connect(const Arc<Connection>&) -> Result<empty>;
+    auto remove_connect(const Arc<Connection>&) -> bool;
+    void stop(Option<CurlMultiError> error = None());
 
 private:
     Box<CurlMulti>       m_curl_multi;
@@ -72,13 +60,18 @@ SessionBackend::~SessionBackend() {
 }
 
 auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<empty>> {
-    auto& con      = rsp->connection();
-    auto  prepared = rsp->prepare_perform();
-    if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
-
-    auto msg = SessionMessage::ConnectAction(con.get_arc(), sm::Action::Add);
+    auto& con  = rsp->connection();
+    auto  made = rstd::async::Completion<Result<empty>>::make();
+    if (made.is_err()) co_return Err(Error::Io(rstd::move(made).unwrap_err()));
+    auto pair  = rstd::move(made).unwrap();
+    auto ready = rstd::move(pair.get<0>());
+    auto msg   = SessionMessage::Start(con.get_arc(), rstd::move(pair.get<1>()));
     if (! channel().try_send(rstd::move(msg))) co_return Err(Error::Canceled());
 
+    auto prepared = co_await rstd::move(ready);
+    if (prepared.is_err()) co_return Err(Error::Canceled());
+    auto result = rstd::move(prepared).unwrap();
+    if (result.is_err()) co_return Err(rstd::move(result).unwrap_err());
     con.start_upload();
 
     auto header_error = co_await con.wait_header();
@@ -146,74 +139,125 @@ auto SessionBackend::channel_rc() -> Arc<SessionBackend::channel_type> {
 
 void SessionBackend::about_to_stop() { channel().try_send(SessionMessage::Stop()); }
 
-void SessionBackend::Private::add_connect(const Arc<Connection>& con) {
+auto SessionBackend::Private::add_connect(const Arc<Connection>& con) -> Result<empty> {
+    auto prepared = con->prepare();
+    if (prepared.is_err()) {
+        con->cancel();
+        con->release_easy();
+        return prepared;
+    }
+    m_connect_set.push(con.clone());
     auto added = m_curl_multi->add_handle(con->easy());
     if (added.is_err()) {
-        con->finish(CURLcode::CURLE_FAILED_INIT);
-        return;
+        auto error = rstd::into<Error>(rstd::move(added).unwrap_err());
+        if (remove_connect(con)) con->cancel();
+        return Err(rstd::move(error));
     }
     con->transfreing();
-    m_connect_set.push(con.clone());
+    return Ok(empty {});
 }
-void SessionBackend::Private::remove_connect(const Arc<Connection>& con) {
-    (void)m_curl_multi->remove_handle(con->easy());
+
+auto SessionBackend::Private::remove_connect(const Arc<Connection>& con) -> bool {
     for (usize i {}; i < m_connect_set.len(); ++i) {
         if (! Arc<Connection>::ptr_eq(m_connect_set[i], con)) continue;
+        auto removed = m_curl_multi->remove_handle(con->easy());
+        if (removed.is_err()) {
+            stop(Some(rstd::move(removed).unwrap_err()));
+            return false;
+        }
+        con->release_easy();
         auto last = m_connect_set.len() - usize(1);
         if (i != last) m_connect_set[i] = rstd::move(m_connect_set[last]);
         m_connect_set.pop_back();
-        return;
+        return true;
+    }
+    return false;
+}
+
+void SessionBackend::Private::stop(Option<CurlMultiError> error) {
+    if (m_stopped) return;
+    m_stopped = true;
+    m_channel->try_send(SessionMessage::Stop());
+    m_channel->set_wake_callback({});
+    for (auto& con : m_connect_set) {
+        auto removed = m_curl_multi->remove_handle(con->easy());
+        if (removed.is_err() && error.is_none()) error = Some(rstd::move(removed).unwrap_err());
+    }
+    // If removal failed, destroy the multi before releasing any possibly attached easy.
+    auto shutdown = m_curl_multi->shutdown();
+    if (shutdown.is_err() && error.is_none()) error = Some(rstd::move(shutdown).unwrap_err());
+    for (auto& con : m_connect_set) {
+        if (error.is_some())
+            con->fail(rstd::into<Error>(*error));
+        else
+            con->cancel();
+        con->release_easy();
+    }
+    m_connect_set.clear();
+    auto msg = SessionMessage {};
+    while (m_channel->try_receive(msg)) {
+        if (! msg.is_Start()) continue;
+        auto& pending = msg.as_Start();
+        pending.con->cancel();
+        (void)pending.ready.complete(error.is_some() ? Result<empty>(Err(rstd::into<Error>(*error)))
+                                                     : Result<empty>(Err(Error::Canceled())));
     }
 }
 
 void SessionBackend::Private::run() {
-    do {
+    while (! m_stopped) {
         while (m_connect_set.is_empty() && ! m_stopped) {
             auto msg = m_channel->receive();
             handle_message(msg);
         }
-
         auto msg = SessionMessage {};
-        while (m_channel->try_receive(msg)) {
-            handle_message(msg);
+        while (! m_stopped && m_channel->try_receive(msg)) handle_message(msg);
+        if (m_stopped) break;
+
+        int  running_connect { 0 };
+        auto performed = m_curl_multi->perform(running_connect);
+        if (performed.is_err()) {
+            stop(Some(rstd::move(performed).unwrap_err()));
+            break;
         }
-
-        int running_connect { 0 };
-        (void)m_curl_multi->perform(running_connect);
-
         auto infos = m_curl_multi->query_info_msg();
         for (auto& m : infos) {
             if (m.msg != CURLMSG_DONE) continue;
-            auto con = get_curl_private<Connection*>(m.easy_handle)->get_arc();
+            auto found = Option<Arc<Connection>> {};
+            for (auto& active : m_connect_set) {
+                if (active->easy().handle() == m.easy_handle) {
+                    found = Some(active.clone());
+                    break;
+                }
+            }
+            if (found.is_none()) continue;
+            auto con = rstd::move(found).unwrap();
+            if (! remove_connect(con)) break;
             con->finish(m.result);
-            remove_connect(con);
-            running_connect--;
         }
-
-        if (running_connect > 0) {
-            (void)m_curl_multi->poll(POLL_TIMEOUT);
+        if (! m_stopped && ! m_connect_set.is_empty()) {
+            auto polled = m_curl_multi->poll(POLL_TIMEOUT);
+            if (polled.is_err()) stop(Some(rstd::move(polled).unwrap_err()));
         }
-    } while (! m_stopped);
+    }
 }
 
-void SessionBackend::Private::handle_message(const SessionMessage& msg) {
+void SessionBackend::Private::handle_message(SessionMessage& msg) {
     namespace sm = session_message;
     RSTD_MATCH(msg) {
-        RSTD_CASE(Stop) {
-            m_stopped = true;
-            while (! m_connect_set.is_empty()) {
-                auto con = rstd::move(m_connect_set.pop()).unwrap_unchecked();
+        RSTD_CASE(Stop) { stop(); }
+        RSTD_CASE(Start, con, ready) {
+            if (ready.is_closed()) {
                 con->cancel();
-                (void)m_curl_multi->remove_handle(con->easy());
+                return;
             }
+            (void)ready.complete(add_connect(con));
         }
         RSTD_CASE(ConnectAction, con, action) {
             switch (action) {
                 using enum sm::Action;
-            case Add: add_connect(con); break;
             case Cancel:
-                con->cancel();
-                remove_connect(con);
+                if (remove_connect(con)) con->cancel();
                 break;
             case PauseRecv:
             case UnPauseRecv:

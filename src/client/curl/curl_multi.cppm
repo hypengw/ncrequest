@@ -78,6 +78,7 @@ public:
     auto add_handle(CurlEasy& easy) -> CurlMultiResult {
         auto initialized = initialization_result();
         if (initialized.is_err()) return initialized;
+        if (easy.status() != CURLcode::CURLE_OK) return Err(CurlMultiError::Easy(easy.status()));
         auto applied = apply_easy_options(easy);
         if (applied.is_err()) return applied;
         if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
@@ -105,6 +106,13 @@ public:
     }
 
     auto options() const noexcept -> const CurlOptions& { return m_options; }
+
+    auto shutdown() -> CurlMultiResult {
+        if (m_multi == nullptr) return Ok(empty {});
+        auto* multi = m_multi;
+        m_multi     = nullptr;
+        return multi_result(curl_multi_cleanup(multi));
+    }
 
     auto remove_handle(CurlEasy& easy) -> CurlMultiResult {
         return multi_result(curl_multi_remove_handle(m_multi, easy.handle()));

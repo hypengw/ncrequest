@@ -58,7 +58,6 @@ namespace session_message
 {
 enum class Action
 {
-    Add,
     Cancel,
     PauseRecv,
     UnPauseRecv,
@@ -68,6 +67,7 @@ enum class Action
 
 class Message final {
     RSTD_ENUM_DEFAULT(Message, (Stop), (Stop),
+                      (Start, (Arc<Connection> con; CompletionHandle<Result<empty>> ready;)),
                       (ConnectAction, (Arc<Connection> con; Action action;)))
 };
 } // namespace session_message
@@ -89,16 +89,15 @@ public:
     }
 
     auto try_send(SessionMessage msg) -> bool {
-        WakeCallback wake;
         {
             auto fields = m_fields.lock().unwrap();
             if (fields->closed) return false;
             if (msg.is_Stop()) fields->closed = true;
             fields->messages.push(rstd::move(msg));
-            wake = fields->wake.clone();
+            // Detaching the callback must also wait for in-flight native wakeups.
+            if (fields->wake) fields->wake();
         }
         m_cv.notify_one();
-        if (wake) wake();
         return true;
     }
 
@@ -238,15 +237,20 @@ public:
           m_recv_paused(false),
           m_send_paused(false),
           m_request(rstd::move(request)),
-          m_easy(Box<CurlEasy>::make()),
           m_session_channel(rstd::move(session_channel)),
           m_header_parser(true, m_request.options().limits().header_bytes),
           m_trailer_parser(m_request.options().limits().header_bytes),
           m_recv_buf(m_request.options().limits().receive_buffer_bytes),
           m_send_buf(SEND_LIMIT),
           m_mutex(empty {}),
-          m_self(Weak<Connection>::make()) {
-        auto& easy = *m_easy;
+          m_self(Weak<Connection>::make()) {}
+
+    auto prepare() -> Result<empty>;
+    void release_easy() { m_easy = None(); }
+
+    void create_easy() {
+        m_easy     = Some(Box<CurlEasy>::make());
+        auto& easy = **m_easy;
         easy.setopt(CURLoption::CURLOPT_WRITEFUNCTION, Connection::write_callback);
         easy.setopt(CURLoption::CURLOPT_WRITEDATA, this);
 
@@ -264,10 +268,10 @@ public:
         return self;
     }
 
-    auto& easy() { return *m_easy; }
+    auto& easy() { return **m_easy; }
     auto  request() const -> const Request& { return m_request.request(); }
     auto  options() const -> const EffectiveOptions& { return m_request.options(); }
-    auto& easy() const { return *m_easy; }
+    auto& easy() const { return **m_easy; }
     auto& channel() { return m_session_channel; }
 
     auto& header() const { return *m_header; }
@@ -317,7 +321,7 @@ public:
         // curl_easy_pause replaces both directions, not just the one being resumed.
         auto mask =
             (m_recv_paused.load() ? PauseReceive : 0) | (m_send_paused.load() ? PauseSend : 0);
-        auto error = m_easy->pause(mask);
+        auto error = easy().pause(mask);
         if (error != CURLcode::CURLE_OK) fail_upload(rstd::into<Error>(error));
     }
 
@@ -591,6 +595,15 @@ private:
         if (upload.is_some()) upload->abort();
     }
 
+    void fail(Error error) {
+        {
+            auto lock = RawMutexGuard { m_mutex };
+            if (m_state == State::Finished || m_state == State::Canceled) return;
+            if (m_upload_error.is_none()) m_upload_error = Some(rstd::move(error));
+        }
+        cancel();
+    }
+
     void cancel() {
         auto upload = Option<UploadTask> {};
         {
@@ -710,9 +723,9 @@ private:
     Atomic<bool> m_send_paused;
 
     // Keep upload bytes and callbacks alive until easy cleanup, including queued cancellation.
-    PreparedRequest     m_request;
-    Box<CurlEasy>       m_easy;
-    Arc<SessionChannel> m_session_channel;
+    PreparedRequest       m_request;
+    Option<Box<CurlEasy>> m_easy;
+    Arc<SessionChannel>   m_session_channel;
 
     lihttpto::Http1HeadParser         m_header_parser { true };
     lihttpto::Http1FieldSectionParser m_trailer_parser;

@@ -1369,6 +1369,72 @@ TEST(http, LocalHttpSessionClose) {
     EXPECT_TRUE(block_on(send_after_session_drop(local_http_url(base, "/text"))));
 }
 
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+namespace
+{
+auto multi_failure(Arc<ncrequest::Session> session, std::string url) -> ncrequest::coro<bool> {
+    auto first        = spawn_local(session->get(make_request(url)));
+    auto second       = spawn_local(session->get(make_request(url)));
+    bool native_error = false;
+    for (auto* task : { &first, &second }) {
+        auto joined = co_await rstd::move(*task);
+        if (joined.is_err()) co_return false;
+        auto result = rstd::move(*joined);
+        auto error  = ncrequest::Error::Canceled();
+        if (result.is_ok()) {
+            auto body = co_await (*result)->bytes();
+            if (body.is_ok()) co_return false;
+            error = rstd::move(body).unwrap_err();
+        } else {
+            error = rstd::move(result).unwrap_err();
+        }
+        if (error.is_Client()) {
+            auto& client = error.as_Client().error;
+            if (client.backend != ncrequest::ClientBackend::CurlMulti ||
+                client.code != static_cast<i32>(curl::CURLMcode::CURLM_INTERNAL_ERROR))
+                co_return false;
+            native_error = true;
+        } else if (! error.is_Canceled())
+            co_return false;
+    }
+    auto                     rejected = co_await session->get(make_request(url));
+    co_return native_error&& rejected.is_err() && rejected.unwrap_err().is_Canceled();
+}
+
+auto close_many(Arc<ncrequest::Session> session, std::string url) -> ncrequest::coro<bool> {
+    using Pending = rstd::async::JoinHandle<ncrequest::Result<Arc<ncrequest::Response>>>;
+    auto pending  = Vec<Pending>::make();
+    for (int i = 0; i < 16; ++i) pending.push(spawn_local(session->get(make_request(url))));
+    co_await sleep(Duration::from_millis(u64(10)));
+    session->close();
+    for (auto& task : pending) {
+        auto joined = co_await rstd::move(task);
+        if (joined.is_err() || joined->is_ok() || ! joined->unwrap_err().is_Canceled())
+            co_return false;
+    }
+    co_return true;
+}
+} // namespace
+
+TEST(http, LocalHttpCurlMultiFailure) {
+    auto  base    = local_http_base_url();
+    auto* failure = std::getenv("NCREQUEST_TEST_CURL_FAILURE");
+    if (base.empty() || failure == nullptr) GTEST_SKIP();
+    auto path = std::string(failure).starts_with("remove") ? "/empty" : "/delay";
+    EXPECT_TRUE(run_http([url = local_http_url(base, path)](auto session) {
+        return multi_failure(rstd::move(session), url);
+    }));
+}
+
+TEST(http, LocalHttpCloseQueuedRequests) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([url = local_http_url(base, "/delay")](auto session) {
+        return close_many(rstd::move(session), url);
+    }));
+}
+#endif
+
 namespace
 {
 template<class T>

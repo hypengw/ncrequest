@@ -19,6 +19,7 @@ sources = [
   "src/client/curl/websocket.cppm",
   "src/client/curl/init.cpp",
   "src/client/curl/response.cpp",
+  "src/client/curl/connection.cpp",
   "src/client/curl/upload.cpp",
   "src/client/curl/session.cpp",
   "src/client/curl/websocket.cpp",

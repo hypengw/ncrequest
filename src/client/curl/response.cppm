@@ -48,8 +48,6 @@ public:
     void cancel();
 
 private:
-    auto prepare_perform() -> Result<empty>;
-
     auto connection() -> Connection&;
     auto connection() const -> const Connection&;
 
