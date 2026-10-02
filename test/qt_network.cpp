@@ -182,7 +182,7 @@ auto fetch_with_share(Arc<Session> session, std::string url) -> ncrequest::coro<
     auto result   = ErrorResult {};
     auto req      = make_request(url);
     auto options  = RequestOptions {};
-    options.share = Some(Share { Some(ncrequest::SessionShare {}) });
+    options.share = Some(Share { Some(ncrequest::SessionShare::make().unwrap()) });
     req.set_options(rstd::move(options));
 
     auto response = co_await session->get(req.try_clone().unwrap());
@@ -197,7 +197,7 @@ auto fetch_with_share(Arc<Session> session, std::string url) -> ncrequest::coro<
 }
 
 auto share_roundtrip(Arc<Session> session, std::string base) -> ncrequest::coro<FetchResult> {
-    auto share = ncrequest::SessionShare {};
+    auto share = ncrequest::SessionShare::make().unwrap();
     auto set_request =
         make_request(local_http_url(base, "/cookie/set?name=owned_manager_cookie&value=shared"));
     auto options  = RequestOptions {};

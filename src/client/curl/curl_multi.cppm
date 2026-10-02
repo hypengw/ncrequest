@@ -7,8 +7,6 @@ export import rstd;
 
 using namespace rstd::prelude;
 using namespace curl;
-using rstd::ffi::CStr;
-using rstd::path::Path;
 using rstd::sync::Mutex;
 using rstd::sync::MutexGuard;
 using rstd::time::Duration;
@@ -147,51 +145,6 @@ public:
             });
         }
         return out;
-    }
-
-    auto cookies() const -> Vec<String> {
-        auto     out = Vec<String>::make();
-        CurlEasy x;
-
-        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
-        auto list_ = x.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
-        if (list_.is_ok()) {
-            auto list = rstd::move(list_).unwrap();
-            auto head = list;
-            while (list) {
-                auto text = CStr::from_ptr(list->data).to_str();
-                if (text.is_ok()) {
-                    out.push(String::make(rstd::move(text).unwrap()));
-                }
-                list = list->next;
-            }
-            curl_slist_free_all(head);
-        }
-        return out;
-    }
-
-    void load_cookie(ref<Path> path) {
-        auto filename = path.to_cstring();
-        if (filename.is_err()) return;
-        auto owned_filename = rstd::move(filename).unwrap();
-
-        CurlEasy x;
-        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
-        // append filename
-        x.setopt(CURLoption::CURLOPT_COOKIEFILE, owned_filename.as_ptr());
-        // actually load
-        x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
-    }
-
-    void save_cookie(ref<Path> path) const {
-        auto filename = path.to_cstring();
-        if (filename.is_err()) return;
-        auto owned_filename = rstd::move(filename).unwrap();
-
-        CurlEasy x;
-        x.setopt(CURLoption::CURLOPT_SHARE, m_share);
-        x.setopt(CURLoption::CURLOPT_COOKIEJAR, owned_filename.as_ptr());
-        // save when x destruct
     }
 
 private:

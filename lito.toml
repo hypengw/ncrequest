@@ -66,6 +66,7 @@ sources = [
   "src/coro/mod.cppm",
   "src/mod.cppm",
   "src/request.cpp",
+  "src/session_share_io.cpp",
 ]
 
 [usage]

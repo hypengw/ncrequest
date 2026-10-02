@@ -6,6 +6,9 @@ import ncrequest.curl;
 
 using namespace rstd::prelude;
 using namespace curl;
+using namespace rstd::literals;
+using rstd::ffi::CStr;
+using rstd::ffi::CString;
 using rstd::path::Path;
 using rstd::sync::Arc;
 using rstd::sync::Mutex;
@@ -17,7 +20,9 @@ namespace ncrequest
 class SessionShare::Private {
 public:
     Private(): share(curl_share_init()) {}
-    ~Private() { curl_share_cleanup(share); }
+    ~Private() {
+        if (share != nullptr) curl_share_cleanup(share);
+    }
 
     static void lock(CURL*, curl_lock_data data, curl_lock_access, void* clientp) {
         auto* self = static_cast<Private*>(clientp);
@@ -42,12 +47,22 @@ SessionShare::SessionShare(Arc<Private> state): d_ptr(rstd::move(state)) {}
 SessionShare::SessionShare(SessionShare&&) noexcept                    = default;
 auto SessionShare::operator=(SessionShare&&) noexcept -> SessionShare& = default;
 
-SessionShare::SessionShare(): d_ptr(Arc<Private>::make()) {
-    curl_share_setopt(
-        d_ptr->share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
-    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
-    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
-    curl_share_setopt(d_ptr->share, CURLSHoption::CURLSHOPT_USERDATA, d_ptr.as_ptr().as_raw_ptr());
+auto SessionShare::make() -> Result<SessionShare> {
+    auto initialized = curl_init();
+    if (initialized.is_err()) return Err(rstd::into<Error>(initialized.unwrap_err()));
+    auto state = Arc<Private>::make();
+    if (state->share == nullptr)
+        return Err(rstd::into<Error>(CurlMultiError::Share(CURLSHcode::CURLSHE_NOMEM)));
+    auto code = CURLSHcode::CURLSHE_OK;
+    auto set  = [&](CURLSHoption option, auto value) {
+        if (code == CURLSHcode::CURLSHE_OK) code = curl_share_setopt(state->share, option, value);
+    };
+    set(CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+    set(CURLSHoption::CURLSHOPT_LOCKFUNC, Private::lock);
+    set(CURLSHoption::CURLSHOPT_UNLOCKFUNC, Private::unlock);
+    set(CURLSHoption::CURLSHOPT_USERDATA, state.as_ptr().as_raw_ptr());
+    if (code != CURLSHcode::CURLSHE_OK) return Err(rstd::into<Error>(CurlMultiError::Share(code)));
+    return Ok(SessionShare(rstd::move(state)));
 }
 SessionShare::~SessionShare() {}
 
@@ -56,28 +71,53 @@ auto detail::SessionShareAccess::curl_handle(const SessionShare& share) -> CURLS
 }
 auto SessionShare::clone() const -> SessionShare { return SessionShare { d_ptr.clone() }; }
 
-void SessionShare::load(ref<Path> path) {
-    auto filename = path.to_cstring();
-    if (filename.is_err()) return;
-    auto owned_filename = rstd::move(filename).unwrap();
-
-    CurlEasy x;
-    x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
-    // append filename
-    x.setopt(CURLoption::CURLOPT_COOKIEFILE, owned_filename.as_ptr());
-    // actually load
-    x.setopt(CURLoption::CURLOPT_COOKIELIST, "RELOAD");
+auto SessionShare::import_cookies(slice<u8> input) -> Result<empty> {
+    CurlEasy easy;
+    auto     code = easy.setopt<CURLoption::CURLOPT_SHARE>(d_ptr->share);
+    if (code != CURLcode::CURLE_OK) return Err(rstd::into<Error>(code));
+    usize begin {};
+    while (begin < input.len()) {
+        auto end     = begin;
+        bool has_tab = false;
+        while (end < input.len() && input[end] != u8('\n')) {
+            has_tab = has_tab || input[end] == u8('\t');
+            ++end;
+        }
+        auto length = end - begin;
+        if (length != usize() && input[end - usize(1)] == u8('\r')) --length;
+        auto line   = slice<u8>::from_raw_parts(input.as_raw_ptr() + begin.to_primitive(), length);
+        auto prefix = "set-cookie:"_bytes;
+        bool header = line.len() >= prefix.len();
+        for (usize i {}; header && i < prefix.len(); ++i)
+            header = (line[i].to_primitive() | 32) == prefix[i].to_primitive();
+        // File data is Netscape format, never COOKIELIST commands or HTTP header input.
+        if (has_tab && ! header) {
+            auto value = CString::from_vec_unchecked(Vec<u8>::from(line));
+            code       = easy.setopt(CURLoption::CURLOPT_COOKIELIST, value.as_ptr());
+            if (code != CURLcode::CURLE_OK) return Err(rstd::into<Error>(code));
+        }
+        begin = end + usize(1);
+    }
+    return Ok(empty {});
 }
 
-void SessionShare::save(ref<Path> path) const {
-    auto filename = path.to_cstring();
-    if (filename.is_err()) return;
-    auto owned_filename = rstd::move(filename).unwrap();
-
-    CurlEasy x;
-    x.setopt(CURLoption::CURLOPT_SHARE, d_ptr->share);
-    x.setopt(CURLoption::CURLOPT_COOKIEJAR, owned_filename.as_ptr());
-    // save when x destruct
+auto SessionShare::export_cookies() const -> Result<Vec<u8>> {
+    CurlEasy easy;
+    auto     code = easy.setopt<CURLoption::CURLOPT_SHARE>(d_ptr->share);
+    if (code != CURLcode::CURLE_OK) return Err(rstd::into<Error>(code));
+    auto listed = easy.get_info<curl_slist*>(CURLINFO::CURLINFO_COOKIELIST);
+    if (listed.is_err()) return Err(rstd::into<Error>(listed.unwrap_err()));
+    struct List {
+        curl_slist* head;
+        ~List() { curl_slist_free_all(head); }
+    } list { listed.unwrap() };
+    auto output = Vec<u8>::from(
+        "# Netscape HTTP Cookie File\n# This file was generated by ncrequest.\n\n"_bytes);
+    for (auto* item = list.head; item != nullptr; item = item->next) {
+        output.extend_from_slice(CStr::from_ptr(item->data).to_bytes());
+        output.push(u8('\n'));
+    }
+    return Ok(rstd::move(output));
 }
 
 } // namespace ncrequest

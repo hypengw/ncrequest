@@ -126,11 +126,6 @@ void SessionBackend::Private::join_worker() {
     }
 }
 
-void SessionBackend::load_cookie(ref<Path> path) { m_d->m_curl_multi->load_cookie(path); }
-void SessionBackend::save_cookie(ref<Path> path) const { m_d->m_curl_multi->save_cookie(path); }
-
-auto SessionBackend::cookies() -> Vec<String> { return m_d->m_curl_multi->cookies(); }
-
 SessionBackend::channel_type& SessionBackend::channel() { return *(m_d->m_channel); }
 
 auto SessionBackend::channel_rc() -> Arc<SessionBackend::channel_type> {

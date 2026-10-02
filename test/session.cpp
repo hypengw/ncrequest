@@ -17,6 +17,7 @@ using rstd::time::Duration;
 
 static_assert(! std::is_default_constructible_v<Session>);
 static_assert(! std::is_constructible_v<Session, SessionOptions>);
+static_assert(! std::is_default_constructible_v<ncrequest::SessionShare>);
 
 TEST(session, FactoryValidatesDefaults) {
     auto options                = SessionOptions {};

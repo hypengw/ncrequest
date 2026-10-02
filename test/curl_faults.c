@@ -16,6 +16,12 @@ static int should_fail(const char* operation) {
     return 0;
 }
 
+CURLSH* curl_share_init(void) {
+    if (should_fail("share-init")) return NULL;
+    CURLSH* (*real)(void) = dlsym(RTLD_NEXT, "curl_share_init");
+    return real();
+}
+
 CURLMcode curl_multi_perform(CURLM* multi, int* running) {
     if (should_fail("perform")) return CURLM_INTERNAL_ERROR;
     CURLMcode (*real)(CURLM*, int*) = dlsym(RTLD_NEXT, "curl_multi_perform");

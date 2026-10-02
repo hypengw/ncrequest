@@ -342,8 +342,8 @@ auto fetch_after_request_drop(Arc<ncrequest::Session> session, std::string url,
 auto exercise_share(Arc<ncrequest::Session> session, std::string base, PathBuf cookie_file,
                     PathBuf fixture_file) -> ncrequest::coro<ShareResult> {
     auto result   = ShareResult {};
-    auto shared   = ncrequest::SessionShare {};
-    auto isolated = ncrequest::SessionShare {};
+    auto shared   = ncrequest::SessionShare::make().unwrap();
+    auto isolated = ncrequest::SessionShare::make().unwrap();
 
     result.default_set = co_await fetch_text(
         session.clone(), local_http_url(base, "/cookie/set?name=default_cookie&value=default"));
@@ -386,14 +386,14 @@ auto exercise_share(Arc<ncrequest::Session> session, std::string base, PathBuf c
     result.recovered_echo = co_await fetch_text_request(
         second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), cloned));
 
-    auto fixture = ncrequest::SessionShare {};
-    fixture.load(fixture_file.as_path());
+    auto fixture = ncrequest::SessionShare::make().unwrap();
+    fixture.load(fixture_file.as_path()).unwrap();
     result.fixture_echo = co_await fetch_text_request(
         second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), fixture));
 
-    cloned.save(cookie_file.as_path());
-    auto persisted = ncrequest::SessionShare {};
-    persisted.load(cookie_file.as_path());
+    cloned.save(cookie_file.as_path()).unwrap();
+    auto persisted = ncrequest::SessionShare::make().unwrap();
+    persisted.load(cookie_file.as_path()).unwrap();
     result.persisted_echo = co_await fetch_text_request(
         rstd::move(second_session),
         request_with_share(local_http_url(base, "/cookie/echo"), persisted));
@@ -735,7 +735,7 @@ TEST(http, UnifiedOptionsInheritanceAndOverride) {
             .unwrap();
     defaults.tcp             = Tcp { true, i64(12), i64(6) };
     defaults.tls.verify_peer = false;
-    defaults.share           = Share { Some(ncrequest::SessionShare {}) };
+    defaults.share           = Share { Some(ncrequest::SessionShare::make().unwrap()) };
     auto request             = make_request("http://localhost/");
     auto inherited = PreparedRequest::prepare(request.try_clone().unwrap(), defaults).unwrap();
     EXPECT_TRUE(inherited.options().timeout().connect.duration().unwrap() ==
@@ -772,6 +772,87 @@ TEST(http, UnifiedOptionsInheritanceAndOverride) {
     EXPECT_FALSE(inherited.options().tls().verify_peer);
     EXPECT_TRUE(request.options().share.is_some());
     EXPECT_TRUE(request.options().share->share.is_none());
+}
+
+TEST(http, CookiePersistenceErrors) {
+    auto made = ncrequest::SessionShare::make();
+    ASSERT_TRUE(made.is_ok());
+    auto share   = rstd::move(made).unwrap();
+    auto path    = unique_temp_path("cookie-errors");
+    auto missing = share.load(path.as_path());
+    ASSERT_TRUE(missing.is_err());
+    EXPECT_TRUE(missing.unwrap_err().is_Io());
+    auto child = path.clone();
+    child.push(ref<Path>("missing.txt"_str));
+    auto unavailable = share.save(child.as_path());
+    ASSERT_TRUE(unavailable.is_err());
+    EXPECT_TRUE(unavailable.unwrap_err().is_Io());
+    auto directory = share.save(temp_dir().as_path());
+    ASSERT_TRUE(directory.is_err());
+    EXPECT_TRUE(directory.unwrap_err().is_Io());
+    ASSERT_TRUE(share.save(path.as_path()).is_ok());
+    auto empty = read_file(path.as_path());
+    ASSERT_TRUE(empty.has_value());
+    EXPECT_TRUE(empty->starts_with("# Netscape HTTP Cookie File"));
+    EXPECT_TRUE(share.load(path.as_path()).is_ok());
+    remove_file(path.as_path());
+}
+
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+TEST(http, CookieShareInitializationFailure) {
+    auto* fault = std::getenv("NCREQUEST_TEST_CURL_FAILURE");
+    if (fault == nullptr || std::string(fault) != "share-init") GTEST_SKIP();
+    auto share = ncrequest::SessionShare::make();
+    ASSERT_TRUE(share.is_err());
+    auto error = rstd::move(share).unwrap_err();
+    ASSERT_TRUE(error.is_Client());
+    EXPECT_EQ(error.as_Client().error.backend, ncrequest::ClientBackend::CurlShare);
+    EXPECT_EQ(error.as_Client().error.code, static_cast<i32>(curl::CURLSHcode::CURLSHE_NOMEM));
+    EXPECT_TRUE(ncrequest::SessionShare::make().is_ok());
+}
+#endif
+
+TEST(http, CookiePersistenceMergeAndCommands) {
+    auto        share  = ncrequest::SessionShare::make().unwrap();
+    auto        input  = unique_temp_path("cookie-input");
+    auto        output = unique_temp_path("cookie-output");
+    std::string data   = "# Netscape HTTP Cookie File\r\n";
+    for (int i = 0; i < 100; ++i)
+        data += "example.com\tFALSE\t/\tFALSE\t0\tkey" + std::to_string(i) + "\toriginal\r\n";
+    data += "ALL\r\nSESS\r\nFLUSH\r\nRELOAD\r\nall\r\n";
+    data += "Set-Cookie: injected=bad;\tDomain=example.com\r\n";
+    data += "#HttpOnly_example.com\tFALSE\t/\tFALSE\t0\thidden\tsecret";
+    ASSERT_TRUE(write_file(input.as_path(), data));
+    ASSERT_TRUE(share.load(input.as_path()).is_ok());
+    auto clone = share.clone();
+    ASSERT_TRUE(clone.save(output.as_path()).is_ok());
+    auto saved = read_file(output.as_path());
+    ASSERT_TRUE(saved.has_value());
+    for (int i = 0; i < 100; ++i)
+        EXPECT_NE(saved->find("\tkey" + std::to_string(i) + "\toriginal\n"), std::string::npos);
+    EXPECT_NE(saved->find("#HttpOnly_example.com"), std::string::npos);
+    EXPECT_EQ(saved->find("injected"), std::string::npos);
+
+    data = "example.com\tFALSE\t/\tFALSE\t0\tnew_cookie\tvalue\n";
+    data.push_back('\0');
+    ASSERT_TRUE(write_file(input.as_path(), data));
+    auto invalid = share.load(input.as_path());
+    ASSERT_TRUE(invalid.is_err());
+    EXPECT_TRUE(invalid.unwrap_err().is_InvalidState());
+    ASSERT_TRUE(clone.save(output.as_path()).is_ok());
+    auto unchanged = read_file(output.as_path());
+    ASSERT_TRUE(unchanged.has_value());
+    EXPECT_EQ(*unchanged, *saved);
+
+    ASSERT_TRUE(write_file(input.as_path(), "example.com\tFALSE\t/\tFALSE\t0\tkey0\treplaced\n"));
+    ASSERT_TRUE(share.load(input.as_path()).is_ok());
+    ASSERT_TRUE(clone.save(output.as_path()).is_ok());
+    saved = read_file(output.as_path());
+    ASSERT_TRUE(saved.has_value());
+    EXPECT_NE(saved->find("\tkey0\treplaced\n"), std::string::npos);
+    EXPECT_EQ(saved->find("\tkey0\toriginal\n"), std::string::npos);
+    remove_file(input.as_path());
+    remove_file(output.as_path());
 }
 
 TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {

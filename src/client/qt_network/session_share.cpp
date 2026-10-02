@@ -7,8 +7,6 @@ import rstd.cppstd;
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
 using namespace rstd::literals;
-using rstd::fs::read;
-using rstd::fs::write;
 using rstd::path::Path;
 using rstd::sync::Arc;
 using rstd::sync::Mutex;
@@ -190,19 +188,15 @@ SessionShare::SessionShare(Arc<Private> state): d_ptr(rstd::move(state)) {}
 SessionShare::SessionShare(SessionShare&&) noexcept                    = default;
 auto SessionShare::operator=(SessionShare&&) noexcept -> SessionShare& = default;
 
-SessionShare::SessionShare(): d_ptr(Arc<Private>::make()) {}
+auto SessionShare::make() -> Result<SessionShare> { return Ok(SessionShare(Arc<Private>::make())); }
 
 SessionShare::~SessionShare() = default;
 
 auto SessionShare::clone() const -> SessionShare { return SessionShare { d_ptr.clone() }; }
 
-void SessionShare::load(ref<Path> path) {
-    auto input = read(path);
-    if (input.is_err()) return;
-
+auto SessionShare::import_cookies(slice<u8> bytes) -> Result<empty> {
     auto  loaded = QList<QNetworkCookie> {};
-    auto  bytes  = rstd::move(input).unwrap();
-    auto  values = bytes.as_slice();
+    auto  values = bytes;
     auto  now    = QDateTime::currentDateTimeUtc();
     usize begin {};
     while (begin <= bytes.len()) {
@@ -210,7 +204,8 @@ void SessionShare::load(ref<Path> path) {
         while (newline < bytes.len() && values[newline].to_primitive() != '\n') ++newline;
         auto end = newline;
         if (end > begin && values[end - usize(1)].to_primitive() == '\r') --end;
-        auto line   = slice<u8>::from_raw_parts(bytes.data() + begin.to_primitive(), end - begin);
+        auto line =
+            slice<u8>::from_raw_parts(bytes.as_raw_ptr() + begin.to_primitive(), end - begin);
         auto parsed = parse_cookie(line);
         if (parsed.is_some()) {
             auto cookie = rstd::move(parsed).unwrap();
@@ -222,9 +217,10 @@ void SessionShare::load(ref<Path> path) {
 
     auto cookies = d_ptr->cookies.lock().unwrap();
     for (auto const& cookie : loaded) merge_cookie(*cookies, cookie);
+    return Ok(empty {});
 }
 
-void SessionShare::save(ref<Path> path) const {
+auto SessionShare::export_cookies() const -> Result<Vec<u8>> {
     auto cookies = QList<QNetworkCookie> {};
     {
         auto stored = d_ptr->cookies.lock().unwrap();
@@ -262,7 +258,7 @@ void SessionShare::save(ref<Path> path) const {
         append_bytes(output, value);
         append_text(output, "\n"_str);
     }
-    (void)write(path, output.as_slice());
+    return Ok(rstd::move(output));
 }
 
 auto detail::SessionShareAccess::token(const SessionShare& share) -> const void* {

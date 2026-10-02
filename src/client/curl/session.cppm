@@ -39,10 +39,6 @@ public:
 
     auto start_request(PreparedRequest) -> coro<Result<ResponseBackend>>;
 
-    auto cookies() -> Vec<String>;
-    void load_cookie(ref<Path> path);
-    void save_cookie(ref<Path> path) const;
-
     void about_to_stop();
     void close() { about_to_stop(); }
 

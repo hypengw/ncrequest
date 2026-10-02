@@ -136,6 +136,12 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
     }
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
+    auto const& tcp      = options.tcp();
+    auto        defaults = TcpOptions {};
+    if (tcp.keepalive != defaults.keepalive || tcp.keepidle != defaults.keepidle ||
+        tcp.keepintvl != defaults.keepintvl)
+        return Err(Error::Unsupported("Qt Network TCP keepalive options are not supported"));
+
     auto const& limits = options.limits();
     if (limits.header_bytes != ResourceLimits::DefaultHeaderBytes ||
         limits.receive_buffer_bytes != ResourceLimits::DefaultReceiveBufferBytes)
