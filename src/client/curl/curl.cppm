@@ -16,6 +16,8 @@ export using ::CURLINFO;
 export using ::CURLMSG;
 export using ::CURLMsg;
 export using ::CURLSHoption;
+export using ::CURLSHcode;
+export using ::curl_share_strerror;
 export using ::curl_lock_data;
 
 export using ::curl_global_init;
@@ -41,6 +43,8 @@ export using ::curl_easy_pause;
 export using ::curl_easy_perform;
 export using ::curl_easy_strerror;
 export using ::curl_easy_getinfo;
+export constexpr auto PauseReceive = CURLPAUSE_RECV;
+export constexpr auto PauseSend    = CURLPAUSE_SEND;
 
 export using ::curl_multi_strerror;
 export using ::curl_multi_init;

@@ -26,7 +26,8 @@ export struct CurlOptions {
 };
 
 export struct CurlMultiError {
-    RSTD_ENUM(CurlMultiError, (Easy, (CURLcode code;)), (Multi, (CURLMcode code;)))
+    RSTD_ENUM(CurlMultiError, (Easy, (CURLcode code;)), (Multi, (CURLMcode code;)),
+              (Share, (CURLSHcode code;)))
 };
 
 export using CurlMultiResult = rstd::Result<empty, CurlMultiError>;
@@ -47,26 +48,36 @@ public:
           m_share(curl_share_init()),
           m_options(options),
           m_share_mutex(empty {}) {
-        // curl_multi_setopt(m_multi, CURLMOPT_SOCKETFUNCTION, CurlMulti::curl_socket_func);
-        // curl_multi_setopt(m_multi, CURLMOPT_SOCKETDATA, this);
-        // curl_multi_setopt(m_multi, CURLMOPT_TIMERFUNCTION, CurlMulti::curl_timer_func);
-        // curl_multi_setopt(m_multi, CURLMOPT_TIMERDATA, this);
-
-        curl_share_setopt(
-            m_share, CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
-        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_LOCKFUNC, CurlMulti::static_share_lock);
-        curl_share_setopt(
-            m_share, CURLSHoption::CURLSHOPT_UNLOCKFUNC, CurlMulti::static_share_unlock);
-        curl_share_setopt(m_share, CURLSHoption::CURLSHOPT_USERDATA, this);
-        apply_multi_options();
+        if (m_multi == nullptr || m_share == nullptr) {
+            m_init_multi = CURLMcode::CURLM_OUT_OF_MEMORY;
+            return;
+        }
+        auto set = [&](CURLSHoption option, auto value) {
+            if (m_init_share == CURLSHcode::CURLSHE_OK)
+                m_init_share = curl_share_setopt(m_share, option, value);
+        };
+        set(CURLSHoption::CURLSHOPT_SHARE, curl_lock_data::CURL_LOCK_DATA_COOKIE);
+        set(CURLSHoption::CURLSHOPT_LOCKFUNC, CurlMulti::static_share_lock);
+        set(CURLSHoption::CURLSHOPT_UNLOCKFUNC, CurlMulti::static_share_unlock);
+        set(CURLSHoption::CURLSHOPT_USERDATA, this);
+        auto configured = apply_multi_options();
+        if (configured.is_err()) m_init_multi = configured.unwrap_err().as_Multi().code;
     }
 
     ~CurlMulti() {
-        curl_multi_cleanup(m_multi);
-        curl_share_cleanup(m_share);
+        if (m_multi != nullptr) curl_multi_cleanup(m_multi);
+        if (m_share != nullptr) curl_share_cleanup(m_share);
+    }
+
+    auto initialization_result() const -> CurlMultiResult {
+        if (m_init_multi != CURLMcode::CURLM_OK) return Err(CurlMultiError::Multi(m_init_multi));
+        if (m_init_share != CURLSHcode::CURLSHE_OK) return Err(CurlMultiError::Share(m_init_share));
+        return Ok(empty {});
     }
 
     auto add_handle(CurlEasy& easy) -> CurlMultiResult {
+        auto initialized = initialization_result();
+        if (initialized.is_err()) return initialized;
         auto applied = apply_easy_options(easy);
         if (applied.is_err()) return applied;
         if (easy.getopt<CURLoption::CURLOPT_SHARE>() == nullptr) {
@@ -102,7 +113,11 @@ public:
         return multi_result(curl_multi_remove_handle(m_multi, easy));
     }
 
-    auto wakeup() -> CurlMultiResult { return multi_result(curl_multi_wakeup(m_multi)); }
+    auto wakeup() -> CurlMultiResult {
+        auto initialized = initialization_result();
+        if (initialized.is_err()) return initialized;
+        return multi_result(curl_multi_wakeup(m_multi));
+    }
 
     auto perform(int& still_running) -> CurlMultiResult {
         return multi_result(curl_multi_perform(m_multi, &still_running));
@@ -173,6 +188,10 @@ public:
 
 private:
     auto apply_multi_options() -> CurlMultiResult {
+        if (m_options.max_idle_connections < 0 || m_options.max_host_connections < 0 ||
+            m_options.max_total_connections < 0 || m_options.receive_buffer_size < 0 ||
+            m_options.upload_buffer_size < 0)
+            return Err(CurlMultiError::Multi(CURLMcode::CURLM_BAD_FUNCTION_ARGUMENT));
         if (m_options.max_idle_connections > 0) {
             if (auto ec = curl_multi_setopt(
                     m_multi, CURLMoption::CURLMOPT_MAXCONNECTS, m_options.max_idle_connections)) {
@@ -240,6 +259,8 @@ private:
     CURLM*      m_multi;
     CURLSH*     m_share;
     CurlOptions m_options;
+    CURLMcode   m_init_multi { CURLMcode::CURLM_OK };
+    CURLSHcode  m_init_share { CURLSHcode::CURLSHE_OK };
 
     Mutex<empty>              m_share_mutex;
     Option<MutexGuard<empty>> m_share_guard;
@@ -260,6 +281,9 @@ struct Impl<fmt::Display, ncrequest::CurlMultiError> : ImplBase<ncrequest::CurlM
             break;
         case ncrequest::CurlMultiError::Tag::Multi:
             message = curl::curl_multi_strerror(error.as_Multi().code);
+            break;
+        case ncrequest::CurlMultiError::Tag::Share:
+            message = curl::curl_share_strerror(error.as_Share().code);
             break;
         }
         if (message == nullptr) message = "curl multi error";

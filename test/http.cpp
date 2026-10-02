@@ -365,7 +365,7 @@ auto exercise_share(Arc<ncrequest::Session> session, std::string base, PathBuf c
     result.isolated_echo = co_await fetch_text_request(
         rstd::move(session), request_with_share(local_http_url(base, "/cookie/echo"), isolated));
 
-    auto second_session = ncrequest::Session::make();
+    auto second_session = ncrequest::Session::make().unwrap();
     auto cloned         = shared.clone();
     result.cloned_echo  = co_await fetch_text_request(
         second_session.clone(), request_with_share(local_http_url(base, "/cookie/echo"), cloned));
@@ -616,14 +616,14 @@ auto curl_streaming_upload(Arc<ncrequest::Session> session, std::string url, std
 
 template<typename Start>
 auto run_http(Start&& start) {
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     return block_on(start(rstd::move(session)));
 }
 
 template<typename Start>
 auto run_http_multi_thread(Start&& start) {
     auto runtime = RuntimeBuilder::multi_thread().worker_threads(usize(2)).build().unwrap();
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     return runtime.block_on(start(rstd::move(session)));
 }
 
@@ -1344,7 +1344,7 @@ auto close_session(Arc<ncrequest::Session> session, std::string url) -> ncreques
 
 auto send_after_session_drop(std::string url) -> ncrequest::coro<bool> {
     auto pending = [url] {
-        auto session = ncrequest::Session::make();
+        auto session = ncrequest::Session::make().unwrap();
         return session->get(make_request(url));
     }();
     auto response = co_await rstd::move(pending);
@@ -1599,7 +1599,7 @@ TEST(http, LocalHttpUnixEndpoint) {
     if (path.empty()) GTEST_SKIP();
     auto defaults     = SessionOptions {};
     defaults.endpoint = socket_endpoint(path);
-    auto session      = ncrequest::Session::make(rstd::move(defaults));
+    auto session      = ncrequest::Session::make(rstd::move(defaults)).unwrap();
     auto result       = block_on(fetch_text_request(
         session.clone(), make_request("http://podman.invalid:8087/endpoint?detail=1")));
     ASSERT_TRUE(result.got_body) << result.error;
@@ -1806,7 +1806,7 @@ TEST(http, LocalHttpProxyPolicies) {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
     auto* proxy_address = std::getenv("NCREQUEST_TEST_PROXY_URL");
     if (proxy_address == nullptr) GTEST_SKIP();
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     auto base    = local_http_base_url();
     auto system  = block_on(fetch_text(session.clone(), local_http_url(base, "/endpoint")));
     ASSERT_TRUE(system.got_body) << system.error;
@@ -1879,7 +1879,7 @@ TEST(http, LocalHttpTimeoutPolicies) {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     auto fetch   = [&](std::string url, Timeout timeout) {
         auto request    = make_request(url);
         auto options    = RequestOptions {};
@@ -1957,7 +1957,8 @@ TEST(http, LocalHttpConnectTimeout) {
     options.proxy   = Some(Proxy::disabled());
     request.set_options(rstd::move(options));
     auto started = steady_clock::now();
-    auto result  = block_on(fetch_text_request(ncrequest::Session::make(), rstd::move(request)));
+    auto result =
+        block_on(fetch_text_request(ncrequest::Session::make().unwrap(), rstd::move(request)));
     auto elapsed = std::chrono::duration_cast<milliseconds>(steady_clock::now() - started);
     EXPECT_FALSE(result.got_response);
     EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Client) << result.error;
@@ -2015,7 +2016,7 @@ TEST(http, LocalHttpsVerificationAndIdentity) {
     auto path = [](const char* name) {
         return PathBuf::from(as_rstd_str(std::getenv(name)));
     };
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     auto fetch   = [&](std::string url, SSL tls) {
         auto request    = make_request(url);
         auto options    = RequestOptions {};
@@ -2131,7 +2132,7 @@ TEST(http, RedirectOriginsAndOptions) {
 TEST(http, LocalHttpRedirectPolicies) {
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     auto fetch   = [&](std::string path, RedirectOptions policy) {
         auto req         = make_request(local_http_url(base, path));
         auto options     = RequestOptions {};
@@ -2185,7 +2186,7 @@ TEST(http, LocalHttpRedirectPolicies) {
 TEST(http, LocalHttpRedirectMethodsAndBody) {
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
-    auto session = ncrequest::Session::make();
+    auto session = ncrequest::Session::make().unwrap();
     for (auto code : { 301, 302, 303, 307, 308 }) {
         for (auto method : { "POST", "PUT", "PATCH", "DELETE" }) {
             auto req =
@@ -2234,6 +2235,148 @@ TEST(http, LocalHttpRedirectMethodsAndBody) {
 #endif
 }
 
+TEST(http, ResourceLimitsValidationAndSnapshot) {
+    auto defaults                 = SessionOptions {};
+    defaults.limits.collect_bytes = usize(7);
+    auto request                  = RequestOptions {};
+    auto inherited                = EffectiveOptions::resolve(defaults, request).unwrap();
+    EXPECT_EQ(inherited.limits().collect_bytes.to_primitive(), 7u);
+    request.limits                = Some(ncrequest::ResourceLimits {});
+    auto snapshot                 = EffectiveOptions::resolve(defaults, request).unwrap();
+    request.limits->collect_bytes = usize(2);
+    EXPECT_EQ(snapshot.clone().limits().collect_bytes.to_primitive(), 8u * 1024u * 1024u);
+    EXPECT_EQ(request.clone().limits->collect_bytes.to_primitive(), 2u);
+    auto bad         = ncrequest::ResourceLimits {};
+    bad.header_bytes = usize();
+    EXPECT_TRUE(bad.validate().is_err());
+    bad                      = ncrequest::ResourceLimits {};
+    bad.receive_buffer_bytes = usize();
+    EXPECT_TRUE(bad.validate().is_err());
+    bad               = ncrequest::ResourceLimits {};
+    bad.collect_bytes = usize();
+    EXPECT_TRUE(bad.validate().is_ok());
+}
+
+TEST(http, LocalHttpHeaderResourceLimits) {
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto session = ncrequest::Session::make().unwrap();
+    auto fetch   = [&](const std::string& path, usize limit) {
+        auto request                 = make_request(local_http_url(base, path));
+        auto options                 = RequestOptions {};
+        options.limits               = Some(ncrequest::ResourceLimits {});
+        options.limits->header_bytes = limit;
+        request.set_options(rstd::move(options));
+        return block_on(fetch_text_request(session.clone(), rstd::move(request)));
+    };
+    auto exact = fetch("/limit-head", usize(86));
+    EXPECT_TRUE(exact.got_body) << exact.error;
+    for (auto path : { "/limit-head", "/limit-hints", "/limit-trailer" }) {
+        auto result = fetch(path, usize(path == std::string("/limit-head") ? 85 : 128));
+        EXPECT_TRUE(result.got_error) << path;
+        EXPECT_EQ(result.protocol_error, ncrequest::ProtocolError::HeaderTooLarge) << result.error;
+    }
+    auto large = fetch("/limit-head?size=1024&count=70", usize(80 * 1024));
+    EXPECT_TRUE(large.got_body) << large.error;
+    auto default_cap = fetch("/limit-head?size=1024&count=70", usize(64 * 1024));
+    EXPECT_EQ(default_cap.protocol_error, ncrequest::ProtocolError::HeaderTooLarge);
+#else
+    GTEST_SKIP();
+#endif
+}
+
+namespace
+{
+auto collect_with_policy(Arc<ncrequest::Session> session, std::string url, bool take_body,
+                         bool explicit_limit) -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto value   = rstd::move(response).unwrap();
+    auto collect = [&]() -> ncrequest::coro<ncrequest::Result<Bytes>> {
+        if (! take_body) {
+            if (explicit_limit) co_return co_await value->bytes(usize(4096));
+            co_return co_await value->bytes();
+        }
+        auto body = value->take_body().unwrap();
+        if (explicit_limit) co_return co_await body.collect(usize(4096));
+        co_return co_await body.collect();
+    };
+    auto result = co_await collect();
+    co_return result.is_err() && result.unwrap_err().is_Protocol() &&
+        result.unwrap_err().as_Protocol().kind == ncrequest::ProtocolError::BodyTooLarge;
+}
+
+auto stream_with_policy(Arc<ncrequest::Session> session, std::string url) -> ncrequest::coro<bool> {
+    auto response = co_await session->get(make_request(url));
+    if (response.is_err()) co_return false;
+    auto value = rstd::move(response).unwrap();
+    auto body  = value->take_body().unwrap();
+    co_await sleep(Duration::from_millis(u64(100)));
+    if (value->is_finished()) co_return false;
+    usize total {};
+    for (;;) {
+        auto part = co_await body.next();
+        if (part.is_err()) co_return false;
+        if (part->is_none()) break;
+        total += (**part).size();
+        co_await sleep(Duration::from_millis(u64(1)));
+    }
+    co_return total == usize(download_body().size());
+}
+} // namespace
+
+TEST(http, LocalHttpCollectionResourceLimits) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    auto options                 = SessionOptions {};
+    options.limits.collect_bytes = usize(16);
+    auto session                 = ncrequest::Session::make(rstd::move(options)).unwrap();
+    for (bool take_body : { false, true })
+        for (bool explicit_limit : { false, true })
+            EXPECT_TRUE(block_on(collect_with_policy(session.clone(),
+                                                     local_http_url(base, "/limit-unknown"),
+                                                     take_body,
+                                                     explicit_limit)));
+    auto inherited = block_on(fetch_text(session.clone(), local_http_url(base, "/text")));
+    EXPECT_EQ(inherited.protocol_error, ncrequest::ProtocolError::BodyTooLarge);
+    auto request     = make_request(local_http_url(base, "/text"));
+    auto overrides   = RequestOptions {};
+    overrides.limits = Some(ncrequest::ResourceLimits {});
+    request.set_options(rstd::move(overrides));
+    auto reset = block_on(fetch_text_request(session.clone(), rstd::move(request)));
+    EXPECT_TRUE(reset.got_body) << reset.error;
+    options                      = SessionOptions {};
+    options.limits.collect_bytes = usize();
+    auto zero                    = ncrequest::Session::make(rstd::move(options)).unwrap();
+    auto empty = block_on(fetch_text(zero.clone(), local_http_url(base, "/empty")));
+    EXPECT_TRUE(empty.got_body) << empty.error;
+    auto rejected = block_on(fetch_text(zero.clone(), local_http_url(base, "/text")));
+    EXPECT_EQ(rejected.protocol_error, ncrequest::ProtocolError::BodyTooLarge);
+}
+
+TEST(http, LocalHttpReceiveResourceLimits) {
+#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    for (auto capacity : { 16384u, 32768u, 65536u }) {
+        auto options                        = SessionOptions {};
+        options.limits.receive_buffer_bytes = usize(capacity);
+        options.limits.collect_bytes        = usize(1);
+        auto session = ncrequest::Session::make(rstd::move(options)).unwrap();
+        EXPECT_TRUE(
+            block_on(stream_with_policy(session.clone(), local_http_url(base, "/download.bin"))));
+    }
+    auto options                        = SessionOptions {};
+    options.limits.receive_buffer_bytes = usize(1);
+    auto session                        = ncrequest::Session::make(rstd::move(options)).unwrap();
+    auto result = block_on(fetch_text(session.clone(), local_http_url(base, "/text")));
+    EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Unsupported);
+#else
+    GTEST_SKIP();
+#endif
+}
+
 TEST(http, LocalHttpRedirectTotalBudget) {
 #if defined(NCREQUEST_CLIENT_BACKEND_CURL)
     auto base = local_http_base_url();
@@ -2245,7 +2388,8 @@ TEST(http, LocalHttpRedirectTotalBudget) {
     options.timeout  = Some(timeout);
     options.redirect = Some(RedirectOptions::same_origin());
     req.set_options(rstd::move(options));
-    auto result = block_on(fetch_text_request(ncrequest::Session::make(), rstd::move(req)));
+    auto result =
+        block_on(fetch_text_request(ncrequest::Session::make().unwrap(), rstd::move(req)));
     EXPECT_TRUE(result.got_error);
     EXPECT_FALSE(result.got_body);
     EXPECT_TRUE(result.error_kind == ncrequest::ErrorKind::Timeout ||

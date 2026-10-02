@@ -24,6 +24,7 @@ export enum class ProtocolError {
     InvalidHeaderLine,
     HeaderTooLarge,
     BodyTooLarge,
+    BodyLengthMismatch,
     UnexpectedEof,
     InvalidUtf8,
     InvalidRedirect,
@@ -45,6 +46,8 @@ export enum class ErrorKind {
 export enum class ClientBackend {
     QtNetwork,
     Curl,
+    CurlMulti,
+    CurlShare,
 };
 
 export struct ClientError {
@@ -83,6 +86,8 @@ constexpr auto protocol_error_message(ProtocolError kind) noexcept -> const char
     case ProtocolError::InvalidHeaderLine: return "invalid HTTP header line";
     case ProtocolError::HeaderTooLarge: return "HTTP header too large";
     case ProtocolError::BodyTooLarge: return "HTTP body too large";
+    case ProtocolError::BodyLengthMismatch:
+        return "request body length does not match its declared size";
     case ProtocolError::UnexpectedEof: return "unexpected EOF";
     case ProtocolError::InvalidUtf8: return "response text is not UTF-8";
     case ProtocolError::InvalidRedirect: return "invalid redirect location";
@@ -195,6 +200,26 @@ struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
                                  .unwrap()),
         });
     };
+};
+#endif
+
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+template<>
+struct rstd::Impl<From<ncrequest::CurlMultiError>, ncrequest::Error> {
+    static auto from(ncrequest::CurlMultiError error) -> ncrequest::Error {
+        if (error.is_Easy()) return rstd::into<ncrequest::Error>(error.as_Easy().code);
+        auto shared  = error.is_Share();
+        auto code    = shared ? static_cast<i32>(error.as_Share().code)
+                              : static_cast<i32>(error.as_Multi().code);
+        auto message = shared ? curl::curl_share_strerror(error.as_Share().code)
+                              : curl::curl_multi_strerror(error.as_Multi().code);
+        return ncrequest::Error::Client(ncrequest::ClientError {
+            shared ? ncrequest::ClientBackend::CurlShare : ncrequest::ClientBackend::CurlMulti,
+            code,
+            String::make(CStr::from_ptr(message ? message : "curl initialization error")
+                             .to_str()
+                             .unwrap()) });
+    }
 };
 #endif
 

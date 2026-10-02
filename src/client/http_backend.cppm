@@ -28,6 +28,8 @@ concept HttpResponseBackend = requires(T response, const T const_response) {
 export template<typename T, typename ResponseT>
 concept HttpSessionBackend =
     HttpResponseBackend<ResponseT> && requires(T session, PreparedRequest request) {
+        { T::initialize() } -> same_as<Result<empty>>;
+        { session.start() } -> same_as<Result<empty>>;
         { session.start_request(rstd::move(request)) } -> same_as<coro<Result<ResponseT>>>;
     };
 

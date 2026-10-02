@@ -19,6 +19,7 @@ sources = [
   "src/client/curl/websocket.cppm",
   "src/client/curl/init.cpp",
   "src/client/curl/response.cpp",
+  "src/client/curl/upload.cpp",
   "src/client/curl/session.cpp",
   "src/client/curl/websocket.cpp",
   "src/session_share.cpp",
@@ -47,6 +48,7 @@ sources = [
   "src/session_share.cppm",
   "src/request.cppm",
   "src/options.cppm",
+  "src/resource_limits.cppm",
   "src/proxy.cppm",
   "src/timeout.cppm",
   "src/tls.cppm",
@@ -119,7 +121,7 @@ sources = ["test/qt_network.cpp", "test/qt_network_websocket.cpp"]
 
 [[test]]
 name = "ncrequest-tests"
-sources = ["test/main.cpp", "test/http.cpp"]
+sources = ["test/main.cpp", "test/http.cpp", "test/upload.cpp", "test/session.cpp"]
 when = [
   { condition = "!feature.qt", source-groups = ["test-curl"] },
   { condition = "feature.qt", source-groups = ["test-qt"] },

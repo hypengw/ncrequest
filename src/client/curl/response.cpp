@@ -36,6 +36,9 @@ auto duration_units(Duration duration, bool milliseconds) -> Result<long> {
 
 auto apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptions& options)
     -> Result<empty> {
+    // A paused write callback is replayed whole; it must fit in an empty queue.
+    if (options.limits().receive_buffer_bytes < usize(CURL_MAX_WRITE_SIZE))
+        return Err(Error::Unsupported("curl receive buffer must fit CURL_MAX_WRITE_SIZE"));
     auto code = CURLcode::CURLE_OK;
     auto set  = [&](CURLoption option, auto value) {
         if (code == CURLcode::CURLE_OK) code = easy.setopt(option, value);
@@ -172,13 +175,11 @@ Arc<ResponseBackend> ResponseBackend::make_response(PreparedRequest req, Session
 const Request& ResponseBackend::request() const { return connection().request(); }
 
 bool ResponseBackend::pause_send(bool pause) {
-    connection().send_action(pause ? Connection::Action::PauseSend
-                                   : Connection::Action::UnPauseSend);
+    connection().request_pause(false, pause);
     return true;
 }
 bool ResponseBackend::pause_recv(bool pause) {
-    connection().send_action(pause ? Connection::Action::PauseRecv
-                                   : Connection::Action::UnPauseRecv);
+    connection().request_pause(true, pause);
     return true;
 }
 
@@ -190,6 +191,7 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
     auto     method = req.method().as_ref();
     auto&    body   = req.body().bytes();
     auto&    reader = req.body().reader();
+    auto&    stream = req.body().stream();
     CURLcode code   = CURLE_OK;
     auto     set    = [&](CURLoption option, auto value) {
         if (code == CURLE_OK) code = easy.setopt(option, value);
@@ -205,6 +207,13 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
     }
     if (method == "HEAD"_str) {
         set(CURLOPT_NOBODY, 1L);
+    } else if (stream.is_some()) {
+        if (stream->size.is_some() && *stream->size > u64(i64::MAX.to_primitive()))
+            return Err(Error::InvalidState("request body exceeds curl size range"));
+        set(CURLOPT_UPLOAD, 1L);
+        set(CURLOPT_INFILESIZE_LARGE,
+            stream->size.is_some() ? static_cast<curl_off_t>(stream->size->to_primitive())
+                                   : static_cast<curl_off_t>(-1));
     } else if (method == "POST"_str || body.is_some()) {
         set(CURLOPT_POST, 1L);
         if (reader.is_some()) {
@@ -224,7 +233,8 @@ auto ResponseBackend::prepare_perform() -> Result<empty> {
     } else {
         set(CURLOPT_HTTPGET, 1L);
     }
-    if (method != "POST"_str && method != "HEAD"_str && (method != "GET"_str || body.is_some())) {
+    if (stream.is_some() ||
+        (method != "POST"_str && method != "HEAD"_str && (method != "GET"_str || body.is_some()))) {
         auto bytes = Vec<u8>::make();
         bytes.extend_from_slice(method.as_bytes());
         auto token = CString::from_vec_unchecked(rstd::move(bytes));

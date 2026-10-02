@@ -104,6 +104,8 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def method_echo(self) -> None:
+        if self.async_upload_response():
+            return
         if self.redirect_response():
             return
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -123,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
     do_REPORT = method_echo
 
     def do_GET(self) -> None:
+        if self.async_upload_response():
+            return
         if self.redirect_response():
             return
         if self.path.startswith("/redirect-chain"):
@@ -151,6 +155,33 @@ class Handler(BaseHTTPRequestHandler):
             self.method_echo()
             return
         target = urlsplit(self.path)
+
+        if target.path == "/limit-head":
+            params = parse_qs(target.query)
+            size = int(params.get("size", ["20"])[0])
+            count = int(params.get("count", ["1"])[0])
+            self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+            for _ in range(count):
+                self.wfile.write(b"X-Pad: " + b"x" * size + b"\r\n")
+            self.wfile.write(b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            self.close_connection = True
+            return
+        if target.path == "/limit-hints":
+            for _ in range(8):
+                self.wfile.write(b"HTTP/1.1 103 Early Hints\r\nX-Pad: hints\r\n\r\n")
+            self.send_payload(HTTPStatus.OK, b"ok")
+            return
+        if target.path == "/limit-trailer":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+            self.wfile.flush()
+            time.sleep(0.1)
+            self.wfile.write(b"1\r\nx\r\n0\r\nX-Pad: " + b"x" * 256 + b"\r\n\r\n")
+            self.close_connection = True
+            return
+        if target.path == "/limit-unknown":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + b"x" * 256)
+            self.close_connection = True
+            return
 
         if target.path == "/endpoint":
             transport = getattr(self.server, "transport", "tcp")
@@ -319,7 +350,58 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_payload(HTTPStatus.NOT_FOUND, b"unknown path\n")
 
+    def async_upload_response(self) -> bool:
+        if not self.path.startswith("/async-"):
+            return False
+        if self.path == "/async-early":
+            self.send_payload(413, b"rejected")
+            self.close_connection = True
+            return True
+        if self.path == "/async-stall":
+            time.sleep(3)
+            self.close_connection = True
+            return True
+        try:
+            duplex = self.path == "/async-duplex"
+            if duplex:
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 262144\r\nConnection: close\r\n\r\n")
+                self.wfile.write(b"d" * 262143)
+                self.wfile.flush()
+            body = bytearray()
+            if self.headers.get("Transfer-Encoding") == "chunked":
+                while True:
+                    line = self.rfile.readline()
+                    if not line:
+                        return True
+                    size = int(line.strip(), 16)
+                    if not size:
+                        self.rfile.readline()
+                        break
+                    part = self.rfile.read(size)
+                    if len(part) != size:
+                        return True
+                    body.extend(part)
+                    self.rfile.read(2)
+            else:
+                size = int(self.headers.get("Content-Length", "0"))
+                body.extend(self.rfile.read(size))
+                if len(body) != size:
+                    return True
+            if duplex:
+                self.wfile.write(b"d")
+                self.wfile.flush()
+                self.close_connection = True
+            elif self.path == "/async-redirect":
+                self.send_payload(307, b"", extra_headers={"Location": "/text"})
+            else:
+                self.send_payload(200, self.command.encode() + b"\n" + bytes(body))
+        except (OSError, ValueError):
+            pass
+        return True
+
     def do_POST(self) -> None:
+        if self.async_upload_response():
+            return
         if self.redirect_response():
             return
         if self.path == "/body-reader":

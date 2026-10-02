@@ -29,14 +29,15 @@ static_assert(client::HttpSessionBackend<SelectedSessionBackend, SelectedRespons
 export class Session {
     struct ConstructionKey {};
     struct State {
-        SessionOptions         options;
+        EffectiveOptions       options;
         SelectedSessionBackend backend;
         Atomic<bool>           closed { false };
-        State() = default;
-        explicit State(SessionOptions value): options(rstd::move(value)) {}
+        explicit State(EffectiveOptions value): options(rstd::move(value)) {}
 #if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-        explicit State(qt::QObject* parent): backend(parent) {}
-        explicit State(qt::QNetworkAccessManager* manager): backend(manager) {}
+        State(EffectiveOptions value, qt::QObject* parent)
+            : options(rstd::move(value)), backend(parent) {}
+        State(EffectiveOptions value, qt::QNetworkAccessManager* manager)
+            : options(rstd::move(value)), backend(manager) {}
 #endif
         void close() {
             if (! closed.exchange(true)) backend.close();
@@ -48,28 +49,31 @@ public:
     Session(const Session&)                    = delete;
     auto operator=(const Session&) -> Session& = delete;
 
-    Session(): state_(Arc<State>::make()) { start_backend(state_->backend); }
-    explicit Session(SessionOptions options): state_(Arc<State>::make(rstd::move(options))) {
-        start_backend(state_->backend);
-    }
+    Session(ConstructionKey, Arc<State> state): state_(rstd::move(state)) {}
     ~Session() { close(); }
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-    Session(ConstructionKey, qt::QObject* parent): state_(Arc<State>::make(parent)) {}
-    Session(ConstructionKey, qt::QNetworkAccessManager* manager)
-        : state_(Arc<State>::make(manager)) {}
-    static auto from_qt_parent(qt::QObject* parent) -> Arc<Session> {
-        return Arc<Session>::make(ConstructionKey {}, parent);
-    }
-    static auto from_qt_manager(qt::QNetworkAccessManager* manager) -> Arc<Session> {
-        return Arc<Session>::make(ConstructionKey {}, manager);
-    }
-#endif
     void close() { state_->close(); }
 
-    static auto make() -> Arc<Session> { return Arc<Session>::make(); }
-    static auto make(SessionOptions options) -> Arc<Session> {
-        return Arc<Session>::make(rstd::move(options));
+    static auto make(SessionOptions options = {}) -> Result<Arc<Session>> {
+        auto effective = EffectiveOptions::resolve(options, RequestOptions {});
+        if (effective.is_err()) return Err(rstd::move(effective).unwrap_err());
+        auto initialized = SelectedSessionBackend::initialize();
+        if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
+        return finish_make(Arc<State>::make(rstd::move(effective).unwrap()));
     }
+#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+    static auto from_qt_parent(qt::QObject* parent) -> Result<Arc<Session>> {
+        auto initialized = SelectedSessionBackend::initialize(parent);
+        if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
+        auto options = EffectiveOptions::resolve(SessionOptions {}, RequestOptions {}).unwrap();
+        return finish_make(Arc<State>::make(rstd::move(options), parent));
+    }
+    static auto from_qt_manager(qt::QNetworkAccessManager* manager) -> Result<Arc<Session>> {
+        auto initialized = SelectedSessionBackend::initialize(manager);
+        if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
+        auto options = EffectiveOptions::resolve(SessionOptions {}, RequestOptions {}).unwrap();
+        return finish_make(Arc<State>::make(rstd::move(options), manager));
+    }
+#endif
 
     auto get(Request req) -> coro<Result<Arc<Response>>> {
         req.set_method(lihttpto::Method::parse("GET"_str).unwrap());
@@ -91,21 +95,23 @@ public:
     }
 
 private:
-    template<typename T>
-    static void start_backend(T& backend) {
-        if constexpr (requires(T& value) { value.start(); }) {
-            backend.start();
-        }
+    static auto finish_make(Arc<State> state) -> Result<Arc<Session>> {
+        auto started = state->backend.start();
+        if (started.is_err()) return Err(rstd::move(started).unwrap_err());
+        return Ok(Arc<Session>::make(ConstructionKey {}, rstd::move(state)));
     }
 
     static auto send_request(Arc<State> state, Request req) -> coro<Result<Arc<Response>>> {
         if (state->closed.load()) co_return Err(Error::Canceled());
-        auto prepared = PreparedRequest::prepare(rstd::move(req), state->options);
+        auto effective = state->options.with_request(req.options());
+        if (effective.is_err()) co_return Err(rstd::move(effective).unwrap_err());
+        auto prepared = PreparedRequest::prepare(rstd::move(req), rstd::move(effective).unwrap());
         if (prepared.is_err()) co_return Err(rstd::move(prepared).unwrap_err());
         auto redirects = RedirectState(prepared->options().clone());
         for (;;) {
             if (state->closed.load()) co_return Err(Error::Canceled());
-            auto res = co_await state->backend.start_request(rstd::move(prepared).unwrap());
+            auto limits = prepared->options().limits();
+            auto res    = co_await state->backend.start_request(rstd::move(prepared).unwrap());
             if (res.is_err()) co_return Err(rstd::move(res).unwrap_err());
             auto backend = rstd::move(res).unwrap();
             auto ready   = co_await backend.ready_head();
@@ -114,7 +120,7 @@ private:
             if (head.is_none()) co_return Err(Error::InvalidState("response head is unavailable"));
             auto next = redirects.next(backend.request(), **head);
             if (next.is_err()) co_return Err(rstd::move(next).unwrap_err());
-            if (next->is_none()) co_return Response::make(rstd::move(backend));
+            if (next->is_none()) co_return Response::make(rstd::move(backend), limits);
             backend.cancel();
             prepared = Ok(rstd::move(next).unwrap().unwrap());
         }

@@ -43,7 +43,7 @@ public:
     Private(CurlOptions options) noexcept;
     ~Private();
 
-    void ensure_worker();
+    auto ensure_worker() -> Result<empty>;
     void join_worker();
     void run();
     void handle_message(const SessionMessage&);
@@ -63,7 +63,7 @@ private:
 
 SessionBackend::SessionBackend(CurlOptions options): m_d(Box<Private>::make(options)) {}
 
-void SessionBackend::start() { m_d->ensure_worker(); }
+auto SessionBackend::start() -> Result<empty> { return m_d->ensure_worker(); }
 
 SessionBackend::~SessionBackend() {
     about_to_stop();
@@ -78,6 +78,8 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<empty>> {
 
     auto msg = SessionMessage::ConnectAction(con.get_arc(), sm::Action::Add);
     if (! channel().try_send(rstd::move(msg))) co_return Err(Error::Canceled());
+
+    con.start_upload();
 
     auto header_error = co_await con.wait_header();
     if (header_error.is_some()) {
@@ -106,15 +108,18 @@ SessionBackend::Private::Private(CurlOptions options) noexcept
 
 SessionBackend::Private::~Private() { join_worker(); }
 
-void SessionBackend::Private::ensure_worker() {
+auto SessionBackend::Private::ensure_worker() -> Result<empty> {
     auto thread = m_thread.lock().unwrap();
-    if (thread->is_some()) return;
+    if (thread->is_some()) return Ok(empty {});
+    auto initialized = m_curl_multi->initialization_result();
+    if (initialized.is_err()) return Err(rstd::into<Error>(rstd::move(initialized).unwrap_err()));
 
     auto spawned = spawn([this] {
         run();
     });
-    if (spawned.is_err()) rstd::panic { "failed to start curl session worker" };
+    if (spawned.is_err()) return Err(Error::Io(rstd::move(spawned).unwrap_err()));
     *thread = Some(rstd::move(spawned).unwrap());
+    return Ok(empty {});
 }
 
 void SessionBackend::Private::join_worker() {
@@ -210,10 +215,10 @@ void SessionBackend::Private::handle_message(const SessionMessage& msg) {
                 con->cancel();
                 remove_connect(con);
                 break;
-            case PauseRecv: con->easy().pause(CURLPAUSE_RECV); break;
-            case UnPauseRecv: con->easy().pause(CURLPAUSE_RECV_CONT); break;
-            case PauseSend: con->easy().pause(CURLPAUSE_SEND); break;
-            case UnPauseSend: con->easy().pause(CURLPAUSE_SEND_CONT); break;
+            case PauseRecv:
+            case UnPauseRecv:
+            case PauseSend:
+            case UnPauseSend: con->apply_pause(); break;
             }
         }
     }

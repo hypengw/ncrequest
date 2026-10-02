@@ -266,13 +266,13 @@ auto fetch_then_cancel(Arc<Session> session, std::string url) -> ncrequest::coro
 
 template<typename Start>
 auto run_http(Start&& start) {
-    auto session = Session::make();
+    auto session = Session::make().unwrap();
     return block_on(start(rstd::move(session)));
 }
 
 template<typename Start>
 auto run_http_rstd(Start&& start) {
-    auto session = Session::make();
+    auto session = Session::make().unwrap();
     return block_on(start(rstd::move(session)));
 }
 
@@ -280,7 +280,7 @@ template<typename Start>
 auto run_http_rstd_multi_thread(Start&& start) {
     auto runtime_result = RuntimeBuilder::multi_thread().worker_threads(usize(2)).build();
     auto runtime        = runtime_result.unwrap();
-    auto session        = Session::make();
+    auto session        = Session::make().unwrap();
     return runtime.block_on(start(rstd::move(session)));
 }
 
@@ -454,7 +454,7 @@ TEST(qt_network, LocalHttpManagerAutoDeleteOverride) {
 
     QNetworkAccessManager manager;
     manager.setAutoDeleteReplies(true);
-    auto session = Session::from_qt_manager(&manager);
+    auto session = Session::from_qt_manager(&manager).unwrap();
 
     auto result = run_qt_owner_coro(fetch_text(rstd::move(session), local_http_url(base, "/text")));
     ASSERT_TRUE(result.got_response) << result.error;
@@ -471,7 +471,7 @@ TEST(qt_network, LocalHttpExternalManagerRejectsShare) {
     }
 
     QNetworkAccessManager manager;
-    auto                  session = Session::from_qt_manager(&manager);
+    auto                  session = Session::from_qt_manager(&manager).unwrap();
 
     auto result = run_qt_owner_coro(
         fetch_with_share(rstd::move(session), local_http_url(base, "/cookie/echo")));
@@ -487,7 +487,7 @@ TEST(qt_network, LocalHttpOwnedManagerSupportsShare) {
     }
 
     QObject parent;
-    auto    session = Session::from_qt_parent(&parent);
+    auto    session = Session::from_qt_parent(&parent).unwrap();
 
     auto result = run_qt_owner_coro(share_roundtrip(rstd::move(session), base));
     ASSERT_TRUE(result.got_response) << result.error;

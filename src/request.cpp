@@ -61,6 +61,8 @@ auto Request::validate() const -> Result<empty> {
     if (m_url.as_ref().size() == usize()) return Err(Error::InvalidState("request URL is empty"));
     if (m_body.reader().is_some() && m_method.as_ref() != "POST"_str)
         return Err(Error::Unsupported("body reader requires POST"));
+    if (m_method.as_ref() == "HEAD"_str && m_body.stream().is_some())
+        return Err(Error::Unsupported("HEAD request cannot contain a body source"));
     if (m_method.as_ref() == "HEAD"_str && m_body.bytes().is_some() &&
         m_body.bytes()->size() != usize())
         return Err(Error::InvalidState("HEAD request cannot contain a body"));
@@ -121,7 +123,7 @@ auto Request::redirected(lihttpto::Url target, bool use_get) const -> Result<Req
                              "transfer-encoding"_str, "trailer"_str,      "expect"_str };
         for (auto name : names) out.remove_header(name);
     } else {
-        if (m_body.reader().is_some())
+        if (m_body.reader().is_some() || m_body.stream().is_some())
             return Err(Error::Protocol(ProtocolError::RedirectBodyNotReplayable, nullptr));
         out.m_method = m_method.clone();
         out.m_body   = m_body.try_clone().unwrap();

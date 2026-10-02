@@ -25,13 +25,17 @@ public:
     explicit SessionBackend(CurlOptions options = {});
 
     template<typename... Args>
-    static auto make(Args&&... args) -> Arc<SessionBackend> {
+    static auto make(Args&&... args) -> Result<Arc<SessionBackend>> {
+        auto initialized = initialize();
+        if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
         auto session = Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
-        session->start();
-        return session;
+        auto started = session->start();
+        if (started.is_err()) return Err(rstd::move(started).unwrap_err());
+        return Ok(rstd::move(session));
     }
 
-    void start();
+    static auto initialize() -> Result<empty> { return global_init(); }
+    auto        start() -> Result<empty>;
 
     auto start_request(PreparedRequest) -> coro<Result<ResponseBackend>>;
 

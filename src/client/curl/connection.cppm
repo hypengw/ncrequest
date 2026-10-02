@@ -15,6 +15,7 @@ using namespace ::curl;
 using namespace rstd::literals;
 using rstd::async::Completion;
 using rstd::async::CompletionHandle;
+using UploadTask = rstd::async::JoinHandle<void>;
 using rstd::bytes::Bytes;
 using rstd::bytes::BytesMut;
 using rstd::sync::Arc;
@@ -134,7 +135,6 @@ export class Connection {
     friend class SessionBackend;
 
 public:
-    static constexpr usize RECV_LIMIT { 64 * 1024 };
     static constexpr usize SEND_LIMIT { 64 * 1024 };
 
     enum class State
@@ -240,7 +240,9 @@ public:
           m_request(rstd::move(request)),
           m_easy(Box<CurlEasy>::make()),
           m_session_channel(rstd::move(session_channel)),
-          m_recv_buf(RECV_LIMIT),
+          m_header_parser(true, m_request.options().limits().header_bytes),
+          m_trailer_parser(m_request.options().limits().header_bytes),
+          m_recv_buf(m_request.options().limits().receive_buffer_bytes),
           m_send_buf(SEND_LIMIT),
           m_mutex(empty {}),
           m_self(Weak<Connection>::make()) {
@@ -276,6 +278,21 @@ public:
         return Some(ref<lihttpto::Headers>::from_raw_parts(&*m_trailers));
     }
     void set_send_callback(BodyReader::Callback cb) { m_send_callback = rstd::move(cb); }
+    void start_upload();
+    void finish_upload() {
+        auto lock = RawMutexGuard { m_mutex };
+        if (m_state == State::Finished || m_state == State::Canceled) return;
+        m_upload_eof = true;
+        if (m_send_paused.exchange(false)) send_action(Action::UnPauseSend);
+    }
+    void fail_upload(Error error) {
+        {
+            auto lock = RawMutexGuard { m_mutex };
+            if (m_state == State::Finished || m_state == State::Canceled) return;
+            if (m_upload_error.is_none()) m_upload_error = Some(rstd::move(error));
+        }
+        about_to_cancel();
+    }
 
     auto is_finished() const -> bool {
         auto lock = RawMutexGuard { m_mutex };
@@ -286,6 +303,22 @@ public:
     void send_action(Action v) {
         auto msg = SessionMessage::ConnectAction(get_arc(), v);
         m_session_channel->try_send(rstd::move(msg));
+    }
+    void request_pause(bool receive, bool pause) {
+        if (receive)
+            m_recv_paused.store(pause);
+        else
+            m_send_paused.store(pause);
+        send_action(receive ? (pause ? Action::PauseRecv : Action::UnPauseRecv)
+                            : (pause ? Action::PauseSend : Action::UnPauseSend));
+    }
+    void apply_pause() {
+        if (is_finished()) return;
+        // curl_easy_pause replaces both directions, not just the one being resumed.
+        auto mask =
+            (m_recv_paused.load() ? PauseReceive : 0) | (m_send_paused.load() ? PauseSend : 0);
+        auto error = m_easy->pause(mask);
+        if (error != CURLcode::CURLE_OK) fail_upload(rstd::into<Error>(error));
     }
 
     void about_to_cancel() {
@@ -444,6 +477,16 @@ private:
         auto header     = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(ptr), total_size);
         auto lock       = RawMutexGuard { self->m_mutex };
 
+        auto limit = self->options().limits().header_bytes;
+        if (total_size > limit - self->m_header_bytes) {
+            self->m_header_error = Some(lihttpto::HttpParseError {
+                lihttpto::HttpParseErrorKind::HeaderTooLarge(), self->m_header_bytes });
+            self->m_header_done  = true;
+            self->try_header_waiter_locked();
+            return 0;
+        }
+        self->m_header_bytes += total_size;
+
         if (self->m_header_done) {
             self->m_trailer_started = true;
             auto parsed             = self->m_trailer_parser.push(header);
@@ -477,7 +520,7 @@ private:
                 self->m_header_done = true;
                 self->try_header_waiter_locked();
             }
-            self->m_header_parser = lihttpto::Http1HeadParser { true };
+            self->m_header_parser = lihttpto::Http1HeadParser { true, limit };
         }
         return header.len().to_primitive();
     }
@@ -506,7 +549,9 @@ private:
         }
 
         auto lock = RawMutexGuard { self->m_mutex };
+        if (self->m_upload_error.is_some()) return static_cast<rstd::size_t>(CURL_READFUNC_ABORT);
         if (self->m_send_buf.empty()) {
+            if (self->m_upload_eof) return 0;
             self->m_send_paused.store(true);
             return static_cast<rstd::size_t>(CURL_READFUNC_PAUSE);
         }
@@ -518,37 +563,47 @@ private:
     }
 
     void finish(CURLcode ec) {
-        auto lock = RawMutexGuard { m_mutex };
-        if (m_state == State::Finished || m_state == State::Canceled) return;
-        if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
-            auto parsed = m_trailer_parser.push("\r\n"_bytes);
-            if (parsed.is_err()) {
-                m_header_error = Some(rstd::move(parsed).unwrap_err());
-            } else {
-                auto event = rstd::move(parsed).unwrap();
-                if (event.is_Complete()) {
-                    m_trailers = Some(rstd::move(event).as_Complete().fields);
+        auto upload = Option<UploadTask> {};
+        {
+            auto lock = RawMutexGuard { m_mutex };
+            if (m_state == State::Finished || m_state == State::Canceled) return;
+            if (m_trailer_started && m_trailers.is_none() && m_header_error.is_none()) {
+                auto parsed = m_trailer_parser.push("\r\n"_bytes);
+                if (parsed.is_err()) {
+                    m_header_error = Some(rstd::move(parsed).unwrap_err());
                 } else {
-                    auto incomplete = m_trailer_parser.finish();
-                    m_header_error  = Some(rstd::move(incomplete).unwrap_err());
+                    auto event = rstd::move(parsed).unwrap();
+                    if (event.is_Complete()) {
+                        m_trailers = Some(rstd::move(event).as_Complete().fields);
+                    } else {
+                        auto incomplete = m_trailer_parser.finish();
+                        m_header_error  = Some(rstd::move(incomplete).unwrap_err());
+                    }
                 }
             }
+            m_finish_ec = ec;
+            m_state     = State::Finished;
+            upload      = m_upload_task.take();
+            try_read_waiter_locked();
+            try_write_waiter_locked();
+            try_header_waiter_locked();
         }
-        m_finish_ec = ec;
-        m_state     = State::Finished;
-        try_read_waiter_locked();
-        try_write_waiter_locked();
-        try_header_waiter_locked();
+        if (upload.is_some()) upload->abort();
     }
 
     void cancel() {
-        auto lock = RawMutexGuard { m_mutex };
-        if (m_state != State::Finished && m_state != State::Canceled) {
-            m_state = State::Canceled;
+        auto upload = Option<UploadTask> {};
+        {
+            auto lock = RawMutexGuard { m_mutex };
+            if (m_state != State::Finished && m_state != State::Canceled) {
+                m_state = State::Canceled;
+            }
+            upload = m_upload_task.take();
+            try_read_waiter_locked();
+            try_write_waiter_locked();
+            try_header_waiter_locked();
         }
-        try_read_waiter_locked();
-        try_write_waiter_locked();
-        try_header_waiter_locked();
+        if (upload.is_some()) upload->abort();
     }
 
     void transfreing() {
@@ -556,7 +611,8 @@ private:
         if (m_state == State::NotStarted) m_state = State::Transfering;
     }
 
-    auto finish_error_locked() const -> Option<Error> {
+    auto finish_error_locked() -> Option<Error> {
+        if (m_upload_error.is_some()) return m_upload_error.take();
         if (m_header_error.is_some()) {
             auto const& kind     = m_header_error->kind();
             auto        protocol = ProtocolError::InvalidHeaderLine;
@@ -589,7 +645,7 @@ private:
 
         auto recv_size = m_recv_buf.size();
         if (m_state == State::Canceled) {
-            waiter.state->complete(IoResult::fail(Error::Canceled()));
+            waiter.state->complete(IoResult::fail(finish_error_locked().unwrap()));
         } else if (recv_size > usize()) {
             auto copied = m_recv_buf.consume(*waiter.buffer);
             waiter.state->complete(IoResult::ok(copied));
@@ -620,6 +676,8 @@ private:
 
         if (m_state == State::Canceled) {
             waiter.state->complete(IoResult::fail(Error::Canceled()));
+        } else if (m_state == State::Finished) {
+            waiter.state->complete(IoResult::done());
         } else if (! m_send_buf.is_full()) {
             auto copied = m_send_buf.commit(*waiter.buffer);
             waiter.state->complete(IoResult::ok(copied));
@@ -627,13 +685,6 @@ private:
             if (m_send_paused.compare_exchange_strong(
                     pause, false, Ordering::SeqCst, Ordering::SeqCst)) {
                 send_action(Action::UnPauseSend);
-            }
-        } else if (m_state == State::Finished) {
-            auto err = finish_error_locked();
-            if (err.is_some()) {
-                waiter.state->complete(IoResult::fail(rstd::move(err).unwrap_unchecked()));
-            } else {
-                waiter.state->complete(IoResult::done());
             }
         } else {
             m_write_waiter = Some(rstd::move(waiter));
@@ -668,12 +719,16 @@ private:
     Option<lihttpto::MessageHead>     m_header;
     Option<lihttpto::Headers>         m_trailers;
     Option<lihttpto::HttpParseError>  m_header_error;
+    usize                             m_header_bytes {};
     bool                              m_header_done { false };
     bool                              m_trailer_started { false };
     Buffer                            m_recv_buf;
 
     BodyReader::Callback m_send_callback;
     Buffer               m_send_buf;
+    bool                 m_upload_eof { false };
+    Option<Error>        m_upload_error;
+    Option<UploadTask>   m_upload_task;
 
     Option<RstdHeaderState> m_header_waiter;
     Option<RstdReadWaiter>  m_read_waiter;

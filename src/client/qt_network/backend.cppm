@@ -136,6 +136,12 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
     }
     request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
 
+    auto const& limits = options.limits();
+    if (limits.header_bytes != ResourceLimits::DefaultHeaderBytes ||
+        limits.receive_buffer_bytes != ResourceLimits::DefaultReceiveBufferBytes)
+        return Err(Error::Unsupported(
+            "Qt Network custom header and receive buffer limits are not supported"));
+
     auto const& timeout = options.timeout();
     if (timeout.connect.mode() != TimeoutLimit::Mode::BackendDefault)
         return Err(Error::Unsupported("Qt Network connect timeout policy is not supported"));
@@ -607,6 +613,28 @@ public:
     SessionBackend(const SessionBackend&)                    = delete;
     auto operator=(const SessionBackend&) -> SessionBackend& = delete;
 
+    static auto initialize() -> Result<empty> {
+        if (QCoreApplication::instance() == nullptr)
+            return Err(Error::InvalidState("Qt network backend requires a QCoreApplication"));
+        return Ok(empty {});
+    }
+    static auto initialize(QObject* parent) -> Result<empty> {
+        auto initialized = initialize();
+        if (initialized.is_err()) return initialized;
+        if (parent != nullptr && parent->thread() != QThread::currentThread())
+            return Err(Error::InvalidState("Qt parent belongs to another thread"));
+        return Ok(empty {});
+    }
+    static auto initialize(QNetworkAccessManager* manager) -> Result<empty> {
+        if (manager == nullptr) return Err(Error::InvalidState("Qt network manager is null"));
+        return initialize(static_cast<QObject*>(manager));
+    }
+    auto start() -> Result<empty> {
+        if (m_driver.is_none() && m_manager == nullptr)
+            return Err(Error::InvalidState("Qt network backend is unavailable"));
+        return Ok(empty {});
+    }
+
     SessionBackend(): m_driver(Some(Arc<QtNetworkDriver>::make())) {}
 
     explicit SessionBackend(QObject* parent)
@@ -630,8 +658,13 @@ public:
     void close();
 
     template<typename... Args>
-    static auto make(Args&&... args) -> Arc<SessionBackend> {
-        return Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
+    static auto make(Args&&... args) -> Result<Arc<SessionBackend>> {
+        auto initialized = initialize(args...);
+        if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
+        auto backend = Arc<SessionBackend>::make(rstd::forward<Args>(args)...);
+        auto started = backend->start();
+        if (started.is_err()) return Err(rstd::move(started).unwrap_err());
+        return Ok(rstd::move(backend));
     }
 
     auto start_request(PreparedRequest prepared) -> coro<Result<ResponseBackend>>;
@@ -833,6 +866,8 @@ auto SessionBackend::start_request(PreparedRequest prepared_request)
     if (prepared_request.options().endpoint().socket_path().is_some())
         co_return Err(Error::Unsupported("Qt Network does not support Unix socket endpoints"));
     auto req = rstd::move(prepared_request);
+    if (req.request().body().stream().is_some())
+        co_return Err(Error::Unsupported("Qt Network does not support asynchronous body sources"));
     if (req.request().body().reader().is_some())
         co_return Err(Error::Unsupported("Qt Network does not support read callbacks"));
     if (m_driver.is_none()) {

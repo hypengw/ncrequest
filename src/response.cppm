@@ -33,9 +33,11 @@ export class ResponseBody {
     struct State {
         Arc<SelectedResponseBackend> backend;
         Atomic<bool>                 busy { false };
+        usize                        collect_limit;
         bool                         started { false };
         bool                         terminal { false };
-        explicit State(Arc<SelectedResponseBackend> value): backend(rstd::move(value)) {}
+        explicit State(Arc<SelectedResponseBackend> value, usize limit)
+            : backend(rstd::move(value)), collect_limit(limit) {}
     };
     struct ReadGuard {
         Arc<State> state;
@@ -50,8 +52,8 @@ export class ResponseBody {
     };
     Arc<State> state_;
 
-    explicit ResponseBody(Arc<SelectedResponseBackend> backend)
-        : state_(Arc<State>::make(rstd::move(backend))) {}
+    explicit ResponseBody(Arc<SelectedResponseBackend> backend, usize limit)
+        : state_(Arc<State>::make(rstd::move(backend), limit)) {}
 
     static auto next_chunk(State& state) -> coro<Result<Option<Bytes>>> {
         auto result = co_await state.backend->next_chunk();
@@ -83,6 +85,8 @@ export class ResponseBody {
             co_return Err(Error::InvalidState("response body was consumed"));
         state->started  = true;
         guard.completed = false;
+        // A per-call limit may tighten, but never bypass, the resolved request policy.
+        limit = rstd::min(limit, state->collect_limit);
         BytesMut out;
         for (;;) {
             auto part = co_await next_chunk(*state);
@@ -103,8 +107,8 @@ public:
     ResponseBody(const ResponseBody&)                    = delete;
     auto operator=(const ResponseBody&) -> ResponseBody& = delete;
 
-    using Error = ncrequest::Error;
-    static constexpr usize DefaultCollectLimit { 8 * 1024 * 1024 };
+    using Error                                = ncrequest::Error;
+    static constexpr usize DefaultCollectLimit = ResourceLimits::DefaultCollectBytes;
 
     ResponseBody(ResponseBody&&) noexcept = default;
     auto operator=(ResponseBody&& other) noexcept -> ResponseBody& {
@@ -117,9 +121,10 @@ public:
     ~ResponseBody() { cancel(); }
 
     auto next() -> coro<Result<Option<Bytes>>> { return read(state_.clone()); }
-    auto collect(usize limit = DefaultCollectLimit) -> coro<Result<Bytes>> {
-        return collect_body(state_.clone(), limit);
+    auto collect() -> coro<Result<Bytes>> {
+        return collect_body(state_.clone(), state_ ? state_->collect_limit : usize());
     }
+    auto collect(usize limit) -> coro<Result<Bytes>> { return collect_body(state_.clone(), limit); }
     void cancel() {
         if (state_) state_->backend->cancel();
     }
@@ -132,6 +137,7 @@ export class Response {
     struct ConstructionKey {};
     Arc<SelectedResponseBackend> backend_;
     lihttpto::ResponseHead       head_;
+    usize                        collect_limit_;
     Atomic<bool>                 body_taken_ { false };
 
     static auto collect_body(Result<ResponseBody> body, usize limit) -> coro<Result<Bytes>> {
@@ -153,22 +159,27 @@ export class Response {
         if (body.is_err()) co_return Err(TransferError::Source(rstd::move(body).unwrap_err()));
         co_return co_await lihttpto::transfer_body(*body, sink);
     }
-    static auto make(SelectedResponseBackend backend) -> Result<Arc<Response>> {
+    static auto make(SelectedResponseBackend backend, ResourceLimits limits)
+        -> Result<Arc<Response>> {
         auto head = backend.head();
         if (head.is_none()) return Err(Error::InvalidState("response head is unavailable"));
         auto parsed = (*head)->clone().into_response();
         if (parsed.is_err()) return Err(Error::Protocol(ProtocolError::InvalidStatusLine, nullptr));
-        return Ok(Arc<Response>::make(
-            ConstructionKey {}, rstd::move(backend), rstd::move(parsed).unwrap()));
+        return Ok(Arc<Response>::make(ConstructionKey {},
+                                      rstd::move(backend),
+                                      rstd::move(parsed).unwrap(),
+                                      limits.collect_bytes));
     }
 
 public:
     Response(const Response&)                    = delete;
     auto operator=(const Response&) -> Response& = delete;
 
-    Response(ConstructionKey, SelectedResponseBackend backend, lihttpto::ResponseHead head)
+    Response(ConstructionKey, SelectedResponseBackend backend, lihttpto::ResponseHead head,
+             usize collect_limit)
         : backend_(Arc<SelectedResponseBackend>::make(rstd::move(backend))),
-          head_(rstd::move(head)) {}
+          head_(rstd::move(head)),
+          collect_limit_(collect_limit) {}
 
     auto head() const -> const lihttpto::ResponseHead& { return head_; }
     auto header() const -> const lihttpto::Headers& { return head_.headers; }
@@ -181,14 +192,12 @@ public:
     auto take_body() -> Result<ResponseBody> {
         if (body_taken_.exchange(true))
             return Err(Error::InvalidState("response body was already taken"));
-        return Ok(ResponseBody(backend_.clone()));
+        return Ok(ResponseBody(backend_.clone(), collect_limit_));
     }
-    auto bytes(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<Bytes>> {
-        return collect_body(take_body(), limit);
-    }
-    auto text(usize limit = ResponseBody::DefaultCollectLimit) -> coro<Result<String>> {
-        return collect_text(take_body(), limit);
-    }
+    auto bytes() -> coro<Result<Bytes>> { return bytes(collect_limit_); }
+    auto bytes(usize limit) -> coro<Result<Bytes>> { return collect_body(take_body(), limit); }
+    auto text() -> coro<Result<String>> { return text(collect_limit_); }
+    auto text(usize limit) -> coro<Result<String>> { return collect_text(take_body(), limit); }
     template<lihttpto::BodySink Sink>
     auto read_to_stream(Sink& sink)
         -> coro<rstd::Result<u64, lihttpto::BodyTransferError<Error, typename Sink::Error>>> {

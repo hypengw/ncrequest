@@ -5,6 +5,7 @@ export import :proxy;
 export import :timeout;
 export import :tls;
 export import :redirect_options;
+export import :resource_limits;
 export import rstd;
 
 using namespace rstd::prelude;
@@ -61,6 +62,7 @@ export struct RequestOptions {
     Option<TlsOptions>      tls;
     Option<ShareOptions>    share;
     Option<RedirectOptions> redirect;
+    Option<ResourceLimits>  limits;
 
     auto clone() const -> RequestOptions {
         auto out = RequestOptions {};
@@ -71,6 +73,7 @@ export struct RequestOptions {
         if (tls.is_some()) out.tls = Some(tls->clone());
         if (share.is_some()) out.share = Some(share->clone());
         if (redirect.is_some()) out.redirect = Some(RedirectOptions(*redirect));
+        if (limits.is_some()) out.limits = Some(ResourceLimits(*limits));
         return out;
     }
 };
@@ -83,6 +86,7 @@ export struct SessionOptions {
     TlsOptions      tls;
     ShareOptions    share;
     RedirectOptions redirect;
+    ResourceLimits  limits;
 };
 
 export class EffectiveOptions {
@@ -101,7 +105,10 @@ public:
         values.tls      = request.tls.is_some() ? request.tls->clone() : session.tls.clone();
         values.share    = request.share.is_some() ? request.share->clone() : session.share.clone();
         values.redirect = request.redirect.is_some() ? *request.redirect : session.redirect;
-        auto timeout    = values.timeout.validate();
+        values.limits   = request.limits.is_some() ? *request.limits : session.limits;
+        auto limits     = values.limits.validate();
+        if (limits.is_err()) return Err(rstd::move(limits).unwrap_err());
+        auto timeout = values.timeout.validate();
         if (timeout.is_err()) return Err(rstd::move(timeout).unwrap_err());
         auto tls = values.tls.validate();
         if (tls.is_err()) return Err(rstd::move(tls).unwrap_err());
@@ -116,6 +123,10 @@ public:
                     Error::InvalidState("Unix socket endpoint conflicts with TCP keepalive"));
         }
         return Ok(EffectiveOptions(rstd::move(values)));
+    }
+    auto limits() const -> const ResourceLimits& { return values_.limits; }
+    auto with_request(const RequestOptions& request) const -> Result<EffectiveOptions> {
+        return resolve(values_, request);
     }
     auto endpoint() const -> const Endpoint& { return values_.endpoint; }
     auto timeout() const -> const TimeoutOptions& { return values_.timeout; }
@@ -134,6 +145,7 @@ public:
         out.tls      = values_.tls.clone();
         out.share    = values_.share.clone();
         out.redirect = values_.redirect;
+        out.limits   = values_.limits;
         return EffectiveOptions(rstd::move(out));
     }
     auto remaining_after(Duration elapsed) const -> Result<EffectiveOptions> {
