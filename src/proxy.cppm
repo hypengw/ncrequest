@@ -42,9 +42,8 @@ public:
         if ((! url.path().is_empty() && url.path() != "/"_str) || url.query().is_some() ||
             url.fragment().is_some())
             return Err(Error::InvalidState("proxy URL cannot contain a path, query or fragment"));
-        auto normalized = String::make(*scheme);
-        normalized.as_mut_str().make_ascii_lowercase();
-        auto out = ProxyOptions {};
+        auto normalized = *scheme;
+        auto out        = ProxyOptions {};
         if (normalized == "http"_str)
             out.type_ = Type::HTTP;
         else if (normalized == "https"_str)
@@ -59,11 +58,10 @@ public:
             out.type_ = Type::SOCKS5H;
         else
             return Err(Error::Unsupported("unsupported proxy URL scheme"));
-        if (auto port = url.port(); port.is_some()) {
-            auto parsed = rstd::from_str<u16>(*port);
-            if (parsed.is_err() || parsed.unwrap() == u16())
+        if (auto port = url.effective_port(); port.is_some()) {
+            if (*port == u16())
                 return Err(Error::InvalidState("proxy port must be between 1 and 65535"));
-            out.port_ = parsed.unwrap();
+            out.port_ = *port;
         }
         out.mode_ = Mode::Explicit;
         out.url_  = Some(rstd::move(url));

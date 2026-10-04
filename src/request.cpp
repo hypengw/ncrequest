@@ -59,6 +59,9 @@ auto Request::clear_body() -> Request& {
 }
 auto Request::validate() const -> Result<empty> {
     if (m_url.as_ref().size() == usize()) return Err(Error::InvalidState("request URL is empty"));
+    auto scheme = m_url.scheme();
+    if (scheme != Some("http"_str) && scheme != Some("https"_str))
+        return Err(Error::Unsupported("request URL requires HTTP or HTTPS"));
     if (m_body.reader().is_some() && m_method.as_ref() != "POST"_str)
         return Err(Error::Unsupported("body reader requires POST"));
     if (m_method.as_ref() == "HEAD"_str && m_body.stream().is_some())

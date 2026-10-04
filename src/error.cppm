@@ -190,6 +190,7 @@ struct rstd::Impl<From<ncrequest::ClientError>, ncrequest::Error> {
 template<>
 struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
     static auto from(curl::CURLcode e) -> ncrequest::Error {
+        if (e == curl::CURLcode::CURLE_OPERATION_TIMEDOUT) return ncrequest::Error::Timeout();
         auto* message = curl::curl_easy_strerror(e);
         return rstd::into(ncrequest::ClientError {
             .backend = ncrequest::ClientBackend::Curl,

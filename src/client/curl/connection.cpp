@@ -83,8 +83,10 @@ auto apply_easy_request(CurlEasy& easy, const Request& req, const EffectiveOptio
         break;
     case ProxyOptions::Mode::Disabled: set(CURLoption::CURLOPT_PROXY, ""); break;
     case ProxyOptions::Mode::Explicit: {
-        auto address = proxy.url().unwrap()->as_ref();
-        auto value   = CString::from_vec_unchecked(Vec<u8>::from(address.as_bytes()));
+        auto url = proxy.url().unwrap();
+        auto address =
+            rstd::format("{}://{}:{}", *url->scheme(), *url->host(), proxy.port().unwrap());
+        auto value = CString::from_vec_unchecked(Vec<u8>::from(address.as_str().as_bytes()));
         set(CURLoption::CURLOPT_PROXY, value.as_ptr());
         set(CURLoption::CURLOPT_NOPROXY, "");
         break;

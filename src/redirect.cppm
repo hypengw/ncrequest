@@ -32,10 +32,7 @@ public:
             return Err(Error::Protocol(ProtocolError::RedirectLimitExceeded, nullptr));
         auto location = locations[usize()]->to_str();
         if (location.is_err()) return Err(Error::Protocol(ProtocolError::InvalidRedirect, nullptr));
-        auto reference = lihttpto::Url::parse(*location);
-        if (reference.is_err())
-            return Err(Error::Protocol(ProtocolError::InvalidRedirect, nullptr));
-        auto target = request.url_info().resolve(*reference);
+        auto target = request.url_info().resolve(*location);
         if (target.is_err() || target->userinfo().is_some())
             return Err(Error::Protocol(ProtocolError::InvalidRedirect, nullptr));
         if (! request.url_info().same_http_origin(*target))

@@ -1658,6 +1658,21 @@ TEST(http, RequestValidationBeforeNetwork) {
     }));
 }
 
+TEST(http, RequestRejectsNonHttpUrlRecords) {
+    for (auto input : { "file:///tmp/not-opened"_str,
+                        "blob:https://example.com/id"_str,
+                        "ftp://example.com/"_str,
+                        "ws://example.com/"_str,
+                        "data:hello"_str }) {
+        auto url     = lihttpto::Url::parse(input).unwrap();
+        auto request = ncrequest::Request(rstd::move(url));
+        EXPECT_TRUE(request.validate().is_err());
+        EXPECT_TRUE(PreparedRequest::prepare(rstd::move(request), SessionOptions {}).is_err());
+    }
+    auto valid = ncrequest::Request(lihttpto::Url::parse("HTTPS://EXAMPLE.com/"_str).unwrap());
+    EXPECT_TRUE(valid.validate().is_ok());
+}
+
 TEST(http, LocalHttpAbortOwnedUpload) {
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
@@ -1905,11 +1920,9 @@ TEST(http, ProxyModesAndValidation) {
     EXPECT_TRUE(Proxy::system().url().is_none());
     EXPECT_TRUE(Proxy::disabled().type().is_none());
     EXPECT_TRUE(Proxy::disabled().port().is_none());
-    for (auto text : { "relative",
-                       "http://",
-                       "http://host:0",
-                       "http://host:65536",
-                       "http://host:",
+    for (auto text : { "relative", "http://", "http://host:65536" })
+        EXPECT_TRUE(lihttpto::Url::parse(as_rstd_str(text)).is_err());
+    for (auto text : { "http://host:0",
                        "http://host/path",
                        "http://host/?query",
                        "http://host/#fragment",
@@ -1932,12 +1945,17 @@ TEST(http, ProxyModesAndValidation) {
     EXPECT_EQ(copy.type().unwrap(), Proxy::Type::HTTP);
     EXPECT_EQ(copy.port().unwrap(), u16(3128));
     EXPECT_TRUE(copy.url().unwrap()->host().unwrap() == "[::1]"_str);
-    for (auto text : { "http://host",
-                       "https://host",
-                       "socks4://host",
-                       "socks4a://host",
-                       "socks5://host",
-                       "socks5h://host" }) {
+    for (auto text : { "http://host", "http://host:", "http://host:80" }) {
+        auto value =
+            Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(text)).unwrap()).unwrap();
+        EXPECT_EQ(value.port().unwrap(), u16(80));
+    }
+    for (auto text : { "https://host", "https://host:", "https://host:443" }) {
+        auto value =
+            Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(text)).unwrap()).unwrap();
+        EXPECT_EQ(value.port().unwrap(), u16(443));
+    }
+    for (auto text : { "socks4://host", "socks4a://host", "socks5://host", "socks5h://host" }) {
         auto value =
             Proxy::explicit_proxy(lihttpto::Url::parse(as_rstd_str(text)).unwrap()).unwrap();
         EXPECT_EQ(value.mode(), Proxy::Mode::Explicit);
@@ -2261,8 +2279,7 @@ TEST(http, RedirectOriginsAndOptions) {
     EXPECT_FALSE(
         base.same_http_origin(lihttpto::Url::parse("https://other.invalid/b"_str).unwrap()));
     EXPECT_FALSE(base.same_http_origin(lihttpto::Url::parse("ftp://example.com/b"_str).unwrap()));
-    EXPECT_FALSE(
-        base.same_http_origin(lihttpto::Url::parse("https://example.com:65536/b"_str).unwrap()));
+    EXPECT_TRUE(lihttpto::Url::parse("https://example.com:65536/b"_str).is_err());
     auto defaults = SessionOptions {};
     EXPECT_FALSE(defaults.redirect.enabled());
     defaults.redirect = RedirectOptions::same_origin(u32(2));
@@ -2309,8 +2326,16 @@ TEST(http, LocalHttpRedirectPolicies) {
     auto cross_port =
         fetch("/redirect-to?to=http://127.0.0.1:1/secret", RedirectOptions::same_origin());
     EXPECT_EQ(cross_port.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto backslash_cross =
+        fetch("/redirect-to?to=%5C%5Cother.invalid%5Csecret", RedirectOptions::same_origin());
+    EXPECT_EQ(backslash_cross.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto credentials =
+        fetch("/redirect-to?to=http://user@127.0.0.1/secret", RedirectOptions::same_origin());
+    EXPECT_EQ(credentials.protocol_error, ncrequest::ProtocolError::InvalidRedirect);
     auto scheme = fetch("/redirect-to?to=file:///tmp/private", RedirectOptions::same_origin());
     EXPECT_EQ(scheme.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
+    auto blob = fetch("/redirect-to?to=blob:http://127.0.0.1/id", RedirectOptions::same_origin());
+    EXPECT_EQ(blob.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
     auto invalid = fetch("/redirect-duplicate", RedirectOptions::same_origin());
 #ifdef NCREQUEST_CLIENT_BACKEND_CURL
     EXPECT_EQ(invalid.client_code, static_cast<int>(curl::CURLcode::CURLE_WEIRD_SERVER_REPLY));
@@ -2321,6 +2346,8 @@ TEST(http, LocalHttpRedirectPolicies) {
     EXPECT_EQ(duplicate.protocol_error, ncrequest::ProtocolError::InvalidRedirect);
     auto relative = fetch("/redirect-to?to=./a/../text", RedirectOptions::same_origin());
     EXPECT_EQ(relative.code, 200);
+    auto encoded_dot = fetch("/redirect-to?to=./a/%252e%252e/text", RedirectOptions::same_origin());
+    EXPECT_EQ(encoded_dot.code, 200);
     auto normal = fetch("/redirect-to?code=300", RedirectOptions::same_origin());
     EXPECT_EQ(normal.code, 300);
     auto started = steady_clock::now();
