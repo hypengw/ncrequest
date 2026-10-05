@@ -25,6 +25,8 @@ using rstd::str_::from_utf8;
 using rstd::sync::Arc;
 using rstd::sync::Weak;
 using rstd::sync::atomic::Atomic;
+using rstd::time::Duration;
+using rstd::time::Instant;
 
 namespace ncrequest::client::qt_network
 {
@@ -70,6 +72,38 @@ struct DirectReplyState {
     QPointer<QNetworkReply> reply;
 };
 
+struct QtTimeouts {
+    int     total_ms {};
+    int     low_speed_ms {};
+    Instant started { Instant::now() };
+
+    static auto milliseconds(Duration duration) -> Result<int> {
+        auto value = (duration.as_nanos() + u128(999'999)) / u128(1'000'000);
+        if (value > u128(i32::MAX.to_primitive()))
+            return Err(Error::InvalidState("Qt timeout exceeds timer range"));
+        return Ok(static_cast<int>(value.to_primitive()));
+    }
+
+    static auto make(const TimeoutOptions& options) -> Result<QtTimeouts> {
+        if (options.connect.mode() != TimeoutLimit::Mode::BackendDefault)
+            return Err(Error::Unsupported("Qt Network connect timeout policy is not supported"));
+        auto out = QtTimeouts {};
+        if (auto duration = options.total.duration(); duration.is_some())
+            out.total_ms = rstd_try(milliseconds(*duration));
+        if (options.low_speed.is_some())
+            out.low_speed_ms = rstd_try(milliseconds(options.low_speed->window));
+        return Ok(out);
+    }
+
+    auto remaining_ms() const -> int {
+        auto limit   = u128(total_ms) * u128(1'000'000);
+        auto elapsed = started.elapsed().as_nanos();
+        if (elapsed >= limit) return 0;
+        return static_cast<int>(
+            ((limit - elapsed + u128(999'999)) / u128(1'000'000)).to_primitive());
+    }
+};
+
 struct OperationState {
     PreparedRequest                  request;
     Weak<QtNetworkDriver>            driver;
@@ -79,15 +113,18 @@ struct OperationState {
     CompletionQueueHandle<BodyEvent> body;
     Atomic<bool>                     finished { false };
     Atomic<bool>                     cancel_requested { false };
+    QtTimeouts                       timeouts;
+    bool                             timed_out { false };
 
     OperationState(PreparedRequest request, Weak<QtNetworkDriver> driver,
                    Option<AnyExecutor> executor, CompletionHandle<Option<Error>> ready,
-                   CompletionQueueHandle<BodyEvent> body)
+                   CompletionQueueHandle<BodyEvent> body, QtTimeouts timeouts)
         : request(rstd::move(request)),
           driver(rstd::move(driver)),
           executor(rstd::move(executor)),
           ready(rstd::move(ready)),
-          body(rstd::move(body)) {}
+          body(rstd::move(body)),
+          timeouts(timeouts) {}
 
     void cancel();
 
@@ -104,7 +141,8 @@ struct OperationState {
     void close_body() { body.close(); }
 };
 
-auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequest> {
+auto make_qnetwork_request(const PreparedRequest& source, const QtTimeouts& timeouts)
+    -> Result<QNetworkRequest> {
     auto& req     = source.request();
     auto& options = source.options();
     if (QCoreApplication::instance() == nullptr) {
@@ -150,13 +188,7 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
         return Err(Error::Unsupported(
             "Qt Network custom header and receive buffer limits are not supported"));
 
-    auto const& timeout = options.timeout();
-    if (timeout.connect.mode() != TimeoutLimit::Mode::BackendDefault)
-        return Err(Error::Unsupported("Qt Network connect timeout policy is not supported"));
-    if (timeout.total.mode() == TimeoutLimit::Mode::After)
-        return Err(Error::Unsupported("Qt Network total timeout is not supported"));
-    if (timeout.low_speed.is_some())
-        return Err(Error::Unsupported("Qt Network low-speed timeout is not supported"));
+    request.setTransferTimeout(timeouts.low_speed_ms);
 
     auto const& ssl = options.tls();
     if (! ssl.verify_peer || ! ssl.verify_hostname)
@@ -356,6 +388,7 @@ auto transport_error(QNetworkReply* reply) -> Option<Error> {
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
     auto error  = reply->error();
     if (error == QNetworkReply::NoError) return None<Error>();
+    if (error == QNetworkReply::TimeoutError) return Some(Error::Timeout());
     if (error == QNetworkReply::OperationCanceledError) {
         return Some(Error::Canceled());
     }
@@ -411,12 +444,36 @@ void publish_finished(const Arc<OperationState>& state, QNetworkReply* reply) {
     publish_chunks(state, reply);
     state->finished.store(true);
 
-    auto error = transport_error(reply);
+    auto error = state->timed_out ? Some(Error::Timeout()) : transport_error(reply);
     if (error.is_some()) {
         state->push_body_event(BodyEvent::Failed(rstd::move(error).unwrap()));
     } else {
         state->push_body_event(BodyEvent::Finished());
     }
+}
+
+void start_total_timeout(const Arc<OperationState>& state, QNetworkReply* reply) {
+    if (state->timeouts.total_ms == 0 || state->finished.load() || reply->isFinished()) return;
+    auto expire = [capture = make_clone_tuple(state.clone()), reply] {
+        auto& operation = capture.get<0>();
+        if (operation->finished.load() || reply->isFinished()) return;
+        operation->timed_out = ! operation->cancel_requested.load();
+        reply->abort();
+    };
+    auto remaining = state->timeouts.remaining_ms();
+    if (remaining == 0) {
+        expire();
+        return;
+    }
+    auto* timer = new QTimer(reply);
+    timer->setSingleShot(true);
+    timer->setTimerType(Qt::PreciseTimer);
+    QObject::connect(timer, &QTimer::timeout, timer, rstd::move(expire));
+    QObject::connect(reply, &QNetworkReply::finished, timer, [timer] {
+        timer->stop();
+        timer->deleteLater();
+    });
+    timer->start(remaining);
 }
 
 class QtNetworkWorker : public QObject {
@@ -457,7 +514,7 @@ public:
             return;
         }
 
-        auto request = make_qnetwork_request(state->request);
+        auto request = make_qnetwork_request(state->request, state->timeouts);
         if (request.is_err()) {
             fail_start(rstd::move(state), rstd::move(request).unwrap_err());
             return;
@@ -473,6 +530,7 @@ public:
         (void)m_replies.insert(state.as_ptr(),
                                ReplyEntry { QPointer<QNetworkReply>(reply), state.clone() });
         connect_reply(state, reply);
+        start_total_timeout(state, reply);
         state->complete_ready();
     }
 
@@ -698,7 +756,7 @@ public:
     auto start_request(PreparedRequest prepared) -> coro<Result<ResponseBackend>>;
 
 private:
-    auto start_request_direct(PreparedRequest) -> coro<Result<ResponseBackend>>;
+    auto start_request_direct(PreparedRequest, QtTimeouts) -> coro<Result<ResponseBackend>>;
 
 private:
     Option<Arc<QtNetworkDriver>>     m_driver;
@@ -782,7 +840,8 @@ void SessionBackend::close() {
     }
 }
 
-auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<ResponseBackend>> {
+auto SessionBackend::start_request_direct(PreparedRequest req, QtTimeouts timeouts)
+    -> coro<Result<ResponseBackend>> {
     if (m_executor.is_none()) {
         co_return Result<ResponseBackend>(Err(Error::InvalidState("Qt executor is unavailable")));
     }
@@ -822,7 +881,7 @@ auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<Re
             Err(Error::InvalidState("QNetworkAccessManager must be used from its owner thread")));
     }
 
-    auto request = make_qnetwork_request(prepared);
+    auto request = make_qnetwork_request(prepared, timeouts);
     if (request.is_err()) {
         co_return Result<ResponseBackend>(Err(rstd::move(request).unwrap_err()));
     }
@@ -834,7 +893,8 @@ auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<Re
                                            Weak<QtNetworkDriver>::make(),
                                            Some(m_executor->clone()),
                                            rstd::move(ready_pair.get<1>()),
-                                           rstd::move(body_pair.get<1>()));
+                                           rstd::move(body_pair.get<1>()),
+                                           timeouts);
 
     auto* reply = send_request(manager, rstd::move(request).unwrap(), state->request.request());
 
@@ -874,6 +934,7 @@ auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<Re
             operation->push_body_event(
                 BodyEvent::Failed(Error::InvalidState("QNetworkReply was destroyed")));
         });
+    start_total_timeout(state, reply);
     state->complete_ready();
 
     auto ready = co_await rstd::move(ready_pair.get<0>());
@@ -891,6 +952,9 @@ auto SessionBackend::start_request_direct(PreparedRequest req) -> coro<Result<Re
 
 auto SessionBackend::start_request(PreparedRequest prepared_request)
     -> coro<Result<ResponseBackend>> {
+    auto parsed_timeouts = QtTimeouts::make(prepared_request.options().timeout());
+    if (parsed_timeouts.is_err()) co_return Err(rstd::move(parsed_timeouts).unwrap_err());
+    auto timeouts = rstd::move(parsed_timeouts).unwrap();
     if (prepared_request.options().endpoint().socket_path().is_some())
         co_return Err(Error::Unsupported("Qt Network does not support Unix socket endpoints"));
     auto req = rstd::move(prepared_request);
@@ -899,7 +963,7 @@ auto SessionBackend::start_request(PreparedRequest prepared_request)
     if (req.request().body().reader().is_some())
         co_return Err(Error::Unsupported("Qt Network does not support read callbacks"));
     if (m_driver.is_none()) {
-        co_return co_await start_request_direct(rstd::move(req));
+        co_return co_await start_request_direct(rstd::move(req), timeouts);
     }
 
     auto prepared = rstd::move(req);
@@ -922,7 +986,8 @@ auto SessionBackend::start_request(PreparedRequest prepared_request)
                                            m_driver->downgrade(),
                                            None<AnyExecutor>(),
                                            rstd::move(ready_pair.get<1>()),
-                                           rstd::move(body_pair.get<1>()));
+                                           rstd::move(body_pair.get<1>()),
+                                           timeouts);
 
     if (! (*m_driver)->start(state)) {
         state->close_body();

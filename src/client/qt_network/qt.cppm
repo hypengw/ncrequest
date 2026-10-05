@@ -22,6 +22,7 @@ module;
 #include <QSslSocket>
 #include <QString>
 #include <QThread>
+#include <QTimer>
 #include <QUrl>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
@@ -55,6 +56,7 @@ using ::QSslConfiguration;
 using ::QSslSocket;
 using ::QString;
 using ::QThread;
+using ::QTimer;
 using ::quint16;
 using ::QUrl;
 using ::QWebSocket;
@@ -65,6 +67,7 @@ using ConnectionType = ::Qt::ConnectionType;
 
 inline constexpr auto QueuedConnection         = ::Qt::QueuedConnection;
 inline constexpr auto BlockingQueuedConnection = ::Qt::BlockingQueuedConnection;
+inline constexpr auto PreciseTimer             = ::Qt::PreciseTimer;
 } // namespace Qt
 
 namespace QWebSocketProtocol

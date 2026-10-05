@@ -917,11 +917,7 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
     ASSERT_TRUE(result.canceled_request.got_error) << result.canceled_request.error;
     EXPECT_EQ(result.canceled_request.kind, ncrequest::ErrorKind::Canceled);
     ASSERT_TRUE(result.timed_out_request.got_error) << result.timed_out_request.error;
-#ifdef LITO_FEAT_QT
-    EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Unsupported);
-#else
     EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Timeout);
-#endif
 
     ASSERT_TRUE(persisted.has_value());
     EXPECT_FALSE(persisted->empty());
@@ -1210,11 +1206,7 @@ TEST(http, LocalHttpTimeout) {
         return fetch_timeout(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_error) << result.error;
-#ifdef LITO_FEAT_QT
-    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Unsupported);
-#else
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Timeout);
-#endif
 }
 
 TEST(http, LocalHttpCancel) {
@@ -2087,7 +2079,6 @@ TEST(http, TimeoutValidationAndOverride) {
 }
 
 TEST(http, LocalHttpTimeoutPolicies) {
-#if ! defined(LITO_FEAT_QT)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     auto session = ncrequest::Session::make().unwrap();
@@ -2112,13 +2103,31 @@ TEST(http, LocalHttpTimeoutPolicies) {
     policy.total   = TimeoutLimit::disabled();
     policy.connect = TimeoutLimit::after(Duration::from_millis(u64(100)));
     auto connected = fetch(local_http_url(base, "/delay"), policy);
+#ifdef LITO_FEAT_QT
+    EXPECT_EQ(connected.error_kind, ncrequest::ErrorKind::Unsupported);
+    policy.connect = TimeoutLimit::backend_default();
+#else
     ASSERT_TRUE(connected.got_body) << connected.error;
     EXPECT_EQ(connected.body, "delayed\n");
-    policy.low_speed = Some(LowSpeedOptions { u64(1000), Duration::from_millis(u64(1)) });
+#endif
+    policy.low_speed = Some(LowSpeedOptions { u64(1000), Duration::from_millis(u64(100)) });
     auto slow        = fetch(local_http_url(base, "/timeout-stall"), policy);
     EXPECT_TRUE(slow.got_response);
     EXPECT_FALSE(slow.got_body);
     EXPECT_EQ(slow.error_kind, ncrequest::ErrorKind::Timeout) << slow.error;
+
+#ifdef LITO_FEAT_QT
+    auto progressing = fetch(local_http_url(base, "/timeout-trickle"), policy);
+    EXPECT_TRUE(progressing.got_body) << progressing.error;
+    policy.total    = TimeoutLimit::after(Duration::from_millis(u64(500)));
+    auto idle_first = fetch(local_http_url(base, "/timeout-stall"), policy);
+    EXPECT_EQ(idle_first.error_kind, ncrequest::ErrorKind::Timeout) << idle_first.error;
+    policy.total     = TimeoutLimit::after(Duration::from_millis(u64(100)));
+    policy.low_speed = Some(LowSpeedOptions { u64(1000), Duration::from_millis(u64(500)) });
+    auto total_first = fetch(local_http_url(base, "/timeout-stall"), policy);
+    EXPECT_EQ(total_first.error_kind, ncrequest::ErrorKind::Timeout) << total_first.error;
+    policy.total = TimeoutLimit::disabled();
+#endif
 
     policy.low_speed = None();
     auto restored    = fetch(local_http_url(base, "/delayed-body"), policy);
@@ -2142,13 +2151,14 @@ TEST(http, LocalHttpTimeoutPolicies) {
     policy.total        = TimeoutLimit::disabled();
     policy.low_speed    = Some(LowSpeedOptions { u64::MAX, Duration::from_secs(u64(1)) });
     auto speed_overflow = fetch(local_http_url(base, "/text"), policy);
+#ifdef LITO_FEAT_QT
+    EXPECT_TRUE(speed_overflow.got_body) << speed_overflow.error;
+#else
     EXPECT_EQ(speed_overflow.error_kind, ncrequest::ErrorKind::InvalidState);
+#endif
     policy.low_speed     = Some(LowSpeedOptions { u64(1), Duration::from_secs(u64::MAX) });
     auto window_overflow = fetch(local_http_url(base, "/text"), policy);
     EXPECT_EQ(window_overflow.error_kind, ncrequest::ErrorKind::InvalidState);
-#else
-    GTEST_SKIP() << "curl timeout runtime test";
-#endif
 }
 
 TEST(http, LocalHttpConnectTimeout) {
@@ -2593,7 +2603,6 @@ TEST(http, LocalHttpReceiveResourceLimits) {
 }
 
 TEST(http, LocalHttpRedirectTotalBudget) {
-#if ! defined(LITO_FEAT_QT)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     auto req         = make_request(local_http_url(base, "/redirect-chain?left=2&delay=0.12"));
@@ -2608,7 +2617,4 @@ TEST(http, LocalHttpRedirectTotalBudget) {
     EXPECT_TRUE(result.got_error);
     EXPECT_FALSE(result.got_body);
     EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Timeout) << result.error;
-#else
-    GTEST_SKIP() << "curl total timeout runtime test";
-#endif
 }

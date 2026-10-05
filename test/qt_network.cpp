@@ -244,7 +244,12 @@ auto share_roundtrip(Arc<Session> session, std::string base) -> ncrequest::coro<
 
 auto fetch_then_cancel(Arc<Session> session, std::string url) -> ncrequest::coro<ErrorResult> {
     ErrorResult result;
-    auto        req = make_request(url);
+    auto        req     = make_request(url);
+    auto        options = RequestOptions {};
+    auto        timeout = Timeout {};
+    timeout.total       = TimeoutLimit::after(Duration::from_secs(u64(1)));
+    options.timeout     = Some(timeout);
+    req.set_options(rstd::move(options));
 
     auto rsp = co_await session->get(req.try_clone().unwrap());
     if (rsp.is_err()) {
@@ -430,7 +435,27 @@ TEST(qt_network, LocalHttpTimeout) {
     });
     EXPECT_FALSE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_error) << result.error;
-    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Unsupported);
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Timeout);
+}
+
+TEST(qt_network, LocalHttpExternalManagerTimeout) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+
+    QNetworkAccessManager manager;
+    auto                  session = Session::from_qt_manager(&manager).unwrap();
+    for (auto path : { "/delay", "/timeout-trickle" }) {
+        SCOPED_TRACE(path);
+        auto result = run_qt_owner_coro(fetch_timeout(session.clone(), local_http_url(base, path)));
+        ASSERT_TRUE(result.got_error) << result.error;
+        EXPECT_EQ(result.kind, ncrequest::ErrorKind::Timeout);
+    }
+    auto completed =
+        run_qt_owner_coro(fetch_timeout(session.clone(), local_http_url(base, "/text")));
+    EXPECT_TRUE(completed.got_response) << completed.error;
+    EXPECT_FALSE(completed.got_error) << completed.error;
+    auto next = run_qt_owner_coro(fetch_text(rstd::move(session), local_http_url(base, "/delay")));
+    EXPECT_TRUE(next.got_body) << next.error;
 }
 
 TEST(qt_network, LocalHttpCancel) {

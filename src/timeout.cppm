@@ -40,6 +40,7 @@ private:
 };
 
 export struct LowSpeedOptions {
+    // Qt uses only window as a no-data timeout; curl also applies the rate threshold.
     u64      bytes_per_second;
     Duration window;
 };
