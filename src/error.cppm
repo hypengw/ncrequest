@@ -75,6 +75,22 @@ export struct Error {
         }
         return ErrorKind::InvalidState;
     }
+
+    auto clone() const -> Error {
+        switch (tag()) {
+        case Tag::Client: {
+            const auto& value = as_Client().error;
+            return Client(ClientError { value.backend, value.code, value.message.clone() });
+        }
+        case Tag::Io: return Io(as_Io().error);
+        case Tag::Protocol: return Protocol(as_Protocol().kind, as_Protocol().msg);
+        case Tag::Unsupported: return Unsupported(as_Unsupported().msg);
+        case Tag::Canceled: return Canceled();
+        case Tag::InvalidState: return InvalidState(as_InvalidState().msg);
+        case Tag::Timeout: return Timeout();
+        }
+        return InvalidState("unknown error tag");
+    }
 };
 
 export template<typename T>

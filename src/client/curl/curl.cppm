@@ -43,6 +43,8 @@ export using ::curl_easy_pause;
 export using ::curl_easy_perform;
 export using ::curl_easy_strerror;
 export using ::curl_easy_getinfo;
+export using ::curl_easy_send;
+export using ::curl_easy_recv;
 export constexpr auto PauseReceive = CURLPAUSE_RECV;
 export constexpr auto PauseSend    = CURLPAUSE_SEND;
 
@@ -56,6 +58,7 @@ export using ::curl_multi_poll;
 export using ::curl_multi_remove_handle;
 export using ::curl_multi_info_read;
 export using ::curl_multi_wakeup;
+export using ::curl_waitfd;
 
 export using ::curl_share_init;
 export using ::curl_share_setopt;

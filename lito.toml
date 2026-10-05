@@ -36,12 +36,16 @@ sources = [
   "src/client/qt_network/session_share.cpp",
 ]
 
+[source-groups.unix-duplex]
+sources = ["src/unix_duplex.cppm", "src/client/curl/unix_duplex.cpp", "src/upgrade.cppm"]
+
 [lib]
 name = "ncrequest"
 module = "ncrequest"
 archive = "ncrequest"
 when = [
   { condition = "!feature.qt", source-groups = ["curl"] },
+  { condition = '!feature.qt && target.os == "linux"', source-groups = ["unix-duplex"] },
   { condition = "feature.qt", source-groups = ["qt"] },
 ]
 sources = [
@@ -89,12 +93,10 @@ condition = "feature.qt"
 [when.usage]
 public-definitions = ["NCREQUEST_CLIENT_BACKEND_QT_NETWORK"]
 
-[dependencies.rstd-std]
-version = "0.1.2"
-pub = true
-
-[dependencies.rstd-cppstd]
-version = "0.1.2"
+[dependencies]
+rstd-std = { version = "0.1.2", pub = true }
+rstd-cppstd = { version = "0.1.2" }
+lihttpto = { version = "0.1.0", pub = true }
 
 [external-dependencies.pkg-config.libcurl]
 condition = "!feature.qt"
@@ -111,12 +113,11 @@ targets = [
   { name = "Qt6::WebSockets", pub = true },
 ]
 
-[dependencies.lihttpto]
-path = "../lihttpto"
-pub = true
-
 [source-groups.test-curl]
-sources = ["test/websocket.cpp"]
+sources = ["test/websocket.cpp", "test/upgrade_curl.cpp"]
+
+[source-groups.test-unix-duplex]
+sources = ["test/unix_duplex.cpp", "test/upgrade.cpp"]
 
 [source-groups.test-qt]
 sources = ["test/qt_network.cpp", "test/qt_network_websocket.cpp"]
@@ -126,8 +127,9 @@ name = "ncrequest-tests"
 sources = ["test/main.cpp", "test/http.cpp", "test/upload.cpp", "test/session.cpp"]
 when = [
   { condition = "!feature.qt", source-groups = ["test-curl"] },
+  { condition = '!feature.qt && target.os == "linux"', source-groups = ["test-unix-duplex"] },
   { condition = "feature.qt", source-groups = ["test-qt"] },
 ]
 
-[dev-dependencies.rstd-test]
-version = "0.1.2"
+[dev-dependencies]
+rstd-test = { version = "0.1.2" }

@@ -6,3 +6,7 @@ export import :session;
 export import :client_qt_network;
 #endif
 export import :websocket;
+#if defined(NCREQUEST_CLIENT_BACKEND_CURL) && defined(__linux__)
+export import :unix_duplex;
+export import :upgrade;
+#endif
