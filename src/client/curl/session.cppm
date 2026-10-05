@@ -1,7 +1,7 @@
-export module ncrequest:client_curl_session;
+export module ncrequest:client.curl.session;
 export import :request;
-export import :client_curl_response;
-export import :client_curl_connection;
+export import :client.curl.response;
+export import :client.curl.connection;
 export import rstd;
 
 using namespace rstd::prelude;

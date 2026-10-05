@@ -1,35 +1,25 @@
-module;
-#include <memory_resource>
-
-export module ncrequest:client_qt_network_websocket;
-export import :qt;
+export module ncrequest:client.qt_network.websocket;
+export import :client.qt_network.qt;
 export import rstd;
-export import :client_callback;
-
-import rstd.cppstd;
+export import :client.callback;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
 using rstd::async::Completion;
 using rstd::async::CompletionHandle;
 using rstd::str_::from_utf8_unchecked;
-using std::pmr::memory_resource;
-using std::pmr::polymorphic_allocator;
-using std::pmr::vector;
 
 namespace ncrequest::client::qt_network
 {
 
 export class WebSocketBackend {
 public:
-    constexpr static u64 MaxBufferSize { 16 * 1024 };
     using ConnectedCallback    = client::Callback<void()>;
     using DisconnectedCallback = client::Callback<void()>;
     using MessageCallback      = client::Callback<void(slice<u8>, bool last)>;
     using ErrorCallback        = client::Callback<void(ref<str>)>;
 
-    explicit WebSocketBackend(QObject* parent = nullptr, Option<u64> max_buffer_size = None(),
-                              memory_resource* mem_pool = std::pmr::get_default_resource())
+    explicit WebSocketBackend(QObject* parent = nullptr)
         : m_owned_socket(parent == nullptr ? Some(Box<QWebSocket>::make(
                                                  QString {}, QWebSocketProtocol::VersionLatest))
                                            : None<Box<QWebSocket>>()),
@@ -37,9 +27,7 @@ public:
                        ? (*m_owned_socket).get()
                        : new QWebSocket(QString {}, QWebSocketProtocol::VersionLatest, parent)),
           m_connected(false),
-          m_connecting(false),
-          m_alloc(mem_pool),
-          m_read_buffer(max_buffer_size.unwrap_or(MaxBufferSize).to_primitive(), m_alloc) {
+          m_connecting(false) {
         bind_socket();
     }
 
@@ -209,9 +197,6 @@ private:
     DisconnectedCallback           m_on_disconnected;
     MessageCallback                m_on_message;
     ErrorCallback                  m_on_error;
-
-    polymorphic_allocator<byte> m_alloc;
-    vector<byte>                m_read_buffer;
 };
 
 } // namespace ncrequest::client::qt_network

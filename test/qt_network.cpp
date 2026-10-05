@@ -1,14 +1,15 @@
-#include <cstdlib>
-#include <functional>
-#include <rstd/test/gtest.hpp>
-#include <QEventLoop>
-#include <QMetaObject>
-#include <QNetworkAccessManager>
-#include <QObject>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <thread>
+#if defined(LITO_FEAT_QT)
+#    include <cstdlib>
+#    include <functional>
+#    include <rstd/test/gtest.hpp>
+#    include <QEventLoop>
+#    include <QMetaObject>
+#    include <QNetworkAccessManager>
+#    include <QObject>
+#    include <optional>
+#    include <string>
+#    include <string_view>
+#    include <thread>
 
 import ncrequest.qt_network;
 import rstd;
@@ -438,9 +439,22 @@ TEST(qt_network, LocalHttpCancel) {
         GTEST_SKIP() << "NCREQUEST_TEST_HTTP_BASE_URL is not set";
     }
 
-    auto result = run_http([url = local_http_url(base, "/delay")](auto session) {
+    auto result = run_http([url = local_http_url(base, "/slow-stream")](auto session) {
         return fetch_then_cancel(rstd::move(session), url);
     });
+    ASSERT_TRUE(result.got_response) << result.error;
+    ASSERT_TRUE(result.got_error) << result.error;
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Canceled);
+}
+
+TEST(qt_network, LocalHttpExternalManagerCancel) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+
+    QNetworkAccessManager manager;
+    auto                  session = Session::from_qt_manager(&manager).unwrap();
+    auto                  result  = run_qt_owner_coro(
+        fetch_then_cancel(rstd::move(session), local_http_url(base, "/slow-stream")));
     ASSERT_TRUE(result.got_response) << result.error;
     ASSERT_TRUE(result.got_error) << result.error;
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Canceled);
@@ -496,3 +510,4 @@ TEST(qt_network, LocalHttpOwnedManagerSupportsShare) {
     EXPECT_TRUE(result.has_test_header);
     EXPECT_NE(result.body.find("owned_manager_cookie=shared"), std::string::npos);
 }
+#endif

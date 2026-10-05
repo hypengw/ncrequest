@@ -1,6 +1,7 @@
-#include <rstd/test/gtest.hpp>
-#include <cstdlib>
-#include <dirent.h>
+#if ! defined(LITO_FEAT_QT) && defined(__linux__)
+#    include <rstd/test/gtest.hpp>
+#    include <cstdlib>
+#    include <dirent.h>
 import ncrequest;
 import rstd;
 using namespace rstd::prelude;
@@ -159,3 +160,4 @@ TEST(UnixDuplex, BoundsAndInvalidEndpoint) {
     EXPECT_TRUE(block_on(wire->write({})).unwrap().unwrap() == usize());
     wire->cancel();
 }
+#endif

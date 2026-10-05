@@ -2,11 +2,11 @@ export module ncrequest;
 export import :request;
 export import :response;
 export import :session;
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
-export import :client_qt_network;
+#ifdef LITO_FEAT_QT
+export import :client.qt_network.backend;
 #endif
 export import :websocket;
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL) && defined(__linux__)
+#if ! defined(LITO_FEAT_QT) && defined(__linux__)
 export import :unix_duplex;
 export import :upgrade;
 #endif

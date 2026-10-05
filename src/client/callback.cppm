@@ -1,4 +1,4 @@
-export module ncrequest:client_callback;
+export module ncrequest:client.callback;
 export import rstd;
 
 using namespace rstd::prelude;

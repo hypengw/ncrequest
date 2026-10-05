@@ -1,7 +1,7 @@
 module;
 module ncrequest;
-import :client_curl_response;
-import :client_curl_session;
+import :client.curl.response;
+import :client.curl.session;
 import ncrequest.coro;
 
 using namespace rstd::prelude;

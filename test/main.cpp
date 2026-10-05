@@ -1,12 +1,12 @@
 import rstd.test;
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+#ifdef LITO_FEAT_QT
 #    include <QCoreApplication>
 #endif
 
 import ncrequest;
 
 int main(int argc, char** argv) {
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+#ifdef LITO_FEAT_QT
     QCoreApplication app(argc, argv);
 #endif
     ncrequest::global_init();

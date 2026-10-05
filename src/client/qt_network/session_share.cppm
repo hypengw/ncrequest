@@ -1,5 +1,5 @@
-export module ncrequest:session_share_backend;
-export import :qt;
+export module ncrequest:client.qt_network.session_share;
+export import :client.qt_network.qt;
 import :session_share;
 
 using namespace ncrequest::qt;

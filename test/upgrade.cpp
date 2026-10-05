@@ -1,5 +1,6 @@
-#include <rstd/test/gtest.hpp>
-#include <cstdlib>
+#if ! defined(LITO_FEAT_QT) && defined(__linux__)
+#    include <rstd/test/gtest.hpp>
+#    include <cstdlib>
 import ncrequest;
 import rstd;
 using namespace rstd::prelude;
@@ -110,3 +111,4 @@ TEST(HttpUpgrade, CollectsBoundedFailureBodies) {
     ASSERT_TRUE(aggregate.is_err());
     EXPECT_TRUE(aggregate.unwrap_err().parse->kind().is_HeaderTooLarge());
 }
+#endif

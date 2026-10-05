@@ -1,7 +1,8 @@
-#include <rstd/test/gtest.hpp>
-#include <poll.h>
-#include <sys/socket.h>
-#include <cstdlib>
+#if ! defined(LITO_FEAT_QT) && defined(__linux__)
+#    include <rstd/test/gtest.hpp>
+#    include <poll.h>
+#    include <sys/socket.h>
+#    include <cstdlib>
 import ncrequest;
 import lihttpto;
 import rstd;
@@ -134,3 +135,4 @@ TEST(CurlUpgradeProbe, UnixHalfClosePreservesOutput) {
         EXPECT_TRUE(output.as_str() == "first:tail-after-eof"_str);
     }
 }
+#endif

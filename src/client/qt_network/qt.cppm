@@ -5,6 +5,7 @@ module;
 #include <QDateTime>
 #include <QIODevice>
 #include <QHttpHeaders>
+#include <QLatin1StringView>
 #include <QList>
 #include <QMetaObject>
 #include <QNetworkAccessManager>
@@ -25,7 +26,7 @@ module;
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 
-export module ncrequest:qt;
+export module ncrequest:client.qt_network.qt;
 
 export namespace ncrequest::qt
 {
@@ -36,6 +37,7 @@ using ::QDateTime;
 using ::QHttpHeaders;
 using ::qint64;
 using ::QIODevice;
+using ::QLatin1StringView;
 using ::QList;
 using ::QMetaObject;
 using ::QNetworkAccessManager;

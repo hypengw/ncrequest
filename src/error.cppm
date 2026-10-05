@@ -4,7 +4,7 @@ module;
 export module ncrequest:error;
 export import rstd;
 export import rstd.error;
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 export import ncrequest.curl;
 #endif
 
@@ -202,7 +202,7 @@ struct rstd::Impl<From<ncrequest::ClientError>, ncrequest::Error> {
     }
 };
 
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 template<>
 struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
     static auto from(curl::CURLcode e) -> ncrequest::Error {
@@ -220,7 +220,7 @@ struct rstd::Impl<From<curl::CURLcode>, ncrequest::Error> {
 };
 #endif
 
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 template<>
 struct rstd::Impl<From<ncrequest::CurlMultiError>, ncrequest::Error> {
     static auto from(ncrequest::CurlMultiError error) -> ncrequest::Error {

@@ -8,7 +8,7 @@
 #include <string_view>
 #include <type_traits>
 import ncrequest;
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 import ncrequest.curl;
 #endif
 import rstd;
@@ -539,7 +539,7 @@ auto fetch_then_cancel(Arc<ncrequest::Session> session, std::string url)
     return cancel_request(rstd::move(session), make_request(url));
 }
 
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
 auto curl_slow_consumer(Arc<ncrequest::Session> session, std::string url)
     -> ncrequest::coro<FetchResult> {
     FetchResult result;
@@ -668,7 +668,7 @@ TEST(http, RstdAsyncPollFuture) {
 }
 
 TEST(http, ErrorModelVariants) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     ncrequest::Error curl_error = rstd::into(curl::CURLcode::CURLE_COULDNT_CONNECT);
     EXPECT_EQ(curl_error.kind(), ncrequest::ErrorKind::Client);
     ASSERT_TRUE(curl_error.is_Client());
@@ -682,6 +682,14 @@ TEST(http, ErrorModelVariants) {
     EXPECT_TRUE(rstd::format("{}", curl_error).as_str() == "client request failed"_str);
     EXPECT_TRUE(rstd::format("{}", *client_source).as_str() ==
                 as_rstd_str(curl::curl_easy_strerror(curl::CURLcode::CURLE_COULDNT_CONNECT)));
+
+    ncrequest::Error timeout = rstd::into(curl::CURLcode::CURLE_OPERATION_TIMEDOUT);
+    EXPECT_TRUE(timeout.is_Timeout());
+    EXPECT_EQ(timeout.kind(), ncrequest::ErrorKind::Timeout);
+    EXPECT_TRUE(as<rstd::error::Error>(timeout).source().is_none());
+    ncrequest::Error multi_timeout =
+        rstd::into(ncrequest::CurlMultiError::Easy(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_TRUE(multi_timeout.is_Timeout());
 
     auto multi_error = ncrequest::CurlMultiError::Multi(curl::CURLMcode::CURLM_BAD_HANDLE);
     EXPECT_TRUE(as<rstd::error::Error>(multi_error).source().is_none());
@@ -798,7 +806,7 @@ TEST(http, CookiePersistenceErrors) {
     remove_file(path.as_path());
 }
 
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
 TEST(http, CookieShareInitializationFailure) {
     auto* fault = std::getenv("NCREQUEST_TEST_CURL_FAILURE");
     if (fault == nullptr || std::string(fault) != "share-init") GTEST_SKIP();
@@ -909,10 +917,10 @@ TEST(http, LocalHttpShareIsolationRedirectAndPersistence) {
     ASSERT_TRUE(result.canceled_request.got_error) << result.canceled_request.error;
     EXPECT_EQ(result.canceled_request.kind, ncrequest::ErrorKind::Canceled);
     ASSERT_TRUE(result.timed_out_request.got_error) << result.timed_out_request.error;
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+#ifdef LITO_FEAT_QT
     EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Unsupported);
 #else
-    EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Client);
+    EXPECT_EQ(result.timed_out_request.kind, ncrequest::ErrorKind::Timeout);
 #endif
 
     ASSERT_TRUE(persisted.has_value());
@@ -994,6 +1002,24 @@ TEST(http, LocalHttpRedirectUsesFinalMessageHead) {
     EXPECT_EQ(result.body, "ncrequest python http server body\n");
 }
 
+TEST(http, LocalHttpPreservesRequestHeaderBytes) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+
+    auto result = run_http([url = local_http_url(base, "/headers/request-bytes")](auto session) {
+        auto request = make_request(url);
+        auto headers = lihttpto::Headers {};
+        headers
+            .add("X-Ncrequest-Bytes"_str,
+                 lihttpto::HeaderValue::make("\x80\xc3\xa9\xff"_bytes).unwrap())
+            .unwrap();
+        request.update_header(headers);
+        return fetch_text_request(rstd::move(session), rstd::move(request));
+    });
+    ASSERT_TRUE(result.got_body) << result.error;
+    EXPECT_EQ(result.body, "80c3a9ff");
+}
+
 TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
     auto base = local_http_base_url();
     if (base.empty()) {
@@ -1009,7 +1035,7 @@ TEST(http, LocalHttpPreservesRepeatedRequestAndResponseHeaders) {
             request.update_header(headers);
             return fetch_text_request(rstd::move(session), rstd::move(request));
         });
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
     ASSERT_TRUE(request_result.got_error) << request_result.error;
     EXPECT_EQ(request_result.error_kind, ncrequest::ErrorKind::Unsupported);
 #else
@@ -1039,7 +1065,7 @@ TEST(http, LocalHttpKeepsTrailersSeparateFromInitialHeaders) {
     ASSERT_TRUE(result.got_body) << result.error;
     EXPECT_EQ(result.body, "body");
     EXPECT_FALSE(result.initial_has_trailer);
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     EXPECT_EQ(result.trailer_count, 1u);
 #else
     EXPECT_EQ(result.trailer_count, 0u);
@@ -1092,6 +1118,23 @@ TEST(http, LocalHttpNotFoundBody) {
     EXPECT_EQ(result.code, 404);
     EXPECT_TRUE(result.has_test_header);
     EXPECT_EQ(result.body, "missing\n");
+}
+
+TEST(http, LocalHttpErrorStatusBody) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+
+    for (auto code : { 400, 401, 403, 404, 405, 407, 409, 410, 418, 422, 500, 501, 502, 503 }) {
+        SCOPED_TRACE(code);
+        auto result = run_http(
+            [url = local_http_url(base, "/status?code=" + std::to_string(code))](auto session) {
+                return fetch_text(rstd::move(session), url);
+            });
+        ASSERT_TRUE(result.got_response) << result.error;
+        ASSERT_TRUE(result.got_body) << result.error;
+        EXPECT_EQ(result.code, code);
+        EXPECT_EQ(result.body, "status body\n");
+    }
 }
 
 TEST(http, LocalHttpPostEcho) {
@@ -1167,12 +1210,10 @@ TEST(http, LocalHttpTimeout) {
         return fetch_timeout(rstd::move(session), url);
     });
     ASSERT_TRUE(result.got_error) << result.error;
-#ifdef NCREQUEST_CLIENT_BACKEND_QT_NETWORK
+#ifdef LITO_FEAT_QT
     EXPECT_EQ(result.kind, ncrequest::ErrorKind::Unsupported);
 #else
-    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Client);
-    EXPECT_EQ(result.backend, ncrequest::ClientBackend::Curl);
-    EXPECT_EQ(result.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(result.kind, ncrequest::ErrorKind::Timeout);
 #endif
 }
 
@@ -1191,7 +1232,7 @@ TEST(http, LocalHttpCancel) {
 }
 
 TEST(http, LocalHttpCurlBackpressure) {
-#ifndef NCREQUEST_CLIENT_BACKEND_CURL
+#ifdef LITO_FEAT_QT
     GTEST_SKIP() << "curl-only bounded receive queue test";
 #else
     auto base = local_http_base_url();
@@ -1212,7 +1253,7 @@ TEST(http, LocalHttpCurlBackpressure) {
 }
 
 TEST(http, LocalHttpCurlStreamingUpload) {
-#ifndef NCREQUEST_CLIENT_BACKEND_CURL
+#ifdef LITO_FEAT_QT
     GTEST_SKIP() << "curl-only streaming upload test";
 #else
     auto base = local_http_base_url();
@@ -1390,7 +1431,7 @@ TEST(http, LocalHttpEmptyBodyTrailer) {
     });
     EXPECT_TRUE(result.got_body) << result.error;
     EXPECT_TRUE(result.body.empty());
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     EXPECT_EQ(result.trailer_count, 1u);
 #endif
 }
@@ -1450,7 +1491,7 @@ TEST(http, LocalHttpSessionClose) {
     EXPECT_TRUE(block_on(send_after_session_drop(local_http_url(base, "/text"))));
 }
 
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
 namespace
 {
 auto multi_failure(Arc<ncrequest::Session> session, std::string url) -> ncrequest::coro<bool> {
@@ -1550,9 +1591,14 @@ auto zero_limit_empty_body(Arc<ncrequest::Session> session, std::string url)
 TEST(http, LocalHttpBodyErrorIsNotEof) {
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
-    EXPECT_TRUE(run_http([url = local_http_url(base, "/truncated-body")](auto session) {
-        return truncated_body(rstd::move(session), url);
-    }));
+    for (auto code : { 200, 404, 500 }) {
+        SCOPED_TRACE(code);
+        EXPECT_TRUE(
+            run_http([url = local_http_url(base, "/truncated-body?code=" + std::to_string(code))](
+                         auto session) {
+                return truncated_body(rstd::move(session), url);
+            }));
+    }
     EXPECT_TRUE(run_http([url = local_http_url(base, "/empty")](auto session) {
         return zero_limit_empty_body(rstd::move(session), url);
     }));
@@ -1700,7 +1746,7 @@ auto endpoint_request(std::string url, Endpoint endpoint) -> ncrequest::Request 
     return request;
 }
 
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 auto local_socket_path() -> std::string {
     auto* path = std::getenv("NCREQUEST_TEST_UNIX_SOCKET");
     return path == nullptr ? std::string {} : std::string(path);
@@ -1756,7 +1802,7 @@ TEST(http, EndpointInvalidPathsAndConflicts) {
 }
 
 TEST(http, LocalHttpUnixEndpoint) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto path = local_socket_path();
     if (path.empty()) GTEST_SKIP();
     auto defaults     = SessionOptions {};
@@ -1788,7 +1834,7 @@ TEST(http, LocalHttpUnixEndpoint) {
 }
 
 TEST(http, LocalHttpUnixRequestOverride) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto path = local_socket_path();
     if (path.empty()) GTEST_SKIP();
     auto result = run_http([path](auto session) {
@@ -1845,7 +1891,7 @@ TEST(http, RequestBodyReaderOwnership) {
 
 namespace
 {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 auto reader_upload(Arc<ncrequest::Session> session, std::string url, bool known_empty)
     -> ncrequest::coro<bool> {
     std::size_t calls  = 0;
@@ -1873,7 +1919,7 @@ auto reader_upload(Arc<ncrequest::Session> session, std::string url, bool known_
 } // namespace
 
 TEST(http, LocalHttpReaderLength) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     for (bool empty : { false, true }) {
@@ -1968,7 +2014,7 @@ TEST(http, ProxyModesAndValidation) {
 }
 
 TEST(http, LocalHttpProxyPolicies) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto* proxy_address = std::getenv("NCREQUEST_TEST_PROXY_URL");
     if (proxy_address == nullptr) GTEST_SKIP();
     auto session = ncrequest::Session::make().unwrap();
@@ -2041,7 +2087,7 @@ TEST(http, TimeoutValidationAndOverride) {
 }
 
 TEST(http, LocalHttpTimeoutPolicies) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     auto session = ncrequest::Session::make().unwrap();
@@ -2057,14 +2103,11 @@ TEST(http, LocalHttpTimeoutPolicies) {
     policy.total        = TimeoutLimit::after(Duration::from_millis(u64(100)));
     auto before_headers = fetch(local_http_url(base, "/slow-first-byte"), policy);
     EXPECT_FALSE(before_headers.got_response);
-    EXPECT_EQ(before_headers.error_kind, ncrequest::ErrorKind::Client) << before_headers.error;
-    EXPECT_EQ(before_headers.client_code,
-              static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(before_headers.error_kind, ncrequest::ErrorKind::Timeout) << before_headers.error;
     auto active = fetch(local_http_url(base, "/timeout-trickle"), policy);
     EXPECT_TRUE(active.got_response);
     EXPECT_FALSE(active.got_body);
-    EXPECT_EQ(active.error_kind, ncrequest::ErrorKind::Client) << active.error;
-    EXPECT_EQ(active.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(active.error_kind, ncrequest::ErrorKind::Timeout) << active.error;
 
     policy.total   = TimeoutLimit::disabled();
     policy.connect = TimeoutLimit::after(Duration::from_millis(u64(100)));
@@ -2075,8 +2118,7 @@ TEST(http, LocalHttpTimeoutPolicies) {
     auto slow        = fetch(local_http_url(base, "/timeout-stall"), policy);
     EXPECT_TRUE(slow.got_response);
     EXPECT_FALSE(slow.got_body);
-    EXPECT_EQ(slow.error_kind, ncrequest::ErrorKind::Client) << slow.error;
-    EXPECT_EQ(slow.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(slow.error_kind, ncrequest::ErrorKind::Timeout) << slow.error;
 
     policy.low_speed = None();
     auto restored    = fetch(local_http_url(base, "/delayed-body"), policy);
@@ -2086,7 +2128,7 @@ TEST(http, LocalHttpTimeoutPolicies) {
     policy.total = TimeoutLimit::after(Duration::from_nanos(u64(1)));
     auto tiny    = fetch(local_http_url(base, "/delay"), policy);
     EXPECT_FALSE(tiny.got_body);
-    EXPECT_EQ(tiny.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(tiny.error_kind, ncrequest::ErrorKind::Timeout) << tiny.error;
     policy.total     = TimeoutLimit::disabled();
     policy.connect   = TimeoutLimit::disabled();
     auto unsupported = fetch(local_http_url(base, "/text"), policy);
@@ -2110,7 +2152,7 @@ TEST(http, LocalHttpTimeoutPolicies) {
 }
 
 TEST(http, LocalHttpConnectTimeout) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto* url = std::getenv("NCREQUEST_TEST_TLS_STALL_URL");
     if (url == nullptr) GTEST_SKIP();
     auto request    = make_request(url);
@@ -2126,8 +2168,7 @@ TEST(http, LocalHttpConnectTimeout) {
         block_on(fetch_text_request(ncrequest::Session::make().unwrap(), rstd::move(request)));
     auto elapsed = std::chrono::duration_cast<milliseconds>(steady_clock::now() - started);
     EXPECT_FALSE(result.got_response);
-    EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Client) << result.error;
-    EXPECT_EQ(result.client_code, static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Timeout) << result.error;
     EXPECT_LT(elapsed.count(), 1500);
 #else
     GTEST_SKIP() << "curl connect timeout runtime test";
@@ -2175,7 +2216,7 @@ TEST(http, TlsOptionsValidationAndSnapshot) {
 }
 
 TEST(http, LocalHttpsVerificationAndIdentity) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto* base = std::getenv("NCREQUEST_TEST_HTTPS_URL");
     if (base == nullptr) GTEST_SKIP();
     auto path = [](const char* name) {
@@ -2304,7 +2345,7 @@ TEST(http, LocalHttpRedirectPolicies) {
         options.proxy    = Some(Proxy::disabled());
         auto timeout     = Timeout {};
         timeout.total    = TimeoutLimit::after(Duration::from_secs(u64(3)));
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
         options.timeout = Some(timeout);
 #endif
         req.set_options(rstd::move(options));
@@ -2337,7 +2378,7 @@ TEST(http, LocalHttpRedirectPolicies) {
     auto blob = fetch("/redirect-to?to=blob:http://127.0.0.1/id", RedirectOptions::same_origin());
     EXPECT_EQ(blob.protocol_error, ncrequest::ProtocolError::RedirectOriginChanged);
     auto invalid = fetch("/redirect-duplicate", RedirectOptions::same_origin());
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     EXPECT_EQ(invalid.client_code, static_cast<int>(curl::CURLcode::CURLE_WEIRD_SERVER_REPLY));
 #else
     EXPECT_EQ(invalid.protocol_error, ncrequest::ProtocolError::InvalidRedirect);
@@ -2384,7 +2425,7 @@ TEST(http, LocalHttpRedirectMethodsAndBody) {
             EXPECT_EQ(result.body, expected);
         }
     }
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     for (auto code : { 303, 307 }) {
         auto req = make_request(local_http_url(base, "/redirect-to?code=" + std::to_string(code)));
         req.try_set_method("POST"_str).unwrap();
@@ -2432,7 +2473,7 @@ TEST(http, ResourceLimitsValidationAndSnapshot) {
 }
 
 TEST(http, LocalHttpHeaderResourceLimits) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     auto session = ncrequest::Session::make().unwrap();
@@ -2530,7 +2571,7 @@ TEST(http, LocalHttpCollectionResourceLimits) {
 }
 
 TEST(http, LocalHttpReceiveResourceLimits) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     for (auto capacity : { 16384u, 32768u, 65536u }) {
@@ -2552,7 +2593,7 @@ TEST(http, LocalHttpReceiveResourceLimits) {
 }
 
 TEST(http, LocalHttpRedirectTotalBudget) {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto base = local_http_base_url();
     if (base.empty()) GTEST_SKIP();
     auto req         = make_request(local_http_url(base, "/redirect-chain?left=2&delay=0.12"));
@@ -2566,8 +2607,7 @@ TEST(http, LocalHttpRedirectTotalBudget) {
         block_on(fetch_text_request(ncrequest::Session::make().unwrap(), rstd::move(req)));
     EXPECT_TRUE(result.got_error);
     EXPECT_FALSE(result.got_body);
-    EXPECT_TRUE(result.error_kind == ncrequest::ErrorKind::Timeout ||
-                result.client_code == static_cast<int>(curl::CURLcode::CURLE_OPERATION_TIMEDOUT));
+    EXPECT_EQ(result.error_kind, ncrequest::ErrorKind::Timeout) << result.error;
 #else
     GTEST_SKIP() << "curl total timeout runtime test";
 #endif

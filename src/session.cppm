@@ -1,12 +1,12 @@
 export module ncrequest:session;
 
 export import :response;
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-export import :client_qt_network;
+#if defined(LITO_FEAT_QT)
+export import :client.qt_network.backend;
 #else
-export import :client_curl_session;
+export import :client.curl.session;
 #endif
-export import :client_http_backend;
+export import :client.http_backend;
 import :redirect;
 
 using namespace rstd::prelude;
@@ -18,7 +18,7 @@ using rstd::sync::atomic::Atomic;
 namespace ncrequest
 {
 
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
 using SelectedSessionBackend = client::qt_network::SessionBackend;
 #else
 using SelectedSessionBackend = client::curl::SessionBackend;
@@ -33,7 +33,7 @@ export class Session {
         SelectedSessionBackend backend;
         Atomic<bool>           closed { false };
         explicit State(EffectiveOptions value): options(rstd::move(value)) {}
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
         State(EffectiveOptions value, qt::QObject* parent)
             : options(rstd::move(value)), backend(parent) {}
         State(EffectiveOptions value, qt::QNetworkAccessManager* manager)
@@ -60,7 +60,7 @@ public:
         if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
         return finish_make(Arc<State>::make(rstd::move(effective).unwrap()));
     }
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
     static auto from_qt_parent(qt::QObject* parent) -> Result<Arc<Session>> {
         auto initialized = SelectedSessionBackend::initialize(parent);
         if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());

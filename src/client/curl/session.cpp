@@ -6,7 +6,7 @@ module;
 #include <rstd/macro.hpp>
 
 module ncrequest;
-import :client_curl_session;
+import :client.curl.session;
 
 using namespace rstd::prelude;
 using rstd::bytes::Bytes;

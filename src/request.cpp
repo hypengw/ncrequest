@@ -1,7 +1,7 @@
 module ncrequest;
 import :request;
 
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
 import ncrequest.curl;
 #endif
 
@@ -11,7 +11,7 @@ using namespace rstd::literals;
 using rstd::bytes::Bytes;
 
 auto ncrequest::global_init() -> Result<empty> {
-#if defined(NCREQUEST_CLIENT_BACKEND_CURL)
+#if ! defined(LITO_FEAT_QT)
     auto initialized = ncrequest::curl_init();
     if (initialized.is_err()) {
         return Err(rstd::into<Error>(rstd::move(initialized).unwrap_err()));

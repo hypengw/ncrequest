@@ -1,16 +1,16 @@
 export module ncrequest:websocket;
 
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-export import :client_qt_network_websocket;
+#if defined(LITO_FEAT_QT)
+export import :client.qt_network.websocket;
 #else
-export import :client_curl_websocket;
+export import :client.curl.websocket;
 #endif
-export import :client_websocket_backend;
+export import :client.websocket_backend;
 
 namespace ncrequest
 {
 
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
 using SelectedWebSocketBackend = client::qt_network::WebSocketBackend;
 #else
 using SelectedWebSocketBackend = client::curl::WebSocketBackend;

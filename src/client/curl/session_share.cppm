@@ -1,4 +1,4 @@
-export module ncrequest:session_share_backend;
+export module ncrequest:client.curl.session_share;
 import :session_share;
 import ncrequest.curl;
 

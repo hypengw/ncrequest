@@ -86,7 +86,7 @@ static auto upload(Arc<Session> session, std::string url, std::string method, As
     auto options     = RequestOptions {};
     options.redirect = Some(redirects ? ncrequest::RedirectOptions::same_origin()
                                       : ncrequest::RedirectOptions::disabled());
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto timeout    = ncrequest::TimeoutOptions {};
     timeout.total   = ncrequest::TimeoutLimit::after(Duration::from_secs(u64(2)));
     options.timeout = Some(timeout);
@@ -118,7 +118,7 @@ TEST(upload, SourceOwnershipAndValidation) {
 }
 
 TEST(upload, LocalAsyncMethodsAndLengths) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = base_url();
     if (base.empty()) GTEST_SKIP();
     for (auto method : { "POST", "PUT", "PATCH", "GET", "DELETE", "REPORT" }) {
@@ -173,7 +173,7 @@ TEST(upload, LocalAsyncMethodsAndLengths) {
 }
 
 TEST(upload, LocalAsyncErrorsAndRedirect) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = base_url();
     if (base.empty()) GTEST_SKIP();
     auto stats    = Arc<UploadStats>::make();
@@ -243,7 +243,7 @@ static auto cancel_upload(std::string url, bool close_session, bool blocked_queu
 }
 
 TEST(upload, LocalAsyncCancellation) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = base_url();
     if (base.empty()) GTEST_SKIP();
     for (bool close_session : { false, true })
@@ -280,7 +280,7 @@ static auto upload_timeout(std::string url) -> ncrequest::coro<bool> {
 }
 
 TEST(upload, LocalAsyncTimeoutAndDuplex) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = base_url();
     if (base.empty()) GTEST_SKIP();
     EXPECT_TRUE(block_on(upload_timeout(base + "/async-stall")));
@@ -296,7 +296,7 @@ TEST(upload, LocalAsyncTimeoutAndDuplex) {
 }
 
 TEST(upload, LocalAsyncEarlyResponse) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto base = base_url();
     if (base.empty()) GTEST_SKIP();
     EXPECT_TRUE(block_on(early_response(base + "/async-early")));

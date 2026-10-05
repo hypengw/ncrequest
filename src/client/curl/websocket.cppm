@@ -1,7 +1,7 @@
-export module ncrequest:client_curl_websocket;
+export module ncrequest:client.curl.websocket;
 export import rstd;
 export import ncrequest.curl;
-export import :client_callback;
+export import :client.callback;
 
 using namespace rstd::prelude;
 using rstd::async::Completion;

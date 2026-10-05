@@ -66,7 +66,7 @@ TEST(session, EffectiveDefaultsCanBeOverridden) {
 }
 
 TEST(session, BackendStartupErrors) {
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
     auto options                  = ncrequest::CurlOptions {};
     options.max_total_connections = -1;
     auto failed                   = ncrequest::client::curl::SessionBackend::make(options);
@@ -93,7 +93,7 @@ TEST(session, BackendStartupErrors) {
 #endif
 }
 
-#ifdef NCREQUEST_CLIENT_BACKEND_CURL
+#ifndef LITO_FEAT_QT
 TEST(session, CurlEasyKeepsConfigurationError) {
     auto session = Session::make().unwrap();
     auto easy    = ncrequest::CurlEasy {};

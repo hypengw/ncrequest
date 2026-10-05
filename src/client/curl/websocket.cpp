@@ -2,7 +2,7 @@ module;
 #include <rstd/enum.hpp>
 
 module ncrequest;
-import :client_curl_websocket;
+import :client.curl.websocket;
 import rstd;
 
 using namespace rstd::prelude;

@@ -1,4 +1,4 @@
-export module ncrequest:client_websocket_backend;
+export module ncrequest:client.websocket_backend;
 export import rstd;
 
 using namespace rstd::prelude;

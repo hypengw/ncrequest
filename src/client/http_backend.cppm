@@ -1,4 +1,4 @@
-export module ncrequest:client_http_backend;
+export module ncrequest:client.http_backend;
 export import :request;
 export import lihttpto;
 export import :error;

@@ -1,10 +1,11 @@
-#include <atomic>
-#include <chrono>
-#include <future>
-#include <rstd/test/gtest.hpp>
-#include <string>
-#include <string_view>
-#include <thread>
+#if ! defined(LITO_FEAT_QT)
+#    include <atomic>
+#    include <chrono>
+#    include <future>
+#    include <rstd/test/gtest.hpp>
+#    include <string>
+#    include <string_view>
+#    include <thread>
 
 import ncrequest;
 
@@ -99,3 +100,4 @@ TEST(websocket, LocalEchoText) {
     ASSERT_TRUE(wait_future(disconnected, seconds(5)));
     EXPECT_FALSE(client.is_connected());
 }
+#endif

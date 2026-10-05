@@ -1,8 +1,7 @@
 module;
 module ncrequest;
-import :qt;
-import :session_share_backend;
-import rstd.cppstd;
+import :client.qt_network.qt;
+import :client.qt_network.session_share;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
@@ -63,7 +62,7 @@ auto parse_expiry(slice<u8> text) -> Option<qint64> {
         auto raw = text[i].to_primitive();
         if (raw < '0' || raw > '9') return None<qint64>();
         auto digit = static_cast<qint64>(raw - '0');
-        if (value > (std::numeric_limits<qint64>::max() - digit) / 10) return None<qint64>();
+        if (value > (i64::MAX.to_primitive() - digit) / 10) return None<qint64>();
         value = value * 10 + digit;
     }
     return Some(value);

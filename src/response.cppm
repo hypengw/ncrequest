@@ -1,11 +1,11 @@
 export module ncrequest:response;
 
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
-import :client_qt_network;
+#if defined(LITO_FEAT_QT)
+import :client.qt_network.backend;
 #else
-import :client_curl_response;
+import :client.curl.response;
 #endif
-export import :client_http_backend;
+export import :client.http_backend;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -17,7 +17,7 @@ using rstd::sync::atomic::Atomic;
 namespace ncrequest
 {
 
-#if defined(NCREQUEST_CLIENT_BACKEND_QT_NETWORK)
+#if defined(LITO_FEAT_QT)
 using SelectedResponseBackend = client::qt_network::ResponseBackend;
 #else
 using SelectedResponseBackend = client::curl::ResponseBackend;

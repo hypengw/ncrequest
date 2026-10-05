@@ -1,14 +1,14 @@
 module;
 #include <rstd/enum.hpp>
 
-export module ncrequest:client_curl_connection;
+export module ncrequest:client.curl.connection;
 export import rstd;
 export import ncrequest.curl;
 export import ncrequest.coro;
 export import lihttpto;
 export import :request;
 export import :error;
-export import :client_callback;
+export import :client.callback;
 
 using namespace rstd::prelude;
 using namespace ::curl;

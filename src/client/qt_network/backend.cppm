@@ -1,16 +1,14 @@
 module;
 #include <rstd/enum.hpp>
-#include <utility>
 
-export module ncrequest:client_qt_network;
-export import :qt;
+export module ncrequest:client.qt_network.backend;
+export import :client.qt_network.qt;
 export import :request;
 export import lihttpto;
 export import :error;
 export import ncrequest.coro;
 export import rstd;
-import :session_share_backend;
-import rstd.cppstd;
+import :client.qt_network.session_share;
 
 using namespace rstd::prelude;
 using namespace ncrequest::qt;
@@ -120,8 +118,8 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::ManualRedirectPolicy);
 
-    auto raw_headers = QList<std::pair<QByteArray, QByteArray>> {};
-    raw_headers.reserve(static_cast<qsizetype>(req.header().len().to_primitive()));
+    auto headers = QHttpHeaders {};
+    headers.reserve(static_cast<qsizetype>(req.header().len().to_primitive()));
     for (const auto& field : req.header()) {
         auto name  = field.name.as_str();
         auto value = field.value.as_slice();
@@ -129,12 +127,16 @@ auto make_qnetwork_request(const PreparedRequest& source) -> Result<QNetworkRequ
             return Err(
                 Error::Unsupported("Qt Network cannot preserve repeated request header fields"));
         }
-        raw_headers.append({ QByteArray(reinterpret_cast<const char*>(name.data()),
-                                        static_cast<qsizetype>(name.size().to_primitive())),
-                             QByteArray(reinterpret_cast<const char*>(value.as_raw_ptr()),
-                                        static_cast<qsizetype>(value.len().to_primitive())) });
+        if (! headers.append(
+                QLatin1StringView(reinterpret_cast<const char*>(name.data()),
+                                  static_cast<qsizetype>(name.size().to_primitive())),
+                QLatin1StringView(reinterpret_cast<const char*>(value.as_raw_ptr()),
+                                  static_cast<qsizetype>(value.len().to_primitive())))) {
+            return Err(Error::Protocol(ProtocolError::InvalidHeaderLine,
+                                       protocol_error_message(ProtocolError::InvalidHeaderLine)));
+        }
     }
-    request.setHeaders(QHttpHeaders::fromListOfPairs(raw_headers));
+    request.setHeaders(rstd::move(headers));
 
     auto const& tcp      = options.tcp();
     auto        defaults = TcpOptions {};
@@ -327,6 +329,25 @@ auto read_header(QNetworkReply* reply)
     return Ok(Some(lihttpto::MessageHead { rstd::move(start), rstd::move(headers) }));
 }
 
+auto is_http_status_error(int status, QNetworkReply::NetworkError error) -> bool {
+    switch (error) {
+    case QNetworkReply::ProtocolInvalidOperationError: return status == 400 || status == 418;
+    case QNetworkReply::AuthenticationRequiredError: return status == 401;
+    case QNetworkReply::ContentAccessDenied: return status == 403;
+    case QNetworkReply::ContentNotFoundError: return status == 404;
+    case QNetworkReply::ContentOperationNotPermittedError: return status == 405;
+    case QNetworkReply::ProxyAuthenticationRequiredError: return status == 407;
+    case QNetworkReply::ContentConflictError: return status == 409;
+    case QNetworkReply::ContentGoneError: return status == 410;
+    case QNetworkReply::InternalServerError: return status == 500;
+    case QNetworkReply::OperationNotImplementedError: return status == 501;
+    case QNetworkReply::ServiceUnavailableError: return status == 503;
+    case QNetworkReply::UnknownContentError: return status >= 400 && status < 500;
+    case QNetworkReply::UnknownServerError: return status > 500;
+    default: return false;
+    }
+}
+
 auto transport_error(QNetworkReply* reply) -> Option<Error> {
     if (reply == nullptr) {
         return Some(Error::InvalidState("QNetworkReply was destroyed"));
@@ -335,10 +356,11 @@ auto transport_error(QNetworkReply* reply) -> Option<Error> {
     auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
     auto error  = reply->error();
     if (error == QNetworkReply::NoError) return None<Error>();
-    if (status.isValid()) return None<Error>();
     if (error == QNetworkReply::OperationCanceledError) {
         return Some(Error::Canceled());
     }
+    // Only suppress errors describing the HTTP status, never a failed transfer.
+    if (status.isValid() && is_http_status_error(status.toInt(), error)) return None<Error>();
 
     auto utf8    = reply->errorString().toUtf8();
     auto message = String::make(

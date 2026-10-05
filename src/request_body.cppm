@@ -1,6 +1,6 @@
 export module ncrequest:request_body;
 export import :error;
-export import :client_callback;
+export import :client.callback;
 export import ncrequest.coro;
 export import lihttpto;
 export import rstd;

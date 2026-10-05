@@ -1,13 +1,14 @@
-#include <chrono>
-#include <cstdlib>
-#include <future>
-#include <optional>
-#include <string_view>
-#include <utility>
-#include <rstd/test/gtest.hpp>
-#include <QCoreApplication>
-#include <QEventLoop>
-#include <thread>
+#if defined(LITO_FEAT_QT)
+#    include <chrono>
+#    include <cstdlib>
+#    include <future>
+#    include <optional>
+#    include <string_view>
+#    include <utility>
+#    include <rstd/test/gtest.hpp>
+#    include <QCoreApplication>
+#    include <QEventLoop>
+#    include <thread>
 
 import ncrequest.qt_network;
 
@@ -109,3 +110,4 @@ TEST(qt_network_websocket, LocalEchoText) {
     ASSERT_TRUE(wait_future(disconnected, seconds(5)));
     EXPECT_FALSE(client.is_connected());
 }
+#endif

@@ -210,7 +210,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if target.path == "/truncated-body":
-            self.send_response(HTTPStatus.OK)
+            status = HTTPStatus(int(parse_qs(target.query).get("code", ["200"])[0]))
+            self.send_response(status)
             self.send_header("Content-Length", "32")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -252,6 +253,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_payload(HTTPStatus.OK, ("|".join(values) + "\n").encode("ascii"))
             return
 
+        if target.path == "/headers/request-bytes":
+            value = self.headers.get("X-Ncrequest-Bytes", "").encode("latin1")
+            self.send_payload(HTTPStatus.OK, value.hex().encode("ascii"))
+            return
+
         if target.path == "/headers/response-repeat":
             body = b"repeated response headers\n"
             self.send_response(HTTPStatus.OK)
@@ -288,6 +294,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if target.path == "/server-error":
             self.send_payload(HTTPStatus.INTERNAL_SERVER_ERROR, b"server error\n")
+            return
+
+        if target.path == "/status":
+            status = HTTPStatus(int(parse_qs(target.query)["code"][0]))
+            self.send_payload(status, b"status body\n")
             return
 
         if target.path == "/timeout-stall":

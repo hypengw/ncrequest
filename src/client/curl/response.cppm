@@ -1,7 +1,7 @@
-export module ncrequest:client_curl_response;
+export module ncrequest:client.curl.response;
 export import :request;
 export import lihttpto;
-export import :client_curl_connection;
+export import :client.curl.connection;
 export import :error;
 export import ncrequest.coro;
 
