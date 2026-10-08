@@ -9,4 +9,5 @@ export import :websocket;
 #if ! defined(LITO_FEAT_QT) && defined(__linux__)
 export import :unix_duplex;
 export import :upgrade;
+export import :websocket_connection;
 #endif

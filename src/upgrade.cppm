@@ -31,11 +31,11 @@ struct UpgradeOptions {
 
 class UpgradeConnection {
     struct State {
-        Box<UnixDuplex>                  wire;
+        Box<Duplex>                      wire;
         lihttpto::ResponseHead           response;
         Bytes                            pending;
         rstd::sync::atomic::Atomic<bool> reading { false }, cancelled { false };
-        State(Box<UnixDuplex> stream, lihttpto::ResponseHead head, Bytes remainder)
+        State(Box<Duplex> stream, lihttpto::ResponseHead head, Bytes remainder)
             : wire(rstd::move(stream)),
               response(rstd::move(head)),
               pending(rstd::move(remainder)) {}
@@ -89,7 +89,7 @@ class UpgradeConnection {
         guard.complete = received.is_ok();
         co_return rstd::move(received);
     }
-    static auto collect_error(UnixDuplex& wire, const lihttpto::UpgradeRequest& request,
+    static auto collect_error(Duplex& wire, const lihttpto::UpgradeRequest& request,
                               UpgradeFailure failure, Bytes pending, Instant started,
                               UpgradeOptions options) -> coro<UpgradeFailure> {
         auto framing = request.body_framing(*failure.response);
@@ -147,8 +147,17 @@ public:
     }
     ~UpgradeConnection() { cancel(); }
 
-    static auto open(Endpoint endpoint, lihttpto::UpgradeRequest request,
-                     UpgradeOptions options = {})
+    template<class Target>
+        requires(rstd::mtp::same_as<Target, Endpoint> || rstd::mtp::same_as<Target, lihttpto::Url>)
+    static auto open(Target endpoint, lihttpto::UpgradeRequest request, UpgradeOptions options = {})
+        -> coro<rstd::Result<UpgradeConnection, UpgradeFailure>> {
+        co_return co_await open_prepared(rstd::move(endpoint), request, options);
+    }
+    // The caller retains the prepared request until this operation completes.
+    template<class Target>
+        requires(rstd::mtp::same_as<Target, Endpoint> || rstd::mtp::same_as<Target, lihttpto::Url>)
+    static auto open_prepared(Target endpoint, const lihttpto::UpgradeRequest& request,
+                              UpgradeOptions options = {})
         -> coro<rstd::Result<UpgradeConnection, UpgradeFailure>> {
         if (options.handshake_timeout.is_zero() || options.header_bytes == usize() ||
             options.header_bytes > usize(65536) || options.error_body_bytes > usize(65536) ||
@@ -156,7 +165,12 @@ public:
             co_return Err(UpgradeFailure {
                 .transport = Some(Error::InvalidState("invalid upgrade limits")) });
         auto started = Instant::now();
-        auto made    = UnixDuplex::make(rstd::move(endpoint), options.duplex);
+        auto made    = [&]() -> Result<Box<Duplex>> {
+            if constexpr (rstd::mtp::same_as<Target, Endpoint>)
+                return Duplex::make(rstd::move(endpoint), options.duplex);
+            else
+                return Duplex::connect(rstd::move(endpoint), options.duplex);
+        }();
         if (made.is_err())
             co_return Err(UpgradeFailure { .transport = Some(rstd::move(made).unwrap_err()) });
         auto wire      = rstd::move(made).unwrap();

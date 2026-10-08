@@ -20,6 +20,7 @@ options = [
 [dependencies]
 rstd-std = { version = "0.1.2", pub = true }
 lihttpto = { version = "0.1.0", pub = true }
+liwebsocketo = { version = "0.1.0", pub = true }
 
 [external-dependencies.pkg-config.libcurl]
 condition = "!feature.qt"
@@ -46,6 +47,8 @@ sources = [
   "test/websocket.cpp",
   "test/upgrade_curl.cpp",
   "test/unix_duplex.cpp",
+  "test/duplex.cpp",
+  "test/websocket_connection.cpp",
   "test/upgrade.cpp",
   "test/qt_network.cpp",
   "test/qt_network_websocket.cpp",

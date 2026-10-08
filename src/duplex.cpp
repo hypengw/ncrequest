@@ -5,7 +5,7 @@ module;
 #include <poll.h>
 #include <cerrno>
 module ncrequest;
-import :unix_duplex;
+import :duplex;
 import ncrequest.curl;
 
 using namespace rstd::prelude;
@@ -18,7 +18,7 @@ using rstd::time::Instant;
 
 namespace ncrequest
 {
-class UnixDuplex::Impl {
+class Duplex::Impl {
     template<class T>
     struct Pending {
         CompletionHandle<Result<T>> completion;
@@ -38,6 +38,7 @@ class UnixDuplex::Impl {
         Option<Pending<empty>>            closing;
     };
     Endpoint                               endpoint_;
+    Option<lihttpto::Url>                  url_;
     DuplexOptions                          options_;
     rstd::sync::Mutex<Fields>              fields_ { Fields {} };
     rstd::sync::atomic::Atomic<bool>       cancelled_ { false };
@@ -83,15 +84,25 @@ class UnixDuplex::Impl {
         easy_  = curl_easy_init();
         multi_ = curl_multi_init();
         if (! easy_ || ! multi_) return Err(Error::InvalidState("curl allocation failed"));
-        auto path = rstd::ffi::CString::from_vec_unchecked(
-            Vec<u8>::from(endpoint_.socket_path()->as_os_str().as_encoded_bytes()));
         CURLcode code = CURLcode::CURLE_OK;
         auto     set  = [&](CURLoption option, auto value) {
             if (code == CURLcode::CURLE_OK) code = curl_easy_setopt(easy_, option, value);
         };
         set(CURLoption::CURLOPT_URL, "http://localhost/");
         set(CURLoption::CURLOPT_PROXY, "");
-        set(CURLoption::CURLOPT_UNIX_SOCKET_PATH, path.as_ptr());
+        if (url_.is_some()) {
+            auto url =
+                rstd::ffi::CString::from_vec_unchecked(Vec<u8>::from(url_->as_ref().as_bytes()));
+            set(CURLoption::CURLOPT_URL, url.as_ptr());
+            // The caller sends an HTTP/1.1 Upgrade after the TLS handshake.
+            set(CURLoption::CURLOPT_SSL_ENABLE_ALPN, 0L);
+            set(CURLoption::CURLOPT_SSL_VERIFYPEER, 1L);
+            set(CURLoption::CURLOPT_SSL_VERIFYHOST, 2L);
+        } else {
+            auto path = rstd::ffi::CString::from_vec_unchecked(
+                Vec<u8>::from(endpoint_.socket_path()->as_os_str().as_encoded_bytes()));
+            set(CURLoption::CURLOPT_UNIX_SOCKET_PATH, path.as_ptr());
+        }
         set(CURLoption::CURLOPT_CONNECT_ONLY, 1L);
         set(CURLoption::CURLOPT_NOSIGNAL, 1L);
         if (code != CURLcode::CURLE_OK) return Err(rstd::into<Error>(code));
@@ -225,6 +236,8 @@ class UnixDuplex::Impl {
 public:
     Impl(Endpoint endpoint, DuplexOptions options)
         : endpoint_(rstd::move(endpoint)), options_(options) {}
+    Impl(lihttpto::Url url, DuplexOptions options)
+        : url_(Some(rstd::move(url))), options_(options) {}
     ~Impl() {
         cancel();
         if (worker_.is_some()) (void)rstd::move(worker_.take().unwrap()).join();
@@ -284,6 +297,8 @@ public:
         return rstd::move(pair.get<0>());
     }
     auto close_input() -> Completion<Result<empty>> {
+        if (url_.is_some() && *url_->scheme() == "https"_str)
+            return rejected<empty>(Error::Unsupported("TLS half-close is not supported"));
         auto fields = fields_.lock().unwrap();
         if (! fields->ready || cancelled_.load()) return rejected<empty>(Error::Canceled());
         if (fields->writing.is_some() || fields->closing.is_some())
@@ -303,9 +318,9 @@ public:
     }
 };
 
-UnixDuplex::UnixDuplex(Box<Impl> impl): impl_(rstd::move(impl)) {}
-UnixDuplex::~UnixDuplex() = default;
-auto UnixDuplex::make(Endpoint endpoint, DuplexOptions options) -> Result<Box<UnixDuplex>> {
+Duplex::Duplex(Box<Impl> impl): impl_(rstd::move(impl)) {}
+Duplex::~Duplex() = default;
+auto Duplex::make(Endpoint endpoint, DuplexOptions options) -> Result<Box<Duplex>> {
     if (endpoint.socket_path().is_none() || options.connect_timeout.is_zero() ||
         options.io_timeout.is_zero())
         return Err(Error::InvalidState("Unix endpoint and positive deadlines required"));
@@ -314,13 +329,29 @@ auto UnixDuplex::make(Endpoint endpoint, DuplexOptions options) -> Result<Box<Un
     auto impl    = Box<Impl>::make(rstd::move(endpoint), options);
     auto started = impl->start();
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
-    return Ok(Box<UnixDuplex>::make(rstd::move(impl)));
+    return Ok(Box<Duplex>::make(rstd::move(impl)));
 }
-auto UnixDuplex::connected() -> Completion<Result<empty>> { return impl_->connected(); }
-auto UnixDuplex::read() -> Completion<Result<Bytes>> { return impl_->read(); }
-auto UnixDuplex::write(Bytes bytes) -> Completion<Result<usize>> {
+auto Duplex::connect(lihttpto::Url url, DuplexOptions options) -> Result<Box<Duplex>> {
+    auto scheme = url.scheme();
+    if (scheme.is_none() || (*scheme != "http"_str && *scheme != "https"_str) ||
+        url.host().is_none() || url.host()->is_empty() || url.userinfo().is_some() ||
+        url.fragment().is_some() || url.effective_port().is_none() ||
+        *url.effective_port() == u16())
+        return Err(Error::InvalidState("HTTP URL without userinfo or fragment required"));
+    if (options.connect_timeout.is_zero() || options.io_timeout.is_zero())
+        return Err(Error::InvalidState("positive duplex deadlines required"));
+    auto initialized = curl_init();
+    if (initialized.is_err()) return Err(rstd::into<Error>(initialized.unwrap_err()));
+    auto impl    = Box<Impl>::make(rstd::move(url), options);
+    auto started = impl->start();
+    if (started.is_err()) return Err(rstd::move(started).unwrap_err());
+    return Ok(Box<Duplex>::make(rstd::move(impl)));
+}
+auto Duplex::connected() -> Completion<Result<empty>> { return impl_->connected(); }
+auto Duplex::read() -> Completion<Result<Bytes>> { return impl_->read(); }
+auto Duplex::write(Bytes bytes) -> Completion<Result<usize>> {
     return impl_->write(rstd::move(bytes));
 }
-auto UnixDuplex::close_input() -> Completion<Result<empty>> { return impl_->close_input(); }
-void UnixDuplex::cancel() { impl_->cancel(); }
+auto Duplex::close_input() -> Completion<Result<empty>> { return impl_->close_input(); }
+void Duplex::cancel() { impl_->cancel(); }
 } // namespace ncrequest
