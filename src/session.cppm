@@ -1,6 +1,7 @@
 export module ncrequest:session;
 
 export import :response;
+export import :request_control;
 #if defined(LITO_FEAT_QT)
 export import :client.qt_network.backend;
 #else
@@ -94,6 +95,10 @@ public:
         return send_request(state_.clone(), rstd::move(req));
     }
 
+    auto send(Request req, Arc<RequestControl> control) -> coro<Result<Arc<Response>>> {
+        return send_request(state_.clone(), rstd::move(req), Some(rstd::move(control)));
+    }
+
 private:
     static auto finish_make(Arc<State> state) -> Result<Arc<Session>> {
         auto started = state->backend.start();
@@ -101,7 +106,18 @@ private:
         return Ok(Arc<Session>::make(ConstructionKey {}, rstd::move(state)));
     }
 
-    static auto send_request(Arc<State> state, Request req) -> coro<Result<Arc<Response>>> {
+    static auto send_request(Arc<State> state, Request req,
+                             Option<Arc<RequestControl>> control = None())
+        -> coro<Result<Arc<Response>>> {
+        if (control.is_some()) {
+            if (! *control) co_return Err(Error::InvalidState("request control is null"));
+            if (! (*control)->claim())
+                co_return Err(Error::InvalidState("request control was already used"));
+            if ((*control)->is_canceled()) co_return Err(Error::Canceled());
+#if defined(LITO_FEAT_QT)
+            co_return Err(Error::Unsupported("Qt Network request control is not supported"));
+#endif
+        }
         if (state->closed.load()) co_return Err(Error::Canceled());
         auto effective = state->options.with_request(req.options());
         if (effective.is_err()) co_return Err(rstd::move(effective).unwrap_err());
@@ -110,8 +126,15 @@ private:
         auto redirects = RedirectState(prepared->options().clone());
         for (;;) {
             if (state->closed.load()) co_return Err(Error::Canceled());
+            if (control.is_some() && (*control)->is_canceled()) co_return Err(Error::Canceled());
             auto limits = prepared->options().limits();
-            auto res    = co_await state->backend.start_request(rstd::move(prepared).unwrap());
+#if defined(LITO_FEAT_QT)
+            auto res = co_await state->backend.start_request(rstd::move(prepared).unwrap());
+#else
+            auto res = co_await state->backend.start_request(
+                rstd::move(prepared).unwrap(),
+                control.is_some() ? Some(control->clone()) : None<Arc<RequestControl>>());
+#endif
             if (res.is_err()) co_return Err(rstd::move(res).unwrap_err());
             auto backend = rstd::move(res).unwrap();
             auto ready   = co_await backend.ready_head();

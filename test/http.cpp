@@ -1933,6 +1933,69 @@ TEST(http, RequestHeaderPreservesAbsentAndEmpty) {
     EXPECT_TRUE((*value)->as_slice().is_empty());
 }
 
+#if ! defined(LITO_FEAT_QT)
+namespace
+{
+auto controlled_request(Arc<ncrequest::Session> session, std::string base, bool before_send,
+                        bool after_head) -> ncrequest::coro<bool> {
+    auto control = Arc<ncrequest::RequestControl>::make();
+    if (before_send) control->cancel();
+    auto pending = spawn_local(
+        session->send(make_request(local_http_url(base, after_head ? "/delayed-body" : "/delay")),
+                      control.clone()));
+    auto started = steady_clock::now();
+    if (! before_send && ! after_head) {
+        co_await sleep(Duration::from_millis(u64(30)));
+        control->cancel();
+        control->cancel();
+    }
+    auto result = co_await rstd::move(pending);
+    if (result.is_err()) co_return false;
+    auto response = rstd::move(result).unwrap();
+    if (after_head) {
+        if (response.is_err()) co_return false;
+        control->cancel();
+        auto body = co_await (*response)->bytes();
+        if (body.is_ok() || ! body.unwrap_err().is_Canceled()) co_return false;
+    } else {
+        if (response.is_ok() || ! response.unwrap_err().is_Canceled()) co_return false;
+    }
+    if (steady_clock::now() - started > milliseconds(350)) co_return false;
+    auto reused =
+        co_await session->send(make_request(local_http_url(base, "/text")), control.clone());
+    if (reused.is_ok() || ! reused.unwrap_err().is_InvalidState()) co_return false;
+    auto other = co_await session->get(make_request(local_http_url(base, "/text")));
+    if (other.is_err()) co_return false;
+    auto contents = co_await (*other)->text();
+    co_return contents.is_ok();
+}
+} // namespace
+
+TEST(http, LocalHttpRequestControlBeforeSend) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([base](auto session) {
+        return controlled_request(rstd::move(session), base, true, false);
+    }));
+}
+
+TEST(http, LocalHttpRequestControlBeforeHead) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([base](auto session) {
+        return controlled_request(rstd::move(session), base, false, false);
+    }));
+}
+
+TEST(http, LocalHttpRequestControlAfterHead) {
+    auto base = local_http_base_url();
+    if (base.empty()) GTEST_SKIP();
+    EXPECT_TRUE(run_http([base](auto session) {
+        return controlled_request(rstd::move(session), base, false, true);
+    }));
+}
+#endif
+
 namespace
 {
 auto reject_invalid_text(Arc<ncrequest::Session> session, std::string url)

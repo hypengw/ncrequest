@@ -1,5 +1,6 @@
 export module ncrequest:client.curl.session;
 export import :request;
+import :request_control;
 export import :client.curl.response;
 export import :client.curl.connection;
 export import rstd;
@@ -37,7 +38,8 @@ public:
     static auto initialize() -> Result<empty> { return global_init(); }
     auto        start() -> Result<empty>;
 
-    auto start_request(PreparedRequest) -> coro<Result<ResponseBackend>>;
+    auto start_request(PreparedRequest, Option<Arc<RequestControl>> control = None())
+        -> coro<Result<ResponseBackend>>;
 
     void about_to_stop();
     void close() { about_to_stop(); }

@@ -82,8 +82,14 @@ auto SessionBackend::perform(Arc<ResponseBackend>& rsp) -> coro<Result<empty>> {
     co_return Result<empty>(Ok(empty {}));
 }
 
-auto SessionBackend::start_request(PreparedRequest req) -> coro<Result<ResponseBackend>> {
-    auto res       = ResponseBackend::make_response(rstd::move(req), *this);
+auto SessionBackend::start_request(PreparedRequest req, Option<Arc<RequestControl>> control)
+    -> coro<Result<ResponseBackend>> {
+    auto res = ResponseBackend::make_response(rstd::move(req), *this);
+    if (control.is_some()) {
+        (*control)->bind([connection = res->connection().get_arc().downgrade()] {
+            if (auto live = connection.upgrade()) live->about_to_cancel();
+        });
+    }
     auto performed = co_await perform(res);
     if (performed.is_err()) co_return Err(rstd::move(performed).unwrap_err());
     co_return Ok(rstd::move(*res));
@@ -135,6 +141,7 @@ auto SessionBackend::channel_rc() -> Arc<SessionBackend::channel_type> {
 void SessionBackend::about_to_stop() { channel().try_send(SessionMessage::Stop()); }
 
 auto SessionBackend::Private::add_connect(const Arc<Connection>& con) -> Result<empty> {
+    if (con->is_finished()) return Err(Error::Canceled());
     auto prepared = con->prepare();
     if (prepared.is_err()) {
         con->cancel();
@@ -252,7 +259,8 @@ void SessionBackend::Private::handle_message(SessionMessage& msg) {
             switch (action) {
                 using enum sm::Action;
             case Cancel:
-                if (remove_connect(con)) con->cancel();
+                (void)remove_connect(con);
+                con->cancel();
                 break;
             case PauseRecv:
             case UnPauseRecv:
