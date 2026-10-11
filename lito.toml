@@ -41,6 +41,7 @@ targets = [
 name = "ncrequest-tests"
 sources = [
   "test/main.cpp",
+  "test/cache.cpp",
   "test/http.cpp",
   "test/upload.cpp",
   "test/session.cpp",

@@ -6,6 +6,7 @@ export import :timeout;
 export import :tls;
 export import :redirect_options;
 export import :resource_limits;
+export import :cache_mode;
 export import rstd;
 
 using namespace rstd::prelude;
@@ -63,9 +64,11 @@ export struct RequestOptions {
     Option<ShareOptions>    share;
     Option<RedirectOptions> redirect;
     Option<ResourceLimits>  limits;
+    CacheMode               cache_mode { CacheMode::Default };
 
     auto clone() const -> RequestOptions {
-        auto out = RequestOptions {};
+        auto out       = RequestOptions {};
+        out.cache_mode = cache_mode;
         if (endpoint.is_some()) out.endpoint = Some(endpoint->clone());
         if (timeout.is_some()) out.timeout = Some(TimeoutOptions(*timeout));
         if (proxy.is_some()) out.proxy = Some(proxy->clone());

@@ -6,6 +6,7 @@ import :client.qt_network.backend;
 import :client.curl.response;
 #endif
 export import :client.http_backend;
+export import :response_reader;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -25,18 +26,32 @@ using SelectedResponseBackend = client::curl::ResponseBackend;
 
 static_assert(client::HttpResponseBackend<SelectedResponseBackend>);
 
+struct NetworkReader {
+    Arc<SelectedResponseBackend> backend;
+    auto                         next_chunk() { return backend->next_chunk(); }
+    auto                         trailers() const { return backend->trailers(); }
+    auto                         is_finished() const -> bool { return backend->is_finished(); }
+    auto                         request() const -> const Request& { return backend->request(); }
+    void                         cancel() { backend->cancel(); }
+};
+
+export struct ResponseTiming {
+    i64  requested {}, received {};
+    bool cached {}, validated {};
+    i64  origin_received { received };
+};
 export class Response;
 export class Session;
 
 export class ResponseBody {
     friend class Response;
     struct State {
-        Arc<SelectedResponseBackend> backend;
-        Atomic<bool>                 busy { false };
-        usize                        collect_limit;
-        bool                         started { false };
-        bool                         terminal { false };
-        explicit State(Arc<SelectedResponseBackend> value, usize limit)
+        ResponseSource backend;
+        Atomic<bool>   busy { false };
+        usize          collect_limit;
+        bool           started { false };
+        bool           terminal { false };
+        explicit State(ResponseSource value, usize limit)
             : backend(rstd::move(value)), collect_limit(limit) {}
     };
     struct ReadGuard {
@@ -52,7 +67,7 @@ export class ResponseBody {
     };
     Arc<State> state_;
 
-    explicit ResponseBody(Arc<SelectedResponseBackend> backend, usize limit)
+    explicit ResponseBody(ResponseSource backend, usize limit)
         : state_(Arc<State>::make(rstd::move(backend), limit)) {}
 
     static auto next_chunk(State& state) -> coro<Result<Option<Bytes>>> {
@@ -135,10 +150,12 @@ static_assert(lihttpto::BodySource<ResponseBody>);
 export class Response {
     friend class Session;
     struct ConstructionKey {};
-    Arc<SelectedResponseBackend> backend_;
-    lihttpto::ResponseHead       head_;
-    usize                        collect_limit_;
-    Atomic<bool>                 body_taken_ { false };
+    ResponseSource         backend_;
+    Option<Request>        request_;
+    lihttpto::ResponseHead head_;
+    usize                  collect_limit_;
+    ResponseTiming         timing_;
+    Atomic<bool>           body_taken_ { false };
 
     static auto collect_body(Result<ResponseBody> body, usize limit) -> coro<Result<Bytes>> {
         if (body.is_err()) co_return Err(rstd::move(body).unwrap_err());
@@ -177,15 +194,37 @@ public:
 
     Response(ConstructionKey, SelectedResponseBackend backend, lihttpto::ResponseHead head,
              usize collect_limit)
-        : backend_(Arc<SelectedResponseBackend>::make(rstd::move(backend))),
+        : backend_(ResponseSource::make(
+              NetworkReader { Arc<SelectedResponseBackend>::make(rstd::move(backend)) })),
           head_(rstd::move(head)),
           collect_limit_(collect_limit) {}
 
+    Response(ConstructionKey, ResponseSource source, Request request, lihttpto::ResponseHead head,
+             usize collect_limit)
+        : backend_(rstd::move(source)),
+          request_(Some(rstd::move(request))),
+          head_(rstd::move(head)),
+          collect_limit_(collect_limit) {}
+
+    static auto from_source(ResponseSource source, Request request, lihttpto::ResponseHead head,
+                            usize collect_limit = ResourceLimits::DefaultCollectBytes)
+        -> Arc<Response> {
+        return Arc<Response>::make(ConstructionKey {},
+                                   rstd::move(source),
+                                   rstd::move(request),
+                                   rstd::move(head),
+                                   collect_limit);
+    }
+
+    auto timing() const -> ResponseTiming { return timing_; }
+    void set_timing(ResponseTiming timing) { timing_ = timing; }
     auto head() const -> const lihttpto::ResponseHead& { return head_; }
     auto header() const -> const lihttpto::Headers& { return head_.headers; }
     auto code() const -> Option<i32> { return Some(as_cast<i32>(head_.status.value())); }
     auto trailers() const -> Option<ref<lihttpto::Headers>> { return backend_->trailers(); }
-    auto request() const -> const Request& { return backend_->request(); }
+    auto request() const -> const Request& {
+        return request_.is_some() ? *request_ : **backend_->request();
+    }
     auto is_finished() const -> bool { return backend_->is_finished(); }
     void cancel() { backend_->cancel(); }
 
