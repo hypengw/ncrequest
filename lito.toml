@@ -56,4 +56,5 @@ sources = [
 ]
 
 [dev-dependencies]
+liserveto = { version = "0.1.0", features = ["websocket"] }
 rstd-test = { version = "0.1.2" }

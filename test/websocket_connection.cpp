@@ -2,6 +2,7 @@
 #    include <rstd/test/gtest.hpp>
 #    include <cstdlib>
 #    include <cstdio>
+import liserveto;
 import ncrequest;
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -109,9 +110,9 @@ TEST(WebSocketConnection, DroppedSenderCancelsConnection) { run(8); }
 static auto serve_driver(rstd::net::TcpListener& listener, bool cancel) -> rstd::async::coro<bool> {
     auto accepted = co_await listener.accept();
     if (accepted.is_err()) co_return failure(__LINE__);
-    auto                 pair = rstd::move(accepted).unwrap();
-    lihttpto::Connection http(rstd::move(pair.get<0>()));
-    auto                 request = co_await http.read_request();
+    auto                  pair = rstd::move(accepted).unwrap();
+    liserveto::Connection http(rstd::move(pair.get<0>()));
+    auto                  request = co_await http.read_request();
     if (request.is_err() || request->is_none()) co_return failure(__LINE__);
     auto head = request->take().unwrap();
     auto auth = head.headers.get_unique_text("authorization"_str);
@@ -119,7 +120,7 @@ static auto serve_driver(rstd::net::TcpListener& listener, bool cancel) -> rstd:
         co_return failure(__LINE__);
     auto handshake = liwebsocketo::ServerHandshake::parse(head, Some("fern.test"_str));
     if (handshake.is_err()) co_return failure(__LINE__);
-    auto opened = co_await liwebsocketo::ServerConnection::accept(http, *handshake);
+    auto opened = co_await liserveto::ServerConnection::accept(http, *handshake);
     if (opened.is_err()) co_return failure(__LINE__);
     auto connection = rstd::move(opened).unwrap();
     if (cancel) {
