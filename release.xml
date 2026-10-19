@@ -1,0 +1,9 @@
+<release version="0.1.0" date="2026-10-20">
+  <description>
+    <ul>
+      <li>Add async HTTP and WebSocket clients with curl and Qt backends.</li>
+      <li>Support streaming bodies, request control and caching.</li>
+      <li>Use lihttpto 0.1.1, liwebsocketo 0.1.0 and rstd 0.1.9.</li>
+    </ul>
+  </description>
+</release>

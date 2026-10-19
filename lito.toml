@@ -1,6 +1,8 @@
 [package]
 name = "ncrequest"
 version = "0.1.0"
+license = "MIT"
+authors = ["hypengw <hypengwip@gmail.com>"]
 
 [features.qt]
 default = false
@@ -18,8 +20,8 @@ options = [
 ]
 
 [dependencies]
-rstd-std = { version = "0.1.2", pub = true }
-lihttpto = { version = "0.1.0", pub = true }
+rstd-std = { version = "0.1.9", pub = true }
+lihttpto = { version = "0.1.1", pub = true }
 liwebsocketo = { version = "0.1.0", pub = true }
 
 [external-dependencies.pkg-config.libcurl]
