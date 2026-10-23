@@ -1,61 +1,38 @@
 export module ncrequest:request_control;
-import :client.callback;
-export import rstd;
-
+export import :error;
 using namespace rstd::prelude;
-using rstd::sync::Mutex;
-using rstd::sync::atomic::Atomic;
-
-namespace ncrequest::client::curl
+using namespace rstd::literals;
+export namespace ncrequest
 {
-class SessionBackend;
-}
-
-namespace ncrequest
-{
-
-export class Session;
-
-export class RequestControl {
+class Session;
+class RequestControl {
     friend class Session;
-    friend class client::curl::SessionBackend;
-    using Cancel = client::Callback<void()>;
-    struct State {
-        bool   canceled { false };
-        Cancel cancel;
+    struct Fields {
+        bool                               claimed {}, canceled {};
+        Option<lifetchto::TransferControl> transfer;
     };
-    Mutex<State> state_ { State {} };
-    Atomic<bool> claimed_ { false };
-
-    auto claim() -> bool { return ! claimed_.exchange(true); }
-
-    void bind(Cancel callback) {
-        bool canceled;
-        {
-            auto state = state_.lock().unwrap();
-            canceled   = state->canceled;
-            if (! canceled) state->cancel = rstd::move(callback);
-        }
-        if (canceled) callback();
+    rstd::sync::Mutex<Fields> fields_ { Fields {} };
+    auto                      claim() -> lifetchto::Result<empty> {
+        auto f = fields_.lock().unwrap();
+        if (f->claimed)
+            return Err(lifetchto::Error::InvalidOptions(
+                String::make("request control was already used"_str)));
+        f->claimed = true;
+        if (f->canceled) return Err(lifetchto::Error::Canceled());
+        return Ok(empty {});
+    }
+    void bind(lifetchto::TransferControl transfer) {
+        auto f = fields_.lock().unwrap();
+        if (f->canceled) transfer.cancel();
+        f->transfer = Some(rstd::move(transfer));
     }
 
 public:
-    RequestControl()                                         = default;
-    RequestControl(const RequestControl&)                    = delete;
-    auto operator=(const RequestControl&) -> RequestControl& = delete;
-
-    void cancel() {
-        Cancel callback;
-        {
-            auto state = state_.lock().unwrap();
-            if (state->canceled) return;
-            state->canceled = true;
-            callback        = rstd::move(state->cancel);
-        }
-        if (callback) callback();
+    void cancel() const {
+        auto f      = fields_.lock().unwrap();
+        f->canceled = true;
+        if (f->transfer.is_some()) f->transfer->cancel();
     }
-
-    auto is_canceled() const -> bool { return state_.lock().unwrap()->canceled; }
+    auto is_canceled() const -> bool { return fields_.lock().unwrap()->canceled; }
 };
-
 } // namespace ncrequest

@@ -1,92 +1,78 @@
 export module ncrequest:request;
-export import lihttpto;
-export import :error;
 export import :options;
 export import :request_body;
-export import :session_share;
-export import rstd;
-
+export import rstd.json;
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using rstd::bytes::Bytes;
-
-namespace ncrequest
+export namespace ncrequest
 {
+namespace method
+{
+inline constexpr auto get = "GET"_str, post = "POST"_str, put = "PUT"_str, head = "HEAD"_str,
+                      delete_ = "DELETE"_str, patch = "PATCH"_str, options = "OPTIONS"_str;
+}
+namespace header
+{
+inline constexpr auto accept = "Accept"_str, content_type = "Content-Type"_str,
+                      authorization = "Authorization"_str, user_agent = "User-Agent"_str;
+}
+namespace media_type
+{
+inline constexpr auto json = "application/json"_str, form = "application/x-www-form-urlencoded"_str,
+                      text = "text/plain; charset=utf-8"_str;
+}
+class Session;
+class Request {
+    friend class Session;
+    lihttpto::RequestParts parts_;
+    RequestBody            body_;
+    RequestOptions         options_;
 
-export auto global_init() -> Result<empty>;
-
-export class Request {
 public:
-    Request() noexcept;
-    explicit Request(lihttpto::Url url) noexcept;
-    Request(Request&&) noexcept;
-    ~Request() noexcept;
-    Request& operator=(Request&&) noexcept;
-
-    [[nodiscard]]
+    Request();
+    explicit Request(lihttpto::Url url);
+    explicit Request(lifetchto::http::ExecutionRequest message);
+    Request(Request&&) noexcept                           = default;
+    Request(const Request&)                               = delete;
+    auto        operator=(Request&&) noexcept -> Request& = default;
     static auto from_url(ref<str>) -> rstd::Result<Request, lihttpto::UrlError>;
-
-    auto method() const -> const lihttpto::Method&;
-    auto set_method(lihttpto::Method method) -> Request&;
-    auto try_set_method(ref<str> method) -> rstd::Result<empty, lihttpto::HttpParseError>;
-    auto body() const -> const RequestBody&;
-    auto set_body(RequestBody body) -> Request&;
-    auto set_body(Bytes body) -> Request&;
-    auto clear_body() -> Request&;
-    auto validate() const -> Result<empty>;
-    auto options() const -> const RequestOptions& { return m_options; }
-    auto set_options(RequestOptions options) -> Request& {
-        m_options = rstd::move(options);
+    auto        parts() const -> const lihttpto::RequestParts& { return parts_; }
+    auto        method() const -> const lihttpto::Method& { return parts_.method; }
+    auto        set_method(lihttpto::Method method) -> Request&;
+    auto        try_set_method(ref<str>) -> rstd::Result<empty, lihttpto::HttpParseError>;
+    auto        url() const -> ref<str> { return parts_.url.as_ref(); }
+    auto        url_info() const -> const lihttpto::Url& { return parts_.url; }
+    auto        try_set_url(ref<str>) -> rstd::Result<empty, lihttpto::UrlError>;
+    auto        header() const -> const lihttpto::Headers& { return parts_.headers; }
+    auto        header(ref<str> name) const -> Option<ref<lihttpto::HeaderValue>> {
+        return parts_.headers.get(name);
+    }
+    auto update_header(const lihttpto::Headers&) -> Request&;
+    auto try_set_header(ref<str>, ref<str>) -> rstd::Result<empty, lihttpto::HeaderError>;
+    auto try_set_header(ref<str>, slice<u8>) -> rstd::Result<empty, lihttpto::HeaderError>;
+    auto add_header(ref<str>, slice<u8>) -> rstd::Result<empty, lihttpto::HeaderError>;
+    auto remove_header(ref<str> name) -> Request&;
+    auto body() const -> const RequestBody& { return body_; }
+    auto set_body(RequestBody body) -> Request& {
+        body_ = rstd::move(body);
         return *this;
     }
-
-    auto url() const -> ref<str>;
-    auto url_info() const -> const lihttpto::Url&;
-    auto try_set_url(ref<str>) -> rstd::Result<empty, lihttpto::UrlError>;
-
-    auto header() const -> const lihttpto::Headers&;
-    auto header(ref<str> name) const -> Option<ref<lihttpto::HeaderValue>>;
-    auto update_header(const lihttpto::Headers&) -> Request&;
-    auto try_set_header(ref<str> name, ref<str> value)
+    auto set_body(Bytes body) -> Request& { return set_body(RequestBody::bytes(rstd::move(body))); }
+    auto clear_body() -> Request& { return set_body(RequestBody::empty()); }
+    auto options() -> RequestOptions& { return options_; }
+    auto options() const -> const RequestOptions& { return options_; }
+    auto set_options(RequestOptions options) -> Request& {
+        options_ = rstd::move(options);
+        return *this;
+    }
+    auto text(ref<str> value, ref<str> type = media_type::text)
         -> rstd::Result<empty, lihttpto::HeaderError>;
-    auto remove_header(ref<str> name) -> Request&;
-    auto try_clone() const -> Result<Request>;
-    auto redirected(lihttpto::Url target, bool use_get) const -> Result<Request>;
-
-private:
-    lihttpto::Method  m_method;
-    RequestBody       m_body;
-    lihttpto::Url     m_url;
-    lihttpto::Headers m_header;
-    RequestOptions    m_options;
-};
-
-export class PreparedRequest {
-    Request          request_;
-    EffectiveOptions options_;
-    PreparedRequest(Request request, EffectiveOptions options)
-        : request_(rstd::move(request)), options_(rstd::move(options)) {}
-
-public:
-    static auto prepare(Request request, const SessionOptions& session) -> Result<PreparedRequest> {
-        auto options = EffectiveOptions::resolve(session, request.options());
-        if (options.is_err()) return Err(rstd::move(options).unwrap_err());
-        return prepare(rstd::move(request), rstd::move(options).unwrap());
+    auto json(const rstd::json::Value&) -> rstd::Result<empty, lihttpto::HeaderError>;
+    auto form(const lihttpto::QueryParams&) -> rstd::Result<empty, lihttpto::HeaderError>;
+    auto into_message() && -> lifetchto::http::ExecutionRequest {
+        return { rstd::move(parts_), rstd::move(body_) };
     }
-    static auto prepare(Request request, EffectiveOptions options) -> Result<PreparedRequest> {
-        auto valid = request.validate();
-        if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
-        if (options.tls().client_identity.is_some()) {
-            auto scheme     = request.url_info().scheme();
-            auto normalized = scheme.is_some() ? String::make(*scheme) : String {};
-            normalized.as_mut_str().make_ascii_lowercase();
-            if (normalized != "https"_str)
-                return Err(Error::InvalidState("TLS client identity requires an HTTPS URL"));
-        }
-        return Ok(PreparedRequest(rstd::move(request), rstd::move(options)));
-    }
-    auto request() const -> const Request& { return request_; }
-    auto options() const -> const EffectiveOptions& { return options_; }
+    void request_close() const { body_.request_close(); }
+    auto close() const -> coro<lifetchto::Result<empty>> { return body_.close(); }
 };
-
 } // namespace ncrequest

@@ -1,135 +1,74 @@
 module ncrequest;
 import :request;
-
-#if ! defined(LITO_FEAT_QT)
-import ncrequest.curl;
-#endif
-
 using namespace rstd::prelude;
-using namespace ncrequest;
 using namespace rstd::literals;
-using rstd::bytes::Bytes;
-
-auto ncrequest::global_init() -> Result<empty> {
-#if ! defined(LITO_FEAT_QT)
-    auto initialized = ncrequest::curl_init();
-    if (initialized.is_err()) {
-        return Err(rstd::into<Error>(rstd::move(initialized).unwrap_err()));
-    }
-    return Ok(empty {});
-#else
-    return Ok(empty {});
-#endif
+namespace ncrequest
+{
+Request::Request(): parts_ { {}, lihttpto::Method::parse(method::get).unwrap(), {} } {}
+Request::Request(lihttpto::Url url)
+    : parts_ { rstd::move(url), lihttpto::Method::parse(method::get).unwrap(), {} } {}
+Request::Request(lifetchto::http::ExecutionRequest message)
+    : parts_(rstd::move(message.parts)), body_(rstd::move(message.body)) {}
+auto Request::from_url(ref<str> value) -> rstd::Result<Request, lihttpto::UrlError> {
+    auto url = lihttpto::Url::parse_http(value);
+    if (url.is_err()) return Err(rstd::move(url).unwrap_err());
+    return Ok(Request(rstd::move(url).unwrap()));
 }
-
-Request::Request() noexcept: m_method(lihttpto::Method::parse("GET"_str).unwrap()) {}
-Request::Request(lihttpto::Url url) noexcept: Request() { m_url = rstd::move(url); }
-Request::~Request() noexcept {}
-Request::Request(Request&&) noexcept            = default;
-Request& Request::operator=(Request&&) noexcept = default;
-
-auto Request::from_url(ref<str> input) -> rstd::Result<Request, lihttpto::UrlError> {
-    auto parsed = lihttpto::Url::parse_http(input);
-    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    return Ok(Request { rstd::move(parsed).unwrap() });
-}
-
-auto Request::method() const -> const lihttpto::Method& { return m_method; }
-auto Request::set_method(lihttpto::Method method) -> Request& {
-    m_method = rstd::move(method);
+auto Request::set_method(lihttpto::Method value) -> Request& {
+    parts_.method = rstd::move(value);
     return *this;
 }
-auto Request::try_set_method(ref<str> method) -> rstd::Result<empty, lihttpto::HttpParseError> {
-    auto parsed = lihttpto::Method::parse(method);
-    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    m_method = rstd::move(parsed).unwrap();
+auto Request::try_set_method(ref<str> value) -> rstd::Result<empty, lihttpto::HttpParseError> {
+    auto method = lihttpto::Method::parse(value);
+    if (method.is_err()) return Err(rstd::move(method).unwrap_err());
+    parts_.method = rstd::move(method).unwrap();
     return Ok(empty {});
 }
-auto Request::body() const -> const RequestBody& { return m_body; }
-auto Request::set_body(RequestBody body) -> Request& {
-    m_body = rstd::move(body);
-    return *this;
-}
-auto Request::set_body(Bytes body) -> Request& {
-    return set_body(RequestBody::from_bytes(rstd::move(body)));
-}
-auto Request::clear_body() -> Request& {
-    m_body = RequestBody {};
-    return *this;
-}
-auto Request::validate() const -> Result<empty> {
-    if (m_url.as_ref().size() == usize()) return Err(Error::InvalidState("request URL is empty"));
-    auto scheme = m_url.scheme();
-    if (scheme != Some("http"_str) && scheme != Some("https"_str))
-        return Err(Error::Unsupported("request URL requires HTTP or HTTPS"));
-    if (m_body.reader().is_some() && m_method.as_ref() != "POST"_str)
-        return Err(Error::Unsupported("body reader requires POST"));
-    if (m_method.as_ref() == "HEAD"_str && m_body.stream().is_some())
-        return Err(Error::Unsupported("HEAD request cannot contain a body source"));
-    if (m_method.as_ref() == "HEAD"_str && m_body.bytes().is_some() &&
-        m_body.bytes()->size() != usize())
-        return Err(Error::InvalidState("HEAD request cannot contain a body"));
+auto Request::try_set_url(ref<str> value) -> rstd::Result<empty, lihttpto::UrlError> {
+    auto url = lihttpto::Url::parse_http(value);
+    if (url.is_err()) return Err(rstd::move(url).unwrap_err());
+    parts_.url = rstd::move(url).unwrap();
     return Ok(empty {});
 }
-
-auto Request::url() const -> ref<str> { return m_url.as_ref(); }
-
-auto Request::url_info() const -> const lihttpto::Url& { return m_url; }
-
-auto Request::try_set_url(ref<str> input) -> rstd::Result<empty, lihttpto::UrlError> {
-    auto parsed = lihttpto::Url::parse_http(input);
-    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    m_url = rstd::move(parsed).unwrap();
-    return Ok(empty {});
-}
-
-auto Request::header(ref<str> name) const -> Option<ref<lihttpto::HeaderValue>> {
-    return m_header.get(name);
-}
-
-auto Request::header() const -> const lihttpto::Headers& { return m_header; }
-
-auto Request::update_header(const lihttpto::Headers& h) -> Request& {
-    for (const auto& field : h) (void)m_header.remove(field.name.as_str());
-    for (const auto& field : h) m_header.push(field.clone());
+auto Request::update_header(const lihttpto::Headers& headers) -> Request& {
+    for (const auto& field : headers) parts_.headers.remove(field.name.as_str());
+    for (const auto& field : headers) parts_.headers.push(field.clone());
     return *this;
 }
-
 auto Request::try_set_header(ref<str> name, ref<str> value)
     -> rstd::Result<empty, lihttpto::HeaderError> {
-    return m_header.set(name, value);
+    return parts_.headers.set(name, value);
 }
-
-Request& Request::remove_header(ref<str> name) {
-    (void)m_header.remove(name);
+auto Request::try_set_header(ref<str> name, slice<u8> value)
+    -> rstd::Result<empty, lihttpto::HeaderError> {
+    auto parsed = lihttpto::HeaderValue::make(value);
+    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+    return parts_.headers.set(name, rstd::move(parsed).unwrap());
+}
+auto Request::add_header(ref<str> name, slice<u8> value)
+    -> rstd::Result<empty, lihttpto::HeaderError> {
+    auto parsed = lihttpto::Header::make(name, value);
+    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+    parts_.headers.push(rstd::move(parsed).unwrap());
+    return Ok(empty {});
+}
+auto Request::remove_header(ref<str> name) -> Request& {
+    parts_.headers.remove(name);
     return *this;
 }
-
-auto Request::try_clone() const -> Result<Request> {
-    auto body = m_body.try_clone();
-    if (body.is_err()) return Err(rstd::move(body).unwrap_err());
-    auto req      = Request {};
-    req.m_method  = m_method.clone();
-    req.m_body    = rstd::move(body).unwrap();
-    req.m_url     = m_url.clone();
-    req.m_header  = m_header.clone();
-    req.m_options = m_options.clone();
-    return Ok(rstd::move(req));
+auto Request::text(ref<str> value, ref<str> type) -> rstd::Result<empty, lihttpto::HeaderError> {
+    auto set = try_set_header(header::content_type, type);
+    if (set.is_err()) return set;
+    set_body(Bytes::copy_from_slice(value.as_bytes()));
+    return Ok(empty {});
 }
-
-auto Request::redirected(lihttpto::Url target, bool use_get) const -> Result<Request> {
-    auto out      = Request(rstd::move(target));
-    out.m_header  = m_header.clone();
-    out.m_options = m_options.clone();
-    if (use_get) {
-        ref<str> names[] = { "content-length"_str,    "content-type"_str, "content-encoding"_str,
-                             "transfer-encoding"_str, "trailer"_str,      "expect"_str };
-        for (auto name : names) out.remove_header(name);
-    } else {
-        if (m_body.reader().is_some() || m_body.stream().is_some())
-            return Err(Error::Protocol(ProtocolError::RedirectBodyNotReplayable, nullptr));
-        out.m_method = m_method.clone();
-        out.m_body   = m_body.try_clone().unwrap();
-    }
-    return Ok(rstd::move(out));
+auto Request::json(const rstd::json::Value& value) -> rstd::Result<empty, lihttpto::HeaderError> {
+    auto encoded = rstd::json::to_string(value);
+    return text(encoded.as_str(), media_type::json);
 }
+auto Request::form(const lihttpto::QueryParams& value)
+    -> rstd::Result<empty, lihttpto::HeaderError> {
+    auto encoded = value.encode_form();
+    return text(encoded.as_str(), media_type::form);
+}
+} // namespace ncrequest

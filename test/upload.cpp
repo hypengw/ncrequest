@@ -1,311 +1,147 @@
 #include <rstd/test/gtest.hpp>
-#include <cstdlib>
-#include <string>
 import ncrequest;
-import rstd;
-
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using ncrequest::Request;
-using ncrequest::RequestBody;
-using ncrequest::RequestOptions;
-using ncrequest::Session;
-using rstd::async::block_on;
-using rstd::async::RuntimeBuilder;
-using rstd::async::sleep;
-using rstd::async::spawn_local;
-using rstd::bytes::Bytes;
-using rstd::sync::Arc;
-using rstd::sync::atomic::Atomic;
-using rstd::time::Duration;
-using IoError     = rstd::io::error::Error;
-using IoErrorKind = rstd::io::error::ErrorKind;
-
-static auto text_ref(const std::string& text) -> ref<str> {
-    return rstd::str_::from_utf8(
-               slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(text.data()),
-                                         usize(text.size())))
-        .unwrap();
-}
-
-static auto base_url() -> std::string {
-    auto value = std::getenv("NCREQUEST_TEST_HTTP_BASE_URL");
-    return value ? value : "";
-}
-
-struct UploadStats {
-    Atomic<int> calls { 0 };
-    Atomic<int> pending { 0 };
+using namespace ncrequest;
+#include "support.hpp"
+using namespace test_http;
+namespace
+{
+struct Factory {
+    Arc<rstd::sync::Mutex<usize>> opens;
+    auto                          open(lf::TransferContext) const -> coro<lf::Result<UploadBody>> {
+        ++*opens->lock().unwrap();
+        co_return Ok(UploadBody::bytes(Bytes::copy_from_slice("abc"_str.as_bytes())));
+    }
+    void request_stop(lf::StopReason) const {}
+    auto release(lf::ReleaseContext) const -> coro<lf::Result<empty>> { co_return Ok(empty {}); }
 };
-
-struct AsyncSource {
-    using Error = IoError;
-    Arc<UploadStats> stats;
-    usize            chunks { 3 };
-    usize            chunk_size { 40000 };
-    u64              delay_ms { 1 };
-    bool             fail { false };
-    bool             empty_first { false };
-    auto             next() -> ncrequest::coro<rstd::Result<Option<Bytes>, Error>> {
-        stats->calls.fetch_add(1);
-        struct Guard {
-            Arc<UploadStats> stats;
-            explicit Guard(Arc<UploadStats> value): stats(rstd::move(value)) {
-                stats->pending.fetch_add(1);
-            }
-            ~Guard() { stats->pending.fetch_sub(1); }
-        } guard(stats.clone());
-        co_await sleep(Duration::from_millis(delay_ms));
-        if (fail) co_return Err(IoError::from_kind(IoErrorKind { IoErrorKind::PermissionDenied }));
-        if (empty_first) {
-            empty_first = false;
-            co_return Ok(Some(Bytes {}));
-        }
-        if (chunks == usize()) co_return Ok(None<Bytes>());
-        --chunks;
-        auto payload = std::string(chunk_size.to_primitive(), 'x');
-        if (! payload.empty()) payload[0] = '\0';
-        co_return Ok(Some(Bytes::copy_from_slice(text_ref(payload).as_bytes())));
+struct CollectSink {
+    using Error = rstd::io::Error;
+    Vec<u8> bytes;
+    auto    write(Bytes part) -> coro<rstd::Result<empty, Error>> {
+        bytes.extend_from_slice(part.as_slice());
+        co_return Ok(empty {});
     }
 };
-static_assert(lihttpto::BodySource<AsyncSource>);
-
-struct UploadResult {
-    bool                     ok { false };
-    int                      code {};
-    std::string              body;
-    Option<ncrequest::Error> error;
+struct Sink {
+    using Error = rstd::io::Error;
+    auto write(Bytes) -> coro<rstd::Result<empty, Error>> {
+        co_return Err(
+            Error::from_kind(rstd::io::ErrorKind { rstd::io::ErrorKind::PermissionDenied }));
+    }
 };
-
-static auto upload(Arc<Session> session, std::string url, std::string method, AsyncSource source,
-                   Option<u64> size, bool redirects = false) -> ncrequest::coro<UploadResult> {
-    auto request = Request::from_url(text_ref(url)).unwrap();
-    request.try_set_method(text_ref(method)).unwrap();
-    request.set_body(RequestBody::from_source(rstd::move(source), size));
-    request.try_set_header("Expect"_str, ""_str).unwrap();
-    auto options     = RequestOptions {};
-    options.redirect = Some(redirects ? ncrequest::RedirectOptions::same_origin()
-                                      : ncrequest::RedirectOptions::disabled());
-#ifndef LITO_FEAT_QT
-    auto timeout    = ncrequest::TimeoutOptions {};
-    timeout.total   = ncrequest::TimeoutLimit::after(Duration::from_secs(u64(2)));
-    options.timeout = Some(timeout);
-#endif
-    request.set_options(rstd::move(options));
-    auto response = co_await session->send(rstd::move(request));
-    if (response.is_err())
-        co_return UploadResult { false, 0, {}, Some(rstd::move(response).unwrap_err()) };
-    auto value = rstd::move(response).unwrap();
-    if (url.ends_with("/async-duplex")) co_await sleep(Duration::from_millis(u64(100)));
-    auto body = co_await value->bytes();
-    if (body.is_err()) co_return UploadResult { false, 0, {}, Some(rstd::move(body).unwrap_err()) };
-    auto raw = body->as_slice();
-    co_return UploadResult { true,
-                             value->code()->to_primitive(),
-                             std::string(reinterpret_cast<const char*>(raw.as_raw_ptr()),
-                                         raw.len().to_primitive()),
-                             None() };
+} // namespace
+namespace rstd
+{
+template<>
+struct Impl<lifetchto::UploadFactory, Factory> : ImplBase<Factory> {
+    auto open(lifetchto::TransferContext c) const { return this->self().open(rstd::move(c)); }
+    void request_stop(lifetchto::StopReason r) const { this->self().request_stop(r); }
+    auto release(lifetchto::ReleaseContext c) const { return this->self().release(c); }
+};
+} // namespace rstd
+TEST(upload, FactoryReopensAndRetryHasOneOwner) {
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto task    = [&]() -> coro<empty> {
+        auto  engine = lf::Engine::make(runtime.handle()).unwrap();
+        auto  script = Script::make(State {});
+        Reply retry, ok;
+        retry.status = u16(503);
+        script->lock().unwrap()->replies.push(rstd::move(retry));
+        script->lock().unwrap()->replies.push(rstd::move(ok));
+        SessionOptions options;
+        h::RetryPolicy policy;
+        policy.methods.push("POST"_Str);
+        policy.statuses.push(u16(503));
+        policy.business_idempotent = true;
+        policy.backoff             = Duration {};
+        options.http.policy.retry  = Some(rstd::move(policy));
+        auto session = Session::from_backend(engine.handle(),
+                                             h::BackendBinding::Shared(backend(script)),
+                                             rstd::move(options))
+                           .unwrap();
+        auto opens   = Arc<rstd::sync::Mutex<usize>>::make(usize());
+        auto input   = request();
+        input.try_set_method("POST"_str).unwrap();
+        input.set_body(RequestBody::repeatable(
+            { Some(u64(3)) }, Arc<rstd::dyn<lf::UploadFactory>>::make(Factory { opens.clone() })));
+        auto value = (co_await response(*session, rstd::move(input))).unwrap();
+        EXPECT_TRUE((co_await value->bytes()).is_ok());
+        EXPECT_EQ(*opens->lock().unwrap(), usize(2));
+        EXPECT_EQ(script->lock().unwrap()->prepared, usize(1));
+        EXPECT_EQ(script->lock().unwrap()->requests.len(), usize(2));
+        EXPECT_EQ(script->lock().unwrap()->uploads[usize()].as_slice(), "abc"_str.as_bytes());
+        EXPECT_EQ(script->lock().unwrap()->uploads[usize(1)].as_slice(), "abc"_str.as_bytes());
+        EXPECT_EQ((co_await value->execution().wait()).unwrap().facts.attempts, usize(2));
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(task());
 }
-
-TEST(upload, SourceOwnershipAndValidation) {
-    auto request = Request::from_url("http://localhost/"_str).unwrap();
-    request.set_body(RequestBody::from_source(AsyncSource { Arc<UploadStats>::make() }));
-    EXPECT_TRUE(request.try_clone().is_err());
-    request.try_set_method("HEAD"_str).unwrap();
-    EXPECT_TRUE(request.validate().is_err());
-    request.clear_body();
-    EXPECT_TRUE(request.validate().is_ok());
+TEST(upload, OnceRedirectRefusesReplay) {
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto task    = [&]() -> coro<empty> {
+        auto  engine = lf::Engine::make(runtime.handle()).unwrap();
+        auto  script = Script::make(State {});
+        Reply reply;
+        reply.status = u16(307);
+        reply.headers.add("Location"_str, "/next"_str).unwrap();
+        script->lock().unwrap()->replies.push(rstd::move(reply));
+        SessionOptions options;
+        options.http.policy.redirect = Some(h::RedirectPolicy {});
+        auto session = Session::from_backend(engine.handle(),
+                                             h::BackendBinding::Shared(backend(script)),
+                                             rstd::move(options))
+                           .unwrap();
+        auto input   = request();
+        input.try_set_method("POST"_str).unwrap();
+        input.set_body(
+            RequestBody::once(UploadBody::bytes(Bytes::copy_from_slice("abc"_str.as_bytes()))));
+        auto result = co_await response(*session, rstd::move(input));
+        EXPECT_TRUE(result.is_err());
+        if (result.is_err())
+            EXPECT_TRUE(result.unwrap_err().as_Transport().cause.is_ReplayUnavailable());
+        EXPECT_EQ(script->lock().unwrap()->requests.len(), usize(1));
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(task());
 }
-
-TEST(upload, LocalAsyncMethodsAndLengths) {
-#ifndef LITO_FEAT_QT
-    auto base = base_url();
-    if (base.empty()) GTEST_SKIP();
-    for (auto method : { "POST", "PUT", "PATCH", "GET", "DELETE", "REPORT" }) {
-        for (bool known : { false, true }) {
-            auto source        = AsyncSource { Arc<UploadStats>::make() };
-            source.empty_first = true;
-            auto result        = block_on(upload(Session::make().unwrap(),
-                                                 base + "/async-echo",
-                                                 method,
-                                                 rstd::move(source),
-                                                 known ? Some(u64(120000)) : None<u64>()));
-            ASSERT_TRUE(result.ok);
-            EXPECT_EQ(result.code, 200);
-            auto expected = std::string(method) + "\n";
-            auto chunk    = std::string(40000, 'x');
-            chunk[0]      = '\0';
-            expected += chunk + chunk + chunk;
-            EXPECT_EQ(result.body, expected);
-        }
-    }
-    auto stats = Arc<UploadStats>::make();
-    auto empty = block_on(upload(Session::make().unwrap(),
-                                 base + "/async-echo",
-                                 "POST",
-                                 AsyncSource { stats.clone() },
-                                 Some(u64())));
-    EXPECT_TRUE(empty.ok);
-    EXPECT_EQ(empty.body, "POST\n");
-    EXPECT_EQ(stats->calls.load(), 0);
-
-    auto no_chunks     = AsyncSource { Arc<UploadStats>::make() };
-    no_chunks.chunks   = usize();
-    auto unknown_empty = block_on(upload(Session::make().unwrap(),
-                                         base + "/async-echo",
-                                         "POST",
-                                         rstd::move(no_chunks),
-                                         None<u64>()));
-    EXPECT_TRUE(unknown_empty.ok);
-    EXPECT_EQ(unknown_empty.body, "POST\n");
-
-    auto runtime =
-        RuntimeBuilder::multi_thread().worker_threads(usize(2)).enable_time().build().unwrap();
-    auto result = runtime.block_on(upload(Session::make().unwrap(),
-                                          base + "/async-echo",
-                                          "PATCH",
-                                          AsyncSource { Arc<UploadStats>::make() },
-                                          None<u64>()));
-    EXPECT_TRUE(result.ok);
-#else
-    GTEST_SKIP();
-#endif
-}
-
-TEST(upload, LocalAsyncErrorsAndRedirect) {
-#ifndef LITO_FEAT_QT
-    auto base = base_url();
-    if (base.empty()) GTEST_SKIP();
-    auto stats    = Arc<UploadStats>::make();
-    auto overflow = block_on(upload(Session::make().unwrap(),
-                                    base + "/async-echo",
-                                    "POST",
-                                    AsyncSource { stats.clone() },
-                                    Some(u64(u64::MAX))));
-    EXPECT_TRUE(overflow.error.is_some() && overflow.error->is_InvalidState());
-    EXPECT_EQ(stats->calls.load(), 0);
-    for (auto size : { 119999u, 120001u }) {
-        auto result = block_on(upload(Session::make().unwrap(),
-                                      base + "/async-echo",
-                                      "POST",
-                                      AsyncSource { Arc<UploadStats>::make() },
-                                      Some(u64(size))));
-        ASSERT_TRUE(result.error.is_some());
-        ASSERT_TRUE(result.error->is_Protocol());
-        EXPECT_EQ(result.error->as_Protocol().kind, ncrequest::ProtocolError::BodyLengthMismatch);
-    }
-    auto source = AsyncSource { Arc<UploadStats>::make() };
-    source.fail = true;
-    auto failed = block_on(upload(
-        Session::make().unwrap(), base + "/async-echo", "POST", rstd::move(source), None<u64>()));
-    ASSERT_TRUE(failed.error.is_some());
-    ASSERT_TRUE(failed.error->is_Io());
-    EXPECT_EQ(failed.error->as_Io().error.kind(), (IoErrorKind { IoErrorKind::PermissionDenied }));
-    auto redirect = block_on(upload(Session::make().unwrap(),
-                                    base + "/async-redirect",
-                                    "POST",
-                                    AsyncSource { Arc<UploadStats>::make() },
-                                    Some(u64(120000)),
-                                    true));
-    ASSERT_TRUE(redirect.error.is_some());
-    ASSERT_TRUE(redirect.error->is_Protocol());
-    EXPECT_EQ(redirect.error->as_Protocol().kind,
-              ncrequest::ProtocolError::RedirectBodyNotReplayable);
-#else
-    GTEST_SKIP();
-#endif
-}
-
-static auto cancel_upload(std::string url, bool close_session, bool blocked_queue)
-    -> ncrequest::coro<bool> {
-    auto session      = Session::make().unwrap();
-    auto stats        = Arc<UploadStats>::make();
-    auto source       = AsyncSource { stats.clone() };
-    source.delay_ms   = u64(blocked_queue ? 0 : 10000);
-    source.chunks     = usize(10000);
-    source.chunk_size = usize(65536);
-    auto pending =
-        spawn_local(upload(session.clone(), url, "POST", rstd::move(source), None<u64>()));
-    co_await sleep(Duration::from_millis(u64(100)));
-    auto before = stats->calls.load();
-    if (close_session)
-        session->close();
-    else
-        pending.abort();
-    auto result = co_await rstd::move(pending);
-    bool failed = result.is_err() || result->error.is_some();
-    for (int i = 0; i < 100 && stats->pending.load() != 0; ++i)
-        co_await sleep(Duration::from_millis(u64(2)));
-    auto calls = stats->calls.load();
-    co_await sleep(Duration::from_millis(u64(20)));
-    co_return before > 0 && before < 10000 && failed && stats->pending.load() == 0 &&
-        calls == stats->calls.load();
-}
-
-TEST(upload, LocalAsyncCancellation) {
-#ifndef LITO_FEAT_QT
-    auto base = base_url();
-    if (base.empty()) GTEST_SKIP();
-    for (bool close_session : { false, true })
-        for (bool blocked_queue : { false, true })
-            EXPECT_TRUE(
-                block_on(cancel_upload(base + "/async-stall", close_session, blocked_queue)));
-#else
-    GTEST_SKIP();
-#endif
-}
-
-static auto early_response(std::string url) -> ncrequest::coro<bool> {
-    auto stats      = Arc<UploadStats>::make();
-    auto source     = AsyncSource { stats.clone() };
-    source.delay_ms = u64(10000);
-    auto result =
-        co_await upload(Session::make().unwrap(), url, "POST", rstd::move(source), None<u64>());
-    for (int i = 0; i < 100 && stats->pending.load() != 0; ++i)
-        co_await sleep(Duration::from_millis(u64(2)));
-    co_return result.ok&& result.code == 413 && result.body == "rejected" &&
-        stats->pending.load() == 0;
-}
-
-static auto upload_timeout(std::string url) -> ncrequest::coro<bool> {
-    auto stats      = Arc<UploadStats>::make();
-    auto source     = AsyncSource { stats.clone() };
-    source.delay_ms = u64(10000);
-    auto result =
-        co_await upload(Session::make().unwrap(), url, "POST", rstd::move(source), None<u64>());
-    for (int i = 0; i < 100 && stats->pending.load() != 0; ++i)
-        co_await sleep(Duration::from_millis(u64(2)));
-    co_return result.error.is_some() && result.error->is_Client() &&
-        result.error->as_Client().error.code == i32(28) && stats->pending.load() == 0;
-}
-
-TEST(upload, LocalAsyncTimeoutAndDuplex) {
-#ifndef LITO_FEAT_QT
-    auto base = base_url();
-    if (base.empty()) GTEST_SKIP();
-    EXPECT_TRUE(block_on(upload_timeout(base + "/async-stall")));
-    auto source   = AsyncSource { Arc<UploadStats>::make() };
-    source.chunks = usize(30);
-    auto result   = block_on(upload(
-        Session::make().unwrap(), base + "/async-duplex", "POST", rstd::move(source), None<u64>()));
-    EXPECT_TRUE(result.ok);
-    EXPECT_EQ(result.body, std::string(262144, 'd'));
-#else
-    GTEST_SKIP();
-#endif
-}
-
-TEST(upload, LocalAsyncEarlyResponse) {
-#ifndef LITO_FEAT_QT
-    auto base = base_url();
-    if (base.empty()) GTEST_SKIP();
-    EXPECT_TRUE(block_on(early_response(base + "/async-early")));
-#else
-    auto result = block_on(upload(Session::make().unwrap(),
-                                  "http://localhost/",
-                                  "POST",
-                                  AsyncSource { Arc<UploadStats>::make() },
-                                  None<u64>()));
-    EXPECT_TRUE(result.error.is_some() && result.error->is_Unsupported());
-#endif
+TEST(upload, TruncationAndSinkFailureKeepTypedErrorsAndStopBody) {
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto task    = [&]() -> coro<empty> {
+        auto  engine = lf::Engine::make(runtime.handle()).unwrap();
+        auto  script = Script::make(State {});
+        Reply truncated;
+        truncated.truncated = true;
+        script->lock().unwrap()->replies.push(rstd::move(truncated));
+        auto session =
+            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+                .unwrap();
+        auto first = (co_await response(*session, request())).unwrap();
+        EXPECT_TRUE((co_await first->bytes()).unwrap_err().as_Transport().cause.is_BodySource());
+        EXPECT_TRUE((co_await first->completion().wait())->logical.result.is_err());
+        auto value   = (co_await response(*session, request())).unwrap();
+        auto control = value->completion();
+        Sink sink;
+        auto copy = value->read_to_stream(sink);
+        value.reset();
+        auto failed = co_await rstd::move(copy);
+        EXPECT_TRUE(failed.is_err());
+        if (failed.is_err()) EXPECT_TRUE(failed.unwrap_err().is_Sink());
+        EXPECT_TRUE((co_await control.wait())->logical.result.is_err());
+        auto        copied = (co_await response(*session, request())).unwrap();
+        CollectSink output;
+        auto        copying = copied->read_to_stream(output);
+        copied.reset();
+        EXPECT_EQ((co_await rstd::move(copying)).unwrap(), u64(7));
+        EXPECT_EQ(output.bytes.as_slice(), "payload"_str.as_bytes());
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(task());
 }
