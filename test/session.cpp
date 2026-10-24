@@ -75,6 +75,19 @@ TEST(session, RejectedRequestRetainsSourceAndOptionsAcrossCanceledRelease) {
     };
     runtime.block_on(task());
 }
+TEST(session, RequestControlDefaultConstructionAndDestruction) {
+    RequestControl scoped;
+    EXPECT_FALSE(scoped.is_canceled());
+    scoped.cancel();
+    EXPECT_TRUE(scoped.is_canceled());
+
+    auto control  = Arc<RequestControl>::make();
+    auto retained = control.clone();
+    control.reset();
+    EXPECT_FALSE(retained->is_canceled());
+    retained->cancel();
+    EXPECT_TRUE(retained->is_canceled());
+}
 TEST(session, ControlBeforeSendDoesNotPullOrConsumeRequest) {
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
     auto session = Session::make(runtime.handle()).unwrap();

@@ -18,7 +18,9 @@ TEST(ManagedDuplexPeer, CancellationDeadlineDropBoundsAndConnectFailure) {
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
     auto task    = [&]() -> coro<empty> {
         for (int mode {}; mode < 2; ++mode) {
-            if (mode == 1 && ! LITO_FEAT_CURL) continue;
+#if ! LITO_FEAT_CURL
+            if (mode == 1) continue;
+#endif
             auto engine   = lf::Engine::make(runtime.handle()).unwrap();
             auto selected = [&]() -> Arc<rstd::dyn<h::ExchangeBackend>> {
 #if LITO_FEAT_CURL

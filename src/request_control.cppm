@@ -28,6 +28,9 @@ class RequestControl {
     }
 
 public:
+    // Avoid implicit destructor generation in importing modules (Clang 23).
+    ~RequestControl();
+
     void cancel() const {
         auto f      = fields_.lock().unwrap();
         f->canceled = true;

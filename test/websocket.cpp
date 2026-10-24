@@ -17,7 +17,12 @@ struct CallbackProbe {
 TEST(websocket, LocalEchoText) {
     if (! ::getenv("NCREQUEST_TEST_WS_URL")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
-        if ((mode == 1 && ! LITO_FEAT_CURL) || (mode == 2 && ! LITO_FEAT_QT)) continue;
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
+#if ! LITO_FEAT_QT
+        if (mode == 2) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::multi_thread()
                            .worker_threads(usize(3))
                            .enable_all()

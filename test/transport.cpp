@@ -49,7 +49,12 @@ auto tls_backend(int mode, lf::ResourceContext resources, h::TlsOptions options,
 TEST(TransportPeer, SharedTlsOptionsVerifyCaNameAndClientIdentity) {
     if (! ::getenv("LIFETCHTO_MTLS_PORT")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
-        if ((mode == 1 && ! LITO_FEAT_CURL) || (mode == 2 && ! LITO_FEAT_QT)) continue;
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
+#if ! LITO_FEAT_QT
+        if (mode == 2) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<empty> {
             auto engine = lf::Engine::make(runtime.handle()).unwrap();
@@ -289,7 +294,12 @@ TEST(ProxyOptions, SnapshotSelectsCanonicalHostsPortsAndBypass) {
 TEST(ProxyPeer, HttpProxyConnectAndManagedDuplexUseSelectedBackend) {
     if (! ::getenv("LIFETCHTO_PROXY_PORT")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
-        if ((mode == 1 && ! LITO_FEAT_CURL) || (mode == 2 && ! LITO_FEAT_QT)) continue;
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
+#if ! LITO_FEAT_QT
+        if (mode == 2) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<empty> {
             auto engine = lf::Engine::make(runtime.handle()).unwrap();
@@ -376,7 +386,12 @@ TEST(ProxyPeer, HttpProxyConnectAndManagedDuplexUseSelectedBackend) {
 TEST(ProxyPeer, SystemSnapshotBypassAndBackendCapabilityRejections) {
     if (! ::getenv("LIFETCHTO_PROXY_PORT")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
-        if ((mode == 1 && ! LITO_FEAT_CURL) || (mode == 2 && ! LITO_FEAT_QT)) continue;
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
+#if ! LITO_FEAT_QT
+        if (mode == 2) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<empty> {
             auto                engine = lf::Engine::make(runtime.handle()).unwrap();

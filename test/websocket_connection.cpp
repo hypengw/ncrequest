@@ -183,8 +183,12 @@ static auto scenario(Arc<Session> session, unsigned mode) -> rstd::async::coro<b
 static void run(unsigned mode) {
     if (! ::getenv("NCREQUEST_WS_URL")) GTEST_SKIP();
     for (int backend_mode {}; backend_mode < 3; ++backend_mode) {
-        if ((backend_mode == 1 && ! LITO_FEAT_CURL) || (backend_mode == 2 && ! LITO_FEAT_QT))
-            continue;
+#if ! LITO_FEAT_CURL
+        if (backend_mode == 1) continue;
+#endif
+#if ! LITO_FEAT_QT
+        if (backend_mode == 2) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<bool> {
             auto engine  = lifetchto::Engine::make(runtime.handle()).unwrap();
@@ -247,7 +251,10 @@ TEST(WebSocketConnection, DeliveredReceiptStillCountsWhileItsOwnerIsRetained) { 
 
 TEST(WebSocketConnection, RegisteredTaskQuotaFailureClosesNativeStream) {
     if (! ::getenv("NCREQUEST_WS_URL")) GTEST_SKIP();
-    for (int mode {}; mode < (LITO_FEAT_CURL ? 2 : 1); ++mode) {
+    for (int mode {}; mode < 2; ++mode) {
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<empty> {
             lifetchto::EngineOptions limits;

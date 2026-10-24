@@ -9,7 +9,10 @@ namespace h  = lifetchto::http;
 template<class F>
 void with_upgrade_backends(F test) {
     if (! ::getenv("NCREQUEST_UPGRADE_SOCKET")) GTEST_SKIP();
-    for (int mode {}; mode < (LITO_FEAT_CURL ? 2 : 1); ++mode) {
+    for (int mode {}; mode < 2; ++mode) {
+#if ! LITO_FEAT_CURL
+        if (mode == 1) continue;
+#endif
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto task    = [&]() -> coro<empty> {
             auto engine  = lf::Engine::make(runtime.handle()).unwrap();
