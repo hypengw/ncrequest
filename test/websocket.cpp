@@ -1,103 +1,116 @@
-#if ! defined(LITO_FEAT_QT)
-#    include <atomic>
-#    include <chrono>
-#    include <future>
-#    include <rstd/test/gtest.hpp>
-#    include <string>
-#    include <string_view>
-#    include <thread>
-
+#include <rstd/test/gtest.hpp>
+#include <stdlib.h>
 import ncrequest;
-
+#include "ws_helpers.hpp"
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using rstd::async::block_on;
-using std::chrono::milliseconds;
-using std::chrono::seconds;
-using std::chrono::steady_clock;
-using std::this_thread::sleep_for;
-
-namespace
-{
-
-auto local_ws_url() -> std::string {
-    auto* value = std::getenv("NCREQUEST_TEST_WS_URL");
-    if (value == nullptr || *value == '\0') return {};
-    return value;
-}
-
-template<typename T>
-auto wait_future(std::future<T>& future, milliseconds timeout) -> bool {
-    auto const deadline = steady_clock::now() + timeout;
-    while (steady_clock::now() < deadline) {
-        if (future.wait_for(milliseconds(0)) == std::future_status::ready) {
-            return true;
-        }
-        sleep_for(milliseconds(1));
-    }
-    return future.wait_for(milliseconds(0)) == std::future_status::ready;
-}
-
-} // namespace
-
-TEST(websocket, ConstructDisconnected) {
-    auto client = ncrequest::WebSocketClient {};
-    EXPECT_FALSE(client.is_connected());
-    client.send("ignored while disconnected"_str);
-    client.disconnect();
-}
-
+using namespace ncrequest;
+namespace lf = lifetchto;
+struct CallbackCounts {
+    usize connected, disconnected, messages, errors;
+    Bytes payload;
+};
+struct CallbackProbe {
+    rstd::sync::Mutex<CallbackCounts> counts { CallbackCounts {} };
+    lf::Event                         changed;
+};
 TEST(websocket, LocalEchoText) {
-    auto url = local_ws_url();
-    if (url.empty()) {
-        GTEST_SKIP() << "NCREQUEST_TEST_WS_URL is not set";
-    }
-
-    auto client = ncrequest::WebSocketClient {};
-
-    std::promise<std::string> message_promise;
-    auto                      message = message_promise.get_future();
-    std::atomic_bool          got_message { false };
-
-    std::promise<std::string> error_promise;
-    auto                      error = error_promise.get_future();
-    std::atomic_bool          got_error { false };
-    std::promise<void>        disconnected_promise;
-    auto                      disconnected = disconnected_promise.get_future();
-
-    client.set_on_disconnected_callback([&disconnected_promise] {
-        disconnected_promise.set_value();
-    });
-
-    client.set_on_message_callback([&message_promise, &got_message](slice<u8> data, bool) {
-        if (got_message.exchange(true)) return;
-
-        std::string out(reinterpret_cast<const char*>(data.as_raw_ptr()),
-                        data.len().to_primitive());
-        message_promise.set_value(std::move(out));
-    });
-    client.set_on_error_callback([&error_promise, &got_error](ref<str> data) {
-        if (got_error.exchange(true)) return;
-
-        std::string out(reinterpret_cast<const char*>(data.data()), data.size().to_primitive());
-        error_promise.set_value(std::move(out));
-    });
-
-    auto connected = block_on(client.connect(
-        rstd::str_::from_utf8(
-            slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(url.data()), usize(url.size())))
-            .unwrap()));
-    ASSERT_TRUE(connected.is_ok());
-    ASSERT_TRUE(rstd::move(connected).unwrap());
-    EXPECT_TRUE(client.is_connected());
-
-    client.send("curl websocket payload"_str);
-    ASSERT_TRUE(wait_future(message, seconds(5)))
-        << (wait_future(error, milliseconds(0)) ? error.get() : "message timed out");
-    EXPECT_EQ(message.get(), "curl websocket payload");
-
-    client.disconnect();
-    ASSERT_TRUE(wait_future(disconnected, seconds(5)));
-    EXPECT_FALSE(client.is_connected());
-}
+    if (! ::getenv("NCREQUEST_TEST_WS_URL")) GTEST_SKIP();
+    for (int mode {}; mode < 3; ++mode) {
+        if ((mode == 1 && ! LITO_FEAT_CURL) || (mode == 2 && ! LITO_FEAT_QT)) continue;
+        auto runtime = rstd::async::RuntimeBuilder::multi_thread()
+                           .worker_threads(usize(3))
+                           .enable_all()
+                           .build()
+                           .unwrap();
+        auto test    = [&]() -> coro<empty> {
+            auto engine  = lf::Engine::make(runtime.handle()).unwrap();
+            auto session = [&]() -> Arc<Session> {
+#if LITO_FEAT_QT
+                if (mode == 2)
+                    return Session::from_backend(
+                               engine.handle(),
+                               client::qt_network::Backend::make(engine.resources())
+                                   .unwrap()
+                                   .owned_binding())
+                        .unwrap();
 #endif
+                auto backend = [&]() -> Arc<rstd::dyn<lf::http::ExchangeBackend>> {
+#if LITO_FEAT_CURL
+                    if (mode == 1)
+                        return client::curl::Backend::make(engine.resources()).unwrap().backend();
+#endif
+                    return lf::http::NativeBackend::make(engine.resources()).unwrap().backend();
+                }();
+                return Session::from_http_backend(
+                           engine.handle(), lf::http::BackendBinding::Owned(rstd::move(backend)))
+                    .unwrap();
+            }();
+            auto               probe = Arc<CallbackProbe>::make();
+            WebSocketCallbacks callbacks;
+            callbacks.connected = [probe = probe.clone()] {
+                ++probe->counts.lock().unwrap()->connected;
+                probe->changed.notify();
+            };
+            callbacks.disconnected = [probe = probe.clone()] {
+                ++probe->counts.lock().unwrap()->disconnected;
+                probe->changed.notify();
+            };
+            callbacks.message = [probe = probe.clone()](liwebsocketo::Message message) {
+                {
+                    auto f = probe->counts.lock().unwrap();
+                    ++f->messages;
+                    f->payload = rstd::move(message.data);
+                }
+                probe->changed.notify();
+            };
+            callbacks.error = [probe = probe.clone()](WebSocketError) {
+                ++probe->counts.lock().unwrap()->errors;
+                probe->changed.notify();
+            };
+            auto url =
+                lihttpto::Url::parse_http(
+                    rstd::ffi::CStr::from_ptr(::getenv("NCREQUEST_TEST_WS_URL")).to_str().unwrap())
+                    .unwrap();
+            auto connected = co_await WebSocketClient::connect(
+                session.clone(), { rstd::move(url), {} }, rstd::move(callbacks));
+            EXPECT_TRUE(connected.is_ok());
+            if (connected.is_ok()) {
+                auto client = rstd::move(connected).unwrap();
+                EXPECT_TRUE(client.is_connected());
+                auto sent =
+                    co_await write_ws(client,
+                                      { liwebsocketo::Kind::Text,
+                                        Bytes::copy_from_slice("callback echo"_str.as_bytes()) });
+                EXPECT_TRUE(sent.is_ok());
+                for (;;) {
+                    auto event = probe->changed.listen();
+                    if (probe->counts.lock().unwrap()->messages == usize(1)) break;
+                    co_await rstd::move(event);
+                }
+                EXPECT_TRUE(probe->counts.lock().unwrap()->payload.as_slice() ==
+                            "callback echo"_str.as_bytes());
+                auto closed = co_await client.close();
+                EXPECT_TRUE(closed.is_ok());
+                for (;;) {
+                    auto event = probe->changed.listen();
+                    if (probe->counts.lock().unwrap()->disconnected == usize(1)) break;
+                    co_await rstd::move(event);
+                }
+                EXPECT_FALSE(client.is_connected());
+                (void)co_await rstd::async::timeout(client.shutdown().into_future(),
+                                                    rstd::time::Duration {});
+                EXPECT_TRUE((co_await client.shutdown()).is_ok());
+                EXPECT_TRUE((co_await client.shutdown()).is_ok());
+                auto f = probe->counts.lock().unwrap();
+                EXPECT_EQ(f->connected, usize(1));
+                EXPECT_EQ(f->errors, usize());
+            }
+            EXPECT_TRUE((co_await session->close()).is_ok());
+            EXPECT_EQ(engine.resources().usage().bytes, usize());
+            EXPECT_TRUE((co_await engine.close()).is_ok());
+            co_return empty {};
+        };
+        runtime.block_on(test());
+    }
+}

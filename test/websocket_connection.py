@@ -37,7 +37,7 @@ def receive(sock):
         size = struct.unpack("!H", exact(sock, 2))[0]
     elif size == 127:
         size = struct.unpack("!Q", exact(sock, 8))[0]
-    if size > 65536:
+    if size > 1048576:
         raise ValueError("oversized input")
     mask = exact(sock, 4)
     data = exact(sock, size)
@@ -60,12 +60,12 @@ class Handler(socketserver.BaseRequestHandler):
                     raise ValueError("oversized handshake")
             lines = bytes(request).split(b"\r\n")
             mode = int(lines[0].split()[1][1:])
-            headers = dict(line.split(b": ", 1) for line in lines[1:] if b": " in line)
-            if headers.get(b"Authorization") != b"Bearer local-test":
+            headers = dict((name.lower(), value) for line in lines[1:] if b": " in line for name, value in [line.split(b": ", 1)])
+            if headers.get(b"authorization") != b"Bearer local-test":
                 raise ValueError("missing authorization")
-            if headers.get(b"Sec-WebSocket-Protocol") != b"fern.test":
+            if headers.get(b"sec-websocket-protocol") != b"fern.test":
                 raise ValueError("missing subprotocol")
-            accept = base64.b64encode(hashlib.sha1(headers[b"Sec-WebSocket-Key"] + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+            accept = base64.b64encode(hashlib.sha1(headers[b"sec-websocket-key"] + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
             if mode == 6:
                 accept = b"wrong"
             response = b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Protocol: fern.test\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
@@ -75,20 +75,47 @@ class Handler(socketserver.BaseRequestHandler):
                     raise ValueError("automatic Pong missing")
                 sock.sendall(frame(1, b"ready"))
                 opcode, data = receive(sock)
-                if opcode != 2 or data != b"x" * 65536:
+                if opcode != 2 or data != b"x" * 65537:
                     raise ValueError("large frame corrupted")
                 sock.sendall(frame(opcode, data))
+                opcode, data = receive(sock)
+                if (opcode,data)!=(1,b"second"):
+                    raise ValueError("FIFO second message missing")
+                sock.sendall(frame(opcode,data))
                 opcode, data = receive(sock)
                 if opcode != 8:
                     raise ValueError("close missing")
                 sock.sendall(frame(8, data))
+            elif mode in (10,11,12,13,14,15,16,17):
+                sock.sendall(response)
+                if mode==17:
+                    part=frame(1,"é".encode())
+                    sock.sendall(bytes([part[0]&127])+part[1:]+frame(0,"é".encode()))
+                elif mode==16:
+                    sock.sendall(b"\x81\x01\xff")
+                elif mode==10:
+                    sock.sendall(frame(2,b"x"*33))
+                elif mode==11:
+                    part=frame(2,b"x"*30)
+                    sock.sendall(bytes([part[0]&127])+part[1:]+frame(0,b"y"*30))
+                elif mode==12:
+                    sock.sendall(frame(1,b"state")*9+frame(2,b"r"*262144)+frame(1))
+                elif mode==13:
+                    sock.sendall(frame(2,b"r"*300000)*4)
+                elif mode==14:
+                    sock.sendall(frame(1)*20)
+                else:
+                    sock.sendall(frame(1,b"first"))
+                    time.sleep(0.02)
+                    sock.sendall(frame(1)*16)
+                while sock.recv(1024):pass
             elif mode == 4:
                 sock.sendall(response + frame(1, b"a") + frame(1, b"b"))
                 time.sleep(0.1)
             elif mode == 7:
                 sock.sendall(response + frame(1, b"ab"))
                 time.sleep(0.1)
-            elif mode == 5:
+            elif mode in (5,19):
                 sock.sendall(response + frame(1, b"last") + frame(8))
                 if receive(sock)[0] != 8:
                     raise ValueError("close reply missing")
@@ -99,7 +126,7 @@ class Handler(socketserver.BaseRequestHandler):
         except (EOFError, ConnectionResetError, BrokenPipeError):
             pass
         except Exception as error:
-            self.server.errors.append(str(error))
+            self.server.errors.append(f"mode {mode}: {error}")
 
 
 if __name__ == "__main__":
@@ -113,7 +140,7 @@ if __name__ == "__main__":
         try:
             subprocess.run([str(args.binary.resolve()), "--gtest_filter=WebSocketConnection.*"],
                            env={**os.environ, "NCREQUEST_WS_URL": f"http://127.0.0.1:{server.server_address[1]}"},
-                           check=True, timeout=20)
+                           check=True, timeout=30)
         finally:
             server.shutdown()
             thread.join()

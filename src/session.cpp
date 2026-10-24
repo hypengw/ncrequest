@@ -6,9 +6,10 @@ namespace ncrequest
 {
 namespace http = lifetchto::http;
 struct SessionState {
-    Option<Arc<lifetchto::Engine>> engine;
-    http::Client                   client;
-    ResponseOptions                response;
+    Option<Arc<lifetchto::Engine>>           engine;
+    http::Client                             client;
+    ResponseOptions                          response;
+    Option<Arc<rstd::dyn<WebSocketBackend>>> websocket;
     SessionState(Option<Arc<lifetchto::Engine>> engine, http::Client client,
                  ResponseOptions response)
         : engine(rstd::move(engine)), client(rstd::move(client)), response(response) {}
@@ -86,6 +87,30 @@ auto PendingResponse::close() const -> coro<Arc<lifetchto::TransferReport>> {
     return state_->control.close();
 }
 Session::Session(ConstructionKey, Arc<SessionState> state): state_(rstd::move(state)) {}
+auto Session::capabilities() const -> http::BackendCapabilities {
+    return state_->client.capabilities();
+}
+auto Session::resources() const -> lifetchto::ResourceContext { return state_->client.resources(); }
+auto Session::websocket_backend() const -> Option<Arc<rstd::dyn<WebSocketBackend>>> {
+    return state_->websocket.clone();
+}
+auto Session::websocket_capabilities() const -> WebSocketCapabilities {
+    if (state_->websocket.is_some()) return (*state_->websocket)->capabilities();
+    bool supported = capabilities().duplex;
+    return { supported, supported, supported, supported };
+}
+auto Session::prepare_connection(DuplexRequest input, DuplexOptions options) const
+    -> rstd::Result<http::ConnectionPlan, lifetchto::Rejected<DuplexRequest>> {
+    return state_->client.prepare_connection(rstd::move(input), options);
+}
+auto Session::duplex(DuplexRequest request, DuplexOptions options) const
+    -> rstd::Result<PendingDuplex, lifetchto::Rejected<DuplexRequest>> {
+    return state_->client.duplex(rstd::move(request), options);
+}
+auto Session::upgrade(UpgradeRequest request, UpgradeOptions options) const
+    -> rstd::Result<PendingUpgrade, lifetchto::Rejected<UpgradeRequest>> {
+    return state_->client.upgrade(rstd::move(request), options);
+}
 void stop_session(const Arc<SessionState>& state) {
     state->client.request_close();
     if (state->engine.is_some()) (*state->engine)->request_close();
@@ -112,11 +137,21 @@ auto Session::from_client(http::Client client, ResponseOptions options) -> Resul
         Arc<SessionState>::make(None<Arc<lifetchto::Engine>>(), rstd::move(client), options);
     return Ok(Arc<Session>::make(ConstructionKey {}, rstd::move(state)));
 }
-auto Session::from_backend(lifetchto::EngineHandle engine, const http::BackendBinding& backend,
-                           const SessionOptions& options) -> Result<Arc<Session>> {
+auto Session::from_http_backend(lifetchto::EngineHandle engine, const http::BackendBinding& backend,
+                                const SessionOptions& options) -> Result<Arc<Session>> {
     auto client = http::Client::make(rstd::move(engine), backend.clone(), options.http.clone());
     if (client.is_err()) return Err(Error::Transport(rstd::move(client).unwrap_err()));
     return from_client(rstd::move(client).unwrap(), options.response);
+}
+auto Session::from_backend(lifetchto::EngineHandle engine, const BackendBinding& backend,
+                           const SessionOptions& options) -> Result<Arc<Session>> {
+    auto websocket = backend.websocket();
+    if (websocket.is_some() && ! *websocket)
+        return Err(
+            Error::Transport(lifetchto::Error::InvalidOptions("null WebSocket backend"_Str)));
+    auto made = from_http_backend(rstd::move(engine), backend.http(), options);
+    if (made.is_ok()) (*made)->state_->websocket = rstd::move(websocket);
+    return made;
 }
 auto Session::send(Request request, Option<Arc<RequestControl>> control) const -> Submission {
     if (control.is_some()) {

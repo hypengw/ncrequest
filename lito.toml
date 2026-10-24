@@ -9,16 +9,43 @@ name = "ncrequest"
 module = "ncrequest"
 archive = "ncrequest"
 
+[features.curl]
+default = false
+
+[features.qt]
+default = false
+
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
+version = ">= 7.77"
+condition = "feature.curl"
+
+[external-dependencies.pkg-config.qtcore]
+module = "Qt6Core"
+version = ">= 6.8"
+condition = "feature.qt"
+
+[external-dependencies.pkg-config.qtnetwork]
+module = "Qt6Network"
+version = ">= 6.8"
+condition = "feature.qt"
+
+[external-dependencies.pkg-config.qtwebsockets]
+module = "Qt6WebSockets"
+version = ">= 6.8"
+condition = "feature.qt"
+
 [dependencies]
 rstd-std = { version = "0.1.9", pub = true }
 rstd-json = { version = "0.1.9", pub = true }
 lihttpto = { version = "0.1.1", pub = true }
 lifetchto = { version = "0.1.0", features = ["http", "tls"], pub = true }
+liwebsocketo = { version = "0.1.0", pub = true }
 
 [[test]]
 name = "ncrequest-tests"
-sources = ["test/main.cpp", "test/session.cpp", "test/http.cpp", "test/upload.cpp", "test/cache.cpp", "test/http_peer.cpp"]
-link-stdlib = false
+sources = ["test/main.cpp", "test/session.cpp", "test/http.cpp", "test/upload.cpp", "test/cache.cpp", "test/http_peer.cpp", "test/adapters.cpp", "test/managed_duplex.cpp", "test/upgrade.cpp", "test/websocket_connection.cpp", "test/websocket.cpp", "test/qt_websocket.cpp", "test/qt_events.cpp", "test/websocket_flow.cpp", "test/transport.cpp"]
+link-stdlib = true
 
 [dev-dependencies]
 rstd-test = { version = "0.1.9" }

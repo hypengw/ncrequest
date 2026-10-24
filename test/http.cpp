@@ -11,7 +11,7 @@ TEST(http, OwnedSingleConsumerBodyAndTrailers) {
         auto engine = lf::Engine::make(runtime.handle()).unwrap();
         auto script = Script::make(State {});
         auto session =
-            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+            Session::from_http_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
                 .unwrap();
         auto value   = (co_await response(*session, request())).unwrap();
         auto control = value->completion();
@@ -39,7 +39,7 @@ TEST(http, DecodeCauseDoesNotChangeSuccessfulHttpReport) {
         bad.data = Bytes::copy_from_slice(raw.as_slice());
         script->lock().unwrap()->replies.push(rstd::move(bad));
         auto session =
-            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+            Session::from_http_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
                 .unwrap();
         auto value = (co_await response(*session, request())).unwrap();
         auto error = (co_await value->text()).unwrap_err();
@@ -67,7 +67,7 @@ TEST(http, CollectionLimitCannotBeRaisedAndZeroAllowsEmptyBody) {
         script->lock().unwrap()->replies.push(rstd::move(data));
         script->lock().unwrap()->replies.push(rstd::move(empty_reply));
         auto session =
-            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+            Session::from_http_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
                 .unwrap();
         auto input                    = request();
         input.options().collect_bytes = Some(usize(3));
@@ -99,11 +99,12 @@ TEST(http, TotalTimeoutOverrideKeepsExplicitDeadline) {
             script->lock().unwrap()->replies.push(rstd::move(reply));
             SessionOptions config;
             config.http.total_timeout = Some(Duration::from_millis(u64(5)));
-            auto session = Session::from_backend(engine.handle(),
-                                                 h::BackendBinding::Shared(backend(script.clone())),
-                                                 rstd::move(config))
-                               .unwrap();
-            auto input   = request();
+            auto session =
+                Session::from_http_backend(engine.handle(),
+                                           h::BackendBinding::Shared(backend(script.clone())),
+                                           rstd::move(config))
+                    .unwrap();
+            auto input = request();
             if (mode == 1 || mode == 3)
                 input.options().execution.total_timeout = Some(h::TotalTimeout::disabled());
             if (mode == 2)
@@ -142,7 +143,7 @@ TEST(http, ConcurrentCollectionAndCanceledWaitKeepTheirOwners) {
         reply.body_delay = Duration::from_millis(u64(25));
         script->lock().unwrap()->replies.push(rstd::move(reply));
         auto session =
-            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+            Session::from_http_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
                 .unwrap();
         auto pending = session->send(request()).unwrap();
         auto timed   = co_await rstd::async::timeout(pending.response().into_future(),

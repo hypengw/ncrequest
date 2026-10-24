@@ -57,9 +57,9 @@ TEST(upload, FactoryReopensAndRetryHasOneOwner) {
         policy.business_idempotent = true;
         policy.backoff             = Duration {};
         options.http.policy.retry  = Some(rstd::move(policy));
-        auto session = Session::from_backend(engine.handle(),
-                                             h::BackendBinding::Shared(backend(script)),
-                                             rstd::move(options))
+        auto session = Session::from_http_backend(engine.handle(),
+                                                  h::BackendBinding::Shared(backend(script)),
+                                                  rstd::move(options))
                            .unwrap();
         auto opens   = Arc<rstd::sync::Mutex<usize>>::make(usize());
         auto input   = request();
@@ -91,9 +91,9 @@ TEST(upload, OnceRedirectRefusesReplay) {
         script->lock().unwrap()->replies.push(rstd::move(reply));
         SessionOptions options;
         options.http.policy.redirect = Some(h::RedirectPolicy {});
-        auto session = Session::from_backend(engine.handle(),
-                                             h::BackendBinding::Shared(backend(script)),
-                                             rstd::move(options))
+        auto session = Session::from_http_backend(engine.handle(),
+                                                  h::BackendBinding::Shared(backend(script)),
+                                                  rstd::move(options))
                            .unwrap();
         auto input   = request();
         input.try_set_method("POST"_str).unwrap();
@@ -119,7 +119,7 @@ TEST(upload, TruncationAndSinkFailureKeepTypedErrorsAndStopBody) {
         truncated.truncated = true;
         script->lock().unwrap()->replies.push(rstd::move(truncated));
         auto session =
-            Session::from_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
+            Session::from_http_backend(engine.handle(), h::BackendBinding::Shared(backend(script)))
                 .unwrap();
         auto first = (co_await response(*session, request())).unwrap();
         EXPECT_TRUE((co_await first->bytes()).unwrap_err().as_Transport().cause.is_BodySource());

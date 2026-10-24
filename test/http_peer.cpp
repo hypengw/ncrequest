@@ -169,9 +169,9 @@ TEST(http, LocalHttpCacheAndRevalidation) {
         SessionOptions config;
         config.http.policy.cache = h::CacheMode::Default;
         config.http.cache        = Some(h::StoreBinding::Shared(cache.store()));
-        auto session = Session::from_backend(engine.handle(),
-                                             h::BackendBinding::Shared(backend.backend()),
-                                             rstd::move(config))
+        auto session = Session::from_http_backend(engine.handle(),
+                                                  h::BackendBinding::Shared(backend.backend()),
+                                                  rstd::move(config))
                            .unwrap();
         for (int i = 0; i < 2; ++i) {
             auto value = (co_await response(*session, peer_request("/cache"_str))).unwrap();
@@ -238,7 +238,7 @@ TEST(http, LocalHttpsAndUnixRouteUseLogicalIdentity) {
     auto task    = [&]() -> coro<empty> {
         auto pem =
             rstd::fs::read(rstd::path::PathBuf::from(env_text("LIFETCHTO_CA")).as_path()).unwrap();
-        licrypto::tls::Trust trust;
+        lifetchto::http::TlsOptions trust;
         trust.use_system_roots = false;
         trust.ca_pem.push(Bytes::copy_from_slice(pem.as_slice()));
         h::TransportOptions transport;
@@ -250,16 +250,18 @@ TEST(http, LocalHttpsAndUnixRouteUseLogicalIdentity) {
                 .unwrap();
         Vec<rstd::net::SocketAddr> addresses;
         addresses.push(rstd::net::SocketAddr::ipv4_loopback(port("LIFETCHTO_TLS_PORT")));
-        tls.options().execution.routing.route = Some(
-            Arc<h::Route>::make(h::Route::tcp(tls.url_info(), rstd::move(addresses)).unwrap()));
+        tls.options().execution.routing = Some(
+            h::Routing { .route = Some(Arc<h::Route>::make(
+                             h::Route::tcp(tls.url_info(), rstd::move(addresses)).unwrap())) });
         auto value = (co_await response(*session, rstd::move(tls))).unwrap();
         EXPECT_EQ((co_await value->text()).unwrap().as_str(), "hello"_str);
         auto unix_request = Request::from_url("http://unix.invalid/ok"_str).unwrap();
-        unix_request.options().execution.routing.route = Some(Arc<h::Route>::make(
-            h::Route::unix_socket(
-                unix_request.url_info(),
-                Bytes::copy_from_slice(env_text("LIFETCHTO_UNIX_PATH").as_bytes()))
-                .unwrap()));
+        unix_request.options().execution.routing = Some(
+            h::Routing { .route = Some(Arc<h::Route>::make(
+                             h::Route::unix_socket(
+                                 unix_request.url_info(),
+                                 Bytes::copy_from_slice(env_text("LIFETCHTO_UNIX_PATH").as_bytes()))
+                                 .unwrap())) });
         auto unix_value = (co_await response(*session, rstd::move(unix_request))).unwrap();
         EXPECT_EQ((co_await unix_value->text()).unwrap().as_str(), "hello"_str);
         EXPECT_TRUE((co_await session->close()).is_ok());

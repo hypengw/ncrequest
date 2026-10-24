@@ -104,7 +104,7 @@ class ThreadingServer(socketserver.ThreadingTCPServer):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-executable", required=True)
-    parser.add_argument("--gtest-filter", default="qt_network_websocket.LocalEcho*")
+    parser.add_argument("--gtest-filter", default="websocket.*")
     args = parser.parse_args()
 
     with ThreadingServer(("127.0.0.1", 0), WebSocketHandler) as server:
@@ -112,7 +112,7 @@ def main():
         thread.start()
 
         env = os.environ.copy()
-        env["NCREQUEST_TEST_WS_URL"] = f"ws://127.0.0.1:{server.server_address[1]}/echo"
+        env["NCREQUEST_TEST_WS_URL"] = f"http://127.0.0.1:{server.server_address[1]}/echo"
         command = [args.test_executable, "--gtest_filter=" + args.gtest_filter]
         result = subprocess.run(command, env=env)
 

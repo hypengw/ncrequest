@@ -108,7 +108,7 @@ def run(binary):
             thread.start()
             try:
                 env = {**os.environ, "NCREQUEST_UPGRADE_SOCKET": path}
-                subprocess.run([str(binary), "--gtest_filter=CurlUpgradeProbe.*:HttpUpgrade.*"],
+                subprocess.run([str(binary), "--gtest_filter=HttpUpgrade.*"],
                                env=env, check=True, timeout=15)
             finally:
                 server.shutdown()

@@ -1,57 +1,86 @@
 export module ncrequest:websocket_connection;
-export import :upgrade;
+export import :session;
 export import liwebsocketo;
 using namespace rstd::prelude;
-
 export namespace ncrequest
 {
-using WebSocketError = liwebsocketo::WebSocketError;
-template<class T>
-using WebSocketResult = liwebsocketo::WebSocketResult<T>;
-struct WebSocketOptions : liwebsocketo::WebSocketOptions {
-    UpgradeOptions upgrade;
-};
-struct WebSocketConnectFailure {
-    Option<UpgradeFailure>               upgrade;
-    Option<liwebsocketo::HandshakeError> handshake;
-    Option<WebSocketError>               connection;
-};
-class WebSocketConnection : public liwebsocketo::WebSocketConnection<UpgradeConnection> {
-    using Driver = liwebsocketo::WebSocketConnection<UpgradeConnection>;
-    explicit WebSocketConnection(Driver driver): Driver(rstd::move(driver)) {}
+struct WebSocketState;
+struct WebSocketSendState;
+struct WebSocketReceiveState;
+class PendingSend {
+    Arc<WebSocketState>     owner_;
+    Arc<WebSocketSendState> state_;
+    bool                    owned_ { true };
+    friend class WebSocketConnection;
+    PendingSend(Arc<WebSocketState>, Arc<WebSocketSendState>);
 
 public:
-    // Uses http/https transport URLs; no redirects or proxy inheritance.
-    static auto connect(lihttpto::Url url, lihttpto::Headers headers = {},
-                        Vec<String> protocols = {}, WebSocketOptions options = {})
-        -> rstd::async::coro<rstd::Result<WebSocketConnection, WebSocketConnectFailure>> {
-        if (url.authority().is_none() || options.receive_messages == usize() ||
-            options.receive_bytes == usize())
-            co_return Err(WebSocketConnectFailure { .connection = Some(WebSocketError::Protocol) });
-        array<u8, 16> nonce;
-        if (rstd::random::fill_secure(nonce.as_mut_slice()).is_err())
-            co_return Err(WebSocketConnectFailure { .connection = Some(WebSocketError::Random) });
-        auto handshake = liwebsocketo::ClientHandshake::make(url.request_target().as_str(),
-                                                             *url.authority(),
-                                                             nonce,
-                                                             rstd::move(headers),
-                                                             rstd::move(protocols));
-        if (handshake.is_err())
-            co_return Err(WebSocketConnectFailure { .handshake = Some(handshake.unwrap_err()) });
-        auto opened = co_await UpgradeConnection::open_prepared(
-            rstd::move(url), handshake->request(), options.upgrade);
-        if (opened.is_err())
-            co_return Err(
-                WebSocketConnectFailure { .upgrade = Some(rstd::move(opened).unwrap_err()) });
-        auto wire      = rstd::move(opened).unwrap();
-        auto validated = handshake->validate(wire.response());
-        if (validated.is_err())
-            co_return Err(WebSocketConnectFailure { .handshake = Some(validated.unwrap_err()) });
-        auto driver = Driver::start(
-            rstd::move(wire), liwebsocketo::Role::Client, options, rstd::move(validated).unwrap());
-        if (driver.is_err())
-            co_return Err(WebSocketConnectFailure { .connection = Some(driver.unwrap_err()) });
-        co_return Ok(WebSocketConnection(rstd::move(driver).unwrap()));
-    }
+    PendingSend(PendingSend&&) noexcept;
+    PendingSend(const PendingSend&) = delete;
+    auto operator=(PendingSend&&) noexcept -> PendingSend&;
+    ~PendingSend();
+    auto written() const -> coro<WebSocketResult<empty>>;
+    void cancel() const;
+};
+class PendingReceive {
+    Arc<WebSocketState>        owner_;
+    Arc<WebSocketReceiveState> state_;
+    bool                       owned_ { true };
+    friend class WebSocketConnection;
+    friend auto receive_from(const Arc<WebSocketState>&, bool) -> PendingReceive;
+    PendingReceive(Arc<WebSocketState>, Arc<WebSocketReceiveState>);
+
+public:
+    PendingReceive(PendingReceive&&) noexcept;
+    PendingReceive(const PendingReceive&) = delete;
+    auto operator=(PendingReceive&&) noexcept -> PendingReceive&;
+    ~PendingReceive();
+    auto message() const -> coro<WebSocketResult<liwebsocketo::Message>>;
+    void cancel() const;
+    void close() const { cancel(); }
+};
+class WebSocketConnection {
+    Arc<WebSocketState>        state_;
+    lifetchto::Transfer<empty> transfer_;
+    explicit WebSocketConnection(Arc<WebSocketState>, lifetchto::Transfer<empty>);
+    friend struct WebSocketClientState;
+    void fail(WebSocketError) const;
+
+public:
+    class MessageStream {
+        friend class WebSocketConnection;
+        Arc<WebSocketState>                                          state_;
+        Option<PendingReceive>                                       pending_;
+        Option<coro<WebSocketResult<liwebsocketo::Message>>::Future> waiting_;
+        bool                                                         done_ {}, owned_ { true };
+        explicit MessageStream(Arc<WebSocketState>);
+        void release();
+
+    public:
+        using Item = WebSocketResult<liwebsocketo::Message>;
+        MessageStream(MessageStream&&) noexcept;
+        MessageStream(const MessageStream&) = delete;
+        auto operator=(MessageStream&&) noexcept -> MessageStream&;
+        ~MessageStream();
+        auto poll_next(mut_ref<MessageStream>, rstd::task::Context&)
+            -> rstd::task::Poll<Option<Item>>;
+    };
+    WebSocketConnection(WebSocketConnection&&) noexcept;
+    WebSocketConnection(const WebSocketConnection&) = delete;
+    auto operator=(WebSocketConnection&&) noexcept -> WebSocketConnection&;
+    ~WebSocketConnection();
+    static auto connect(Arc<Session>, DuplexRequest, lihttpto::Headers = {}, Vec<String> = {},
+                        WebSocketOptions = {})
+        -> coro<rstd::Result<WebSocketConnection, WebSocketConnectFailure>>;
+    auto protocol() const -> Option<String>;
+    auto send(liwebsocketo::Message) const -> rstd::Result<PendingSend, RejectedMessage>;
+    auto receive() const -> PendingReceive;
+    auto messages() const -> WebSocketResult<MessageStream>;
+    auto request_close(Bytes payload = {}) const -> WebSocketResult<empty>;
+    auto close(Bytes payload = {}) const -> coro<WebSocketResult<empty>>;
+    void cancel() const;
+    auto completion() const -> lifetchto::TransferControl;
+    auto shutdown() const -> coro<lifetchto::Result<empty>>;
+    auto failure() const -> Option<WebSocketError>;
 };
 } // namespace ncrequest

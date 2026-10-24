@@ -116,13 +116,13 @@ TEST(session, CapacityRejectionCanBeResubmittedWithoutOpeningSource) {
         limits.limits.operations = usize(2);
         auto engine              = lf::Engine::make(runtime.handle(), limits).unwrap();
         auto script              = test_http::Script::make(test_http::State {});
-        auto session = Session::from_backend(engine.handle(),
-                                             h::BackendBinding::Shared(test_http::backend(script)))
-                           .unwrap();
-        auto first   = engine.submit(lf::PreparedOperation<empty>::make(Gate {})).unwrap();
-        auto second  = engine.submit(lf::PreparedOperation<empty>::make(Gate {})).unwrap();
-        auto counts  = Arc<rstd::sync::Mutex<Counts>>::make(Counts {});
-        auto input   = test_http::request();
+        auto session             = Session::from_http_backend(
+                                       engine.handle(), h::BackendBinding::Shared(test_http::backend(script)))
+                                       .unwrap();
+        auto first  = engine.submit(lf::PreparedOperation<empty>::make(Gate {})).unwrap();
+        auto second = engine.submit(lf::PreparedOperation<empty>::make(Gate {})).unwrap();
+        auto counts = Arc<rstd::sync::Mutex<Counts>>::make(Counts {});
+        auto input  = test_http::request();
         input.set_body(RequestBody::once(UploadBody::from_source(Source { counts.clone() })));
         auto rejected_result = session->send(rstd::move(input));
         EXPECT_TRUE(rejected_result.is_err());
@@ -151,8 +151,8 @@ TEST(session, IndependentClientsShareBackendWithoutSharingClose) {
         auto script  = test_http::Script::make(test_http::State {});
         auto backend = test_http::backend(script);
         auto binding = h::BackendBinding::Shared(backend.clone());
-        auto first   = Session::from_backend(engine.handle(), binding).unwrap();
-        auto second  = Session::from_backend(engine.handle(), binding).unwrap();
+        auto first   = Session::from_http_backend(engine.handle(), binding).unwrap();
+        auto second  = Session::from_http_backend(engine.handle(), binding).unwrap();
         auto alias   = first.clone();
         EXPECT_TRUE((co_await alias->close()).is_ok());
         auto rejected = first->send(test_http::request());
@@ -179,9 +179,9 @@ TEST(session, PendingOwnerAndCloseWaitCanBeDroppedWithoutLosingCleanup) {
         test_http::Reply reply;
         reply.head_delay = Duration::from_millis(u64(50));
         script->lock().unwrap()->replies.push(rstd::move(reply));
-        auto session = Session::from_backend(engine.handle(),
-                                             h::BackendBinding::Shared(test_http::backend(script)))
-                           .unwrap();
+        auto                        session = Session::from_http_backend(
+                                                  engine.handle(), h::BackendBinding::Shared(test_http::backend(script)))
+                                                  .unwrap();
         Option<lf::TransferControl> control;
         {
             auto pending = session->send(test_http::request()).unwrap();
@@ -265,12 +265,12 @@ TEST(session, FailedFactoryRetainsBindingsAndClosePreservesEveryError) {
         options.http.cache         = Some(h::StoreBinding::Owned(
             Arc<rstd::dyn<h::CacheStore>>::make(FailingStore { cache.store(), closes.clone() })));
         options.http.total_timeout = Some(Duration {});
-        EXPECT_TRUE(Session::from_backend(engine.handle(), binding, options).is_err());
+        EXPECT_TRUE(Session::from_http_backend(engine.handle(), binding, options).is_err());
         EXPECT_TRUE(Session::make(runtime.handle(), {}, options).is_err());
         EXPECT_FALSE(script->lock().unwrap()->closed);
         EXPECT_EQ(*closes->lock().unwrap(), usize());
         options.http.total_timeout = None();
-        auto session     = Session::from_backend(engine.handle(), binding, options).unwrap();
+        auto session     = Session::from_http_backend(engine.handle(), binding, options).unwrap();
         auto interrupted = co_await rstd::async::timeout(session->close().into_future(),
                                                          Duration::from_millis(u64(1)));
         EXPECT_TRUE(interrupted.is_err());

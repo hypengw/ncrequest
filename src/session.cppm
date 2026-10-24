@@ -1,6 +1,9 @@
 export module ncrequest:session;
 export import :response;
 export import :request_control;
+export import :duplex;
+export import :upgrade;
+export import :backend;
 using namespace rstd::prelude;
 namespace ncrequest
 {
@@ -38,13 +41,25 @@ public:
     static auto make(rstd::async::RuntimeHandle, lifetchto::http::TransportOptions = {},
                      const SessionOptions& = {}) -> Result<Arc<Session>>;
     static auto from_client(lifetchto::http::Client, ResponseOptions = {}) -> Result<Arc<Session>>;
-    static auto from_backend(lifetchto::EngineHandle, const lifetchto::http::BackendBinding&,
+    static auto from_http_backend(lifetchto::EngineHandle, const lifetchto::http::BackendBinding&,
+                                  const SessionOptions& = {}) -> Result<Arc<Session>>;
+    static auto from_backend(lifetchto::EngineHandle, const BackendBinding&,
                              const SessionOptions& = {}) -> Result<Arc<Session>>;
-    auto        send(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
-    auto        get(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
-    auto        post(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
-    auto        post(Request, Bytes, Option<Arc<RequestControl>> = {}) const -> Submission;
-    void        request_close() const;
-    auto        close() const -> coro<lifetchto::CloseReport>;
+    auto        websocket_backend() const -> Option<Arc<rstd::dyn<WebSocketBackend>>>;
+    auto        websocket_capabilities() const -> WebSocketCapabilities;
+    auto        prepare_connection(DuplexRequest, DuplexOptions = {}) const
+        -> rstd::Result<lifetchto::http::ConnectionPlan, lifetchto::Rejected<DuplexRequest>>;
+    auto send(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
+    auto get(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
+    auto post(Request, Option<Arc<RequestControl>> = {}) const -> Submission;
+    auto post(Request, Bytes, Option<Arc<RequestControl>> = {}) const -> Submission;
+    auto duplex(DuplexRequest, DuplexOptions = {}) const
+        -> rstd::Result<PendingDuplex, lifetchto::Rejected<DuplexRequest>>;
+    auto upgrade(UpgradeRequest, UpgradeOptions = {}) const
+        -> rstd::Result<PendingUpgrade, lifetchto::Rejected<UpgradeRequest>>;
+    auto capabilities() const -> lifetchto::http::BackendCapabilities;
+    auto resources() const -> lifetchto::ResourceContext;
+    void request_close() const;
+    auto close() const -> coro<lifetchto::CloseReport>;
 };
 } // namespace ncrequest

@@ -141,6 +141,12 @@ struct Impl<lifetchto::http::ResponseSource, test_http::Source> : ImplBase<test_
 };
 template<>
 struct Impl<lifetchto::http::ExchangeBackend, test_http::Backend> : ImplBase<test_http::Backend> {
+    auto duplex(lifetchto::http::DuplexRequest input) const -> rstd::Result<lifetchto::PreparedOperation<lifetchto::DuplexStream>, lifetchto::Rejected<lifetchto::http::DuplexRequest>> {
+        return Err(lifetchto::Rejected<lifetchto::http::DuplexRequest> { lifetchto::Error::Unsupported("test backend has no duplex transport"_Str), rstd::move(input) });
+    }
+    auto capabilities() const -> lifetchto::http::BackendCapabilities {
+        return { .http1 = true, .https = true, .unknown_upload_length = true, .upload_trailers = true, .response_trailers = true, .repeated_request_fields = true, .expect_continue = true };
+    }
     auto prepare(lihttpto::RequestParts p, lifetchto::http::UploadMetadata u,
                  lifetchto::http::RouteChoice r) const {
         return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r));

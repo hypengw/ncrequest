@@ -22,8 +22,8 @@ TEST(HttpCache, SharedStoreAndPolicyReplacementHaveOneOwner) {
             options.http.policy.redirect = Some(h::RedirectPolicy {});
             return options;
         };
-        auto first    = Session::from_backend(engine.handle(), shared, config()).unwrap();
-        auto second   = Session::from_backend(engine.handle(), shared, config()).unwrap();
+        auto first    = Session::from_http_backend(engine.handle(), shared, config()).unwrap();
+        auto second   = Session::from_http_backend(engine.handle(), shared, config()).unwrap();
         auto received = (co_await response(*first, request())).unwrap();
         EXPECT_FALSE(received->from_cache());
         EXPECT_TRUE((co_await received->bytes()).is_ok());
@@ -63,11 +63,11 @@ TEST(HttpCache, TruncatedResponseCannotPublishAnEntry) {
         SessionOptions config;
         config.http.cache        = Some(h::StoreBinding::Shared(cache.store()));
         config.http.policy.cache = h::CacheMode::Default;
-        auto session             = Session::from_backend(engine.handle(),
-                                                         h::BackendBinding::Shared(backend(script)),
-                                                         rstd::move(config))
-                                       .unwrap();
-        auto value               = (co_await response(*session, request())).unwrap();
+        auto session = Session::from_http_backend(engine.handle(),
+                                                  h::BackendBinding::Shared(backend(script)),
+                                                  rstd::move(config))
+                           .unwrap();
+        auto value   = (co_await response(*session, request())).unwrap();
         EXPECT_TRUE((co_await value->bytes()).is_err());
         auto               input = request();
         h::ExecutionPolicy policy;
