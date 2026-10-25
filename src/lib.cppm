@@ -12,5 +12,4 @@ export import :client.curl.backend;
 #endif
 #if LITO_FEAT_QT
 export import :client.qt_network.backend;
-export import :client.qt_network.callback_executor;
 #endif

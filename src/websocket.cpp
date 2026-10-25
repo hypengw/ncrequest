@@ -1,159 +1,110 @@
 module ncrequest;
 import :websocket;
 using namespace rstd::prelude;
-using namespace rstd::literals;
 namespace ncrequest
 {
 namespace lf = lifetchto;
-struct DeliveryFields {
-    Option<client::Callback<void()>> work;
-    bool                             started {}, done {}, rejected {};
-};
-struct CallbackDelivery {
-    rstd::sync::Mutex<DeliveryFields> fields;
-    lf::Event                         changed;
-    explicit CallbackDelivery(client::Callback<void()> work)
-        : fields(DeliveryFields { Some(rstd::move(work)) }) {}
-    void cancel(bool rejected = false) {
-        {
-            auto f = fields.lock().unwrap();
-            if (f->started || f->done) return;
-            f->work     = None();
-            f->done     = true;
-            f->rejected = rejected;
-        }
-        changed.notify();
-    }
-    void run() {
-        Option<client::Callback<void()>> work;
-        {
-            auto f = fields.lock().unwrap();
-            if (f->done) return;
-            f->started = true;
-            work       = f->work.take();
-        }
-        (*work)();
-        {
-            auto f  = fields.lock().unwrap();
-            f->done = true;
-        }
-        changed.notify();
-    }
-};
 struct CallbackFields {
-    Option<lf::TaskControl>       worker;
-    Option<Arc<CallbackDelivery>> delivery;
-    Option<WebSocketError>        failure;
-    bool                          connected { true }, launched {}, stopped {};
+    usize active {};
+    bool  connected {}, ended {}, stopped {};
 };
-struct WebSocketClientState {
-    WebSocketConnection               wire;
+struct CallbackState {
     WebSocketCallbacks                callbacks;
     rstd::sync::Mutex<CallbackFields> fields { CallbackFields {} };
     lf::Event                         changed;
-    WebSocketClientState(WebSocketConnection wire, WebSocketCallbacks callbacks)
-        : wire(rstd::move(wire)), callbacks(rstd::move(callbacks)) {}
-    void fail(WebSocketError error) {
-        auto previous = wire.failure();
-        if (previous.is_some() && *previous != WebSocketError::Closed &&
-            *previous != WebSocketError::Cancelled &&
-            *previous != WebSocketError::CallbackExecutorClosed)
-            error = rstd::move(error).with_cause(lf::Error::Extension(
-                "websocket"_Str, Arc<rstd::dyn<rstd::error::Error>>::make(previous->clone())));
+    explicit CallbackState(WebSocketCallbacks callbacks): callbacks(rstd::move(callbacks)) {}
+    void invoke(client::Callback<void()> work) {
+        if (! work) return;
         {
             auto f = fields.lock().unwrap();
-            if (f->failure.is_none()) f->failure = Some(error.clone());
-            f->stopped = true;
+            if (f->stopped) return;
+            ++f->active;
         }
-        wire.fail(rstd::move(error));
+        work();
+        {
+            auto f = fields.lock().unwrap();
+            --f->active;
+        }
         changed.notify();
     }
-    void stop() const {
-        Option<Arc<CallbackDelivery>> delivery;
+    void connected() {
         {
-            auto f     = fields.lock().unwrap();
-            f->stopped = true;
-            if (f->delivery.is_some()) delivery = Some(f->delivery->clone());
+            auto f = fields.lock().unwrap();
+            if (f->ended || f->stopped) return;
+            f->connected = true;
         }
-        if (delivery.is_some()) (*delivery)->cancel();
+        invoke(callbacks.connected.clone());
+    }
+    void message(liwebsocketo::Message value) {
+        if (callbacks.message)
+            invoke([callback = callbacks.message.clone(), value = rstd::move(value)]() mutable {
+                callback(rstd::move(value));
+            });
+    }
+    void error(WebSocketError value) {
+        if (callbacks.error)
+            invoke([callback = callbacks.error.clone(), value = rstd::move(value)]() mutable {
+                callback(rstd::move(value));
+            });
+    }
+    void disconnected() {
+        {
+            auto f = fields.lock().unwrap();
+            if (f->ended) return;
+            f->ended     = true;
+            f->connected = false;
+        }
+        invoke(callbacks.disconnected.clone());
+    }
+    void stop() {
+        auto f       = fields.lock().unwrap();
+        f->stopped   = true;
+        f->connected = false;
+    }
+};
+auto drain_callbacks(Arc<CallbackState> state) -> coro<void> {
+    for (;;) {
+        auto changed = state->changed.listen();
+        if (state->fields.lock().unwrap()->active == usize()) co_return;
+        co_await rstd::move(changed);
+    }
+}
+struct ClientFields {
+    Option<lf::TaskControl> worker;
+    bool                    launched {}, stopped {};
+};
+struct WebSocketClientState {
+    WebSocketConnection             wire;
+    Arc<CallbackState>              callbacks;
+    rstd::sync::Mutex<ClientFields> fields { ClientFields {} };
+    lf::Event                       changed;
+    WebSocketClientState(WebSocketConnection wire, Arc<CallbackState> callbacks)
+        : wire(rstd::move(wire)), callbacks(rstd::move(callbacks)) {}
+    void stop() const {
+        fields.lock().unwrap()->stopped = true;
+        callbacks->stop();
         wire.cancel();
         changed.notify();
     }
 };
-auto deliver_callback(Arc<WebSocketClientState> state, client::Callback<void()> work)
-    -> coro<WebSocketResult<empty>> {
-    if (! work) co_return Ok(empty {});
-    auto delivery = Arc<CallbackDelivery>::make(rstd::move(work));
-    {
-        auto f = state->fields.lock().unwrap();
-        if (f->stopped) co_return Err(WebSocketError(WebSocketError::Cancelled));
-        f->delivery = Some(delivery.clone());
-    }
-    if (state->callbacks.executor.is_some()) {
-        auto job = rstd::async::ExecutorJob::make(
-            [delivery = delivery.clone()] {
-                delivery->run();
-            },
-            [delivery = delivery.clone()] {
-                delivery->cancel(true);
-            });
-        if (! state->callbacks.executor->post_job(rstd::move(job))) delivery->cancel(true);
-    } else
-        delivery->run();
-    bool rejected;
-    for (;;) {
-        auto event = delivery->changed.listen();
-        {
-            auto f = delivery->fields.lock().unwrap();
-            if (f->done) {
-                rejected = f->rejected;
-                break;
-            }
-        }
-        co_await rstd::move(event);
-    }
-    state->fields.lock().unwrap()->delivery = None();
-    if (rejected) {
-        state->fail(WebSocketError::CallbackExecutorClosed);
-        co_return Err(WebSocketError(WebSocketError::CallbackExecutorClosed));
-    }
-    co_return Ok(empty {});
-}
 struct CallbackReader {
     Arc<WebSocketClientState> state;
     void                      request_stop(lf::StopReason) const { state->stop(); }
     auto                      run(lf::Cancellation) const -> coro<lf::Result<empty>> {
-        auto connected =
-            co_await deliver_callback(state.clone(), state->callbacks.connected.clone());
-        if (connected.is_ok())
-            for (;;) {
-                auto pending  = state->wire.receive();
-                auto received = co_await pending.message();
-                if (received.is_err()) {
-                    auto error = rstd::move(received).unwrap_err();
-                    if (error != WebSocketError::Closed && error != WebSocketError::Cancelled &&
-                        state->callbacks.error) {
-                        auto work =
-                            client::Callback<void()>([callback = state->callbacks.error.clone(),
-                                                      error    = rstd::move(error)]() mutable {
-                                callback(rstd::move(error));
-                            });
-                        (void)co_await deliver_callback(state.clone(), rstd::move(work));
-                    }
-                    break;
-                }
-                if (state->callbacks.message) {
-                    auto work = client::Callback<void()>(
-                        [callback = state->callbacks.message.clone(),
-                         message  = rstd::move(received).unwrap()]() mutable {
-                            callback(rstd::move(message));
-                        });
-                    if ((co_await deliver_callback(state.clone(), rstd::move(work))).is_err())
-                        break;
-                }
+        state->callbacks->connected();
+        for (;;) {
+            if (state->fields.lock().unwrap()->stopped) break;
+            auto pending  = state->wire.receive();
+            auto received = co_await pending.message();
+            if (received.is_err()) {
+                auto error = rstd::move(received).unwrap_err();
+                if (error != WebSocketError::Closed && error != WebSocketError::Cancelled)
+                    state->callbacks->error(rstd::move(error));
+                break;
             }
-        state->fields.lock().unwrap()->connected = false;
-        (void)co_await deliver_callback(state.clone(), state->callbacks.disconnected.clone());
+            state->callbacks->message(rstd::move(received).unwrap());
+        }
+        state->callbacks->disconnected();
         co_return Ok(empty {});
     }
 };
@@ -172,6 +123,7 @@ struct CallbackOwner {
             return f->worker.is_some() ? Some(f->worker->clone()) : None<lf::TaskControl>();
         }();
         if (worker.is_some()) (void)co_await worker->wait();
+        co_await drain_callbacks(state->callbacks.clone());
         co_return co_await state->wire.shutdown();
     }
 };
@@ -213,11 +165,37 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
                               WebSocketCallbacks callbacks, lihttpto::Headers headers,
                               Vec<String> protocols, WebSocketOptions options)
     -> coro<rstd::Result<WebSocketClient, WebSocketConnectFailure>> {
-    auto opened = co_await WebSocketConnection::connect(
-        session.clone(), rstd::move(target), rstd::move(headers), rstd::move(protocols), options);
-    if (opened.is_err()) co_return Err(rstd::move(opened).unwrap_err());
-    auto state =
-        Arc<WebSocketClientState>::make(rstd::move(opened).unwrap(), rstd::move(callbacks));
+    auto               receiver = Arc<CallbackState>::make(rstd::move(callbacks));
+    bool               native   = session && session->websocket_capabilities().native_callbacks;
+    WebSocketCallbacks hooks;
+    if (native) {
+        auto weak       = receiver.downgrade();
+        hooks.connected = [weak = weak.clone()] {
+            if (auto state = weak.upgrade()) state->connected();
+        };
+        hooks.message = [weak = weak.clone()](liwebsocketo::Message value) {
+            if (auto state = weak.upgrade()) state->message(rstd::move(value));
+        };
+        hooks.error = [weak = weak.clone()](WebSocketError value) {
+            if (auto state = weak.upgrade()) state->error(rstd::move(value));
+        };
+        hooks.disconnected = [weak = rstd::move(weak)] {
+            if (auto state = weak.upgrade()) state->disconnected();
+        };
+    }
+    auto opened = co_await WebSocketConnection::connect_with_events(session.clone(),
+                                                                    rstd::move(target),
+                                                                    rstd::move(headers),
+                                                                    rstd::move(protocols),
+                                                                    options,
+                                                                    rstd::move(hooks));
+    if (opened.is_err()) {
+        receiver->stop();
+        co_await drain_callbacks(receiver.clone());
+        co_return Err(rstd::move(opened).unwrap_err());
+    }
+    if (! native) receiver->fields.lock().unwrap()->connected = true;
+    auto state = Arc<WebSocketClientState>::make(rstd::move(opened).unwrap(), rstd::move(receiver));
     auto resources = session->resources();
     auto owner     = Arc<rstd::dyn<lf::ManagedResource>>::make(CallbackOwner { state.clone() });
     auto attached  = resources.attach(empty {}, owner.clone());
@@ -235,7 +213,7 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
         auto           f = state->fields.lock().unwrap();
         if (f->stopped)
             error = Some(lf::Error::Closed());
-        else {
+        else if (! native) {
             auto worker = resources.spawn(CallbackReader { state.clone() });
             if (worker.is_err())
                 error = Some(rstd::move(worker).unwrap_err().error);
@@ -252,8 +230,8 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
     co_return Ok(WebSocketClient(rstd::move(state), rstd::move(registration)));
 }
 auto WebSocketClient::is_connected() const -> bool {
-    auto f = state_->fields.lock().unwrap();
-    return f->connected && ! f->stopped;
+    auto f = state_->callbacks->fields.lock().unwrap();
+    return f->connected && ! f->stopped && ! f->ended && state_->wire.failure().is_none();
 }
 auto WebSocketClient::send(liwebsocketo::Message message) const
     -> rstd::Result<PendingSend, RejectedMessage> {
@@ -265,13 +243,7 @@ auto WebSocketClient::request_close(Bytes payload) const -> WebSocketResult<empt
 auto WebSocketClient::close(Bytes payload) const -> coro<WebSocketResult<empty>> {
     return state_->wire.close(rstd::move(payload));
 }
-auto WebSocketClient::failure() const -> Option<WebSocketError> {
-    {
-        auto f = state_->fields.lock().unwrap();
-        if (f->failure.is_some()) return Some(f->failure->clone());
-    }
-    return state_->wire.failure();
-}
+auto WebSocketClient::failure() const -> Option<WebSocketError> { return state_->wire.failure(); }
 void WebSocketClient::disconnect() const { state_->stop(); }
 auto WebSocketClient::shutdown() const -> coro<lf::Result<empty>> {
     return registration_->release();

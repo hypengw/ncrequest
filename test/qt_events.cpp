@@ -55,7 +55,7 @@ struct Backend {
     Arc<Probe>                       probe;
     auto                             capabilities() const { return inner->capabilities(); }
     auto connect(lf::ResourceContext, lf::http::ConnectionPlan, lihttpto::Headers, Vec<String>,
-                 WebSocketOptions) const
+                 WebSocketOptions, WebSocketBackendEvents) const
         -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>>;
 };
 } // namespace qt_bench
@@ -83,24 +83,27 @@ struct Impl<ncrequest::WebSocketBackend, qt_bench::Backend> : ImplBase<qt_bench:
     auto capabilities() const { return this->self().capabilities(); }
     auto connect(lifetchto::ResourceContext resources, lifetchto::http::ConnectionPlan plan,
                  lihttpto::Headers headers, ::alloc::vec::Vec<::alloc::string::String> protocols,
-                 ncrequest::WebSocketOptions options) const {
+                 ncrequest::WebSocketOptions       options,
+                 ncrequest::WebSocketBackendEvents events) const {
         return this->self().connect(rstd::move(resources),
                                     rstd::move(plan),
                                     rstd::move(headers),
                                     rstd::move(protocols),
-                                    options);
+                                    options,
+                                    rstd::move(events));
     }
 };
 } // namespace rstd
 auto qt_bench::Backend::connect(lf::ResourceContext resources, lf::http::ConnectionPlan plan,
                                 lihttpto::Headers headers, Vec<String> protocols,
-                                WebSocketOptions options) const
+                                WebSocketOptions options, WebSocketBackendEvents events) const
     -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>> {
     auto opened = co_await inner->connect(rstd::move(resources),
                                           rstd::move(plan),
                                           rstd::move(headers),
                                           rstd::move(protocols),
-                                          options);
+                                          options,
+                                          rstd::move(events));
     if (opened.is_err()) co_return Err(rstd::move(opened).unwrap_err());
     co_return Ok(Arc<rstd::dyn<WebSocketEndpoint>>::make(
         Endpoint { rstd::move(opened).unwrap(), probe.clone() }));
@@ -165,10 +168,15 @@ TEST(QtEvents, MeasureIdleAndSequentialMessages) {
             },
             Qt::BlockingQueuedConnection);
         auto address = rstd::format("{}/echo", rstd::ffi::CStr::from_ptr(target).to_str().unwrap());
-        auto wire =
-            (co_await WebSocketConnection::connect(
-                 session.clone(), { lihttpto::Url::parse_http(address.as_str()).unwrap(), {} }))
-                .unwrap();
+        WebSocketOptions options;
+        options.receive_policy = ReceivePolicy::Fail;
+        auto wire              = (co_await WebSocketConnection::connect(
+                                      session.clone(),
+                                      { lihttpto::Url::parse_http(address.as_str()).unwrap(), {} },
+                                      {},
+                                      {},
+                                      options))
+                                     .unwrap();
         co_await rstd::async::sleep(lf::Duration::from_millis(u64(50)));
         QMetaObject::invokeMethod(
             &bridge,
@@ -201,10 +209,13 @@ TEST(QtEvents, MeasureIdleAndSequentialMessages) {
         }
         Vec<WebSocketConnection> others;
         for (int i {}; i < 3; ++i)
-            others.push(
-                (co_await WebSocketConnection::connect(
-                     session.clone(), { lihttpto::Url::parse_http(address.as_str()).unwrap(), {} }))
-                    .unwrap());
+            others.push((co_await WebSocketConnection::connect(
+                             session.clone(),
+                             { lihttpto::Url::parse_http(address.as_str()).unwrap(), {} },
+                             {},
+                             {},
+                             options))
+                            .unwrap());
         auto             mixed_start = std::chrono::steady_clock::now();
         Vec<PendingSend> queued;
         Vec<u8>          payload;

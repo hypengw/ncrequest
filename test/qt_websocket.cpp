@@ -9,6 +9,7 @@
 #    include <condition_variable>
 #    include <thread>
 #    include <atomic>
+#    include <chrono>
 import ncrequest;
 #    include "ws_helpers.hpp"
 using namespace rstd::prelude;
@@ -26,8 +27,18 @@ auto qt_ws_target(ref<str> path) -> DuplexRequest {
                  .unwrap(),
              {} };
 }
+auto qt_ws_connect(Arc<Session> session, DuplexRequest request, lihttpto::Headers headers = {},
+                   Vec<String> protocols = {}, WebSocketOptions options = {}) {
+    options.receive_policy = ReceivePolicy::Fail;
+    return WebSocketConnection::connect(rstd::move(session),
+                                        rstd::move(request),
+                                        rstd::move(headers),
+                                        rstd::move(protocols),
+                                        options);
+}
 auto qt_ws_open(Arc<Session> session, ref<str> path, WebSocketOptions options = {}) {
-    return WebSocketConnection::connect(rstd::move(session), qt_ws_target(path), {}, {}, options);
+    options.receive_policy = ReceivePolicy::Fail;
+    return qt_ws_connect(rstd::move(session), qt_ws_target(path), {}, {}, options);
 }
 TEST(QtWebSocket, MessageStreamLimitsAndCloseOwnTheirNativeExit) {
     if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
@@ -128,7 +139,7 @@ TEST(QtWebSocket, HandshakeCancellationDeadlinesAndUnsupportedOptions) {
         lihttpto::Headers duplicate;
         duplicate.add("X-Dup"_str, "a"_str).unwrap();
         duplicate.add("X-Dup"_str, "b"_str).unwrap();
-        auto rejected = co_await WebSocketConnection::connect(
+        auto rejected = co_await qt_ws_connect(
             session.clone(), qt_ws_target("/must-not-dispatch"_str), rstd::move(duplicate));
         EXPECT_TRUE(rejected.is_err() &&
                     rejected.as_ref().unwrap_err().admission->is_Unsupported());
@@ -191,7 +202,7 @@ TEST(QtWebSocket, WssUsesTheImmutableQtTlsProfileAndTypedError) {
             auto backend = qt::Backend::make(engine.resources(), rstd::move(options)).unwrap();
             auto session =
                 Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
-            auto opened = co_await WebSocketConnection::connect(
+            auto opened = co_await qt_ws_connect(
                 session.clone(),
                 { lihttpto::Url::parse_http(qt_ws_env("NCREQUEST_QT_WS_TLS_URL")).unwrap(), {} });
             if (! scenario) {
@@ -305,7 +316,7 @@ TEST(QtWebSocket, ProtocolValidationAndDroppedStreamStopTheOwner) {
         auto session = Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
         lihttpto::Headers headers;
         headers.add("Host"_str, "other.invalid"_str).unwrap();
-        auto rejected = co_await WebSocketConnection::connect(
+        auto rejected = co_await qt_ws_connect(
             session.clone(), qt_ws_target("/must-not-dispatch"_str), rstd::move(headers));
         EXPECT_TRUE(rejected.is_err() && rejected.as_ref().unwrap_err().handshake.is_some());
         WebSocketOptions options;
@@ -356,7 +367,189 @@ struct ExecutorProbe {
     std::condition_variable     progress;
     bool                        allow {}, started {};
 };
-TEST(QtWebSocket, CallbackExecutorThreadOrderAndActiveShutdownBarrier) {
+struct TerminalProbe {
+    rstd::sync::Mutex<Option<WebSocketClient>> client { None<WebSocketClient>() };
+    rstd::sync::Mutex<Vec<int>>                sequence { Vec<int> {} };
+    rstd::sync::Mutex<bool>                    done { false }, valid { true };
+    lf::Event                                  changed;
+};
+auto check_callback_terminal(const Arc<TerminalProbe>& probe, WebSocketError::Code expected,
+                             bool disconnect) -> bool {
+    auto client = probe->client.lock().unwrap();
+    if (client->is_none()) return false;
+    auto matches = [expected](const Option<WebSocketError>& failure) {
+        if (failure.is_none() || failure->code() != expected) return false;
+        if (expected != WebSocketError::Transport) return true;
+        return failure->cause().is_some() && failure->cause()->is_Extension() &&
+               rstd::error::downcast_ref<qt::WebSocketNativeError>(
+                   failure->cause()->as_Extension().cause.deref())
+                   .is_some();
+    };
+    bool valid    = matches((*client)->failure()) && ! (*client)->is_connected();
+    auto rejected = (*client)->send(
+        { liwebsocketo::Kind::Text, Bytes::copy_from_slice("late"_str.as_bytes()) });
+    valid = rejected.is_err() && valid;
+    if (rejected.is_err()) {
+        valid = rejected.as_ref().unwrap_err().error.code() == expected && valid;
+        valid =
+            rejected.as_ref().unwrap_err().input.data.as_slice() == "late"_str.as_bytes() && valid;
+    }
+    if (disconnect) {
+        (*client)->disconnect();
+        valid = matches((*client)->failure()) && valid;
+    }
+    return valid;
+}
+TEST(QtWebSocket, TerminalCallbacksObserveSealedAdmissionAndPreserveTheCause) {
+    if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
+    auto runtime = rstd::async::RuntimeBuilder::multi_thread()
+                       .worker_threads(usize(3))
+                       .enable_all()
+                       .build()
+                       .unwrap();
+    auto test    = [&]() -> coro<bool> {
+        auto engine  = lf::Engine::make(runtime.handle()).unwrap();
+        auto backend = qt::Backend::make(engine.resources()).unwrap();
+        auto session = Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
+        bool valid   = true;
+        for (int mode {}; mode < 3; ++mode) {
+            auto               probe    = Arc<TerminalProbe>::make();
+            auto               expected = mode ? WebSocketError::Transport : WebSocketError::Closed;
+            WebSocketCallbacks callbacks;
+            callbacks.connected = [probe = probe.clone()] {
+                probe->sequence.lock().unwrap()->push(0);
+            };
+            callbacks.error = [probe = probe.clone(), expected, mode](WebSocketError error) {
+                bool valid = check_callback_terminal(probe, expected, mode == 2);
+                *probe->valid.lock().unwrap() &= error.code() == expected && mode && valid;
+                probe->sequence.lock().unwrap()->push(1);
+                if (mode == 2) {
+                    *probe->done.lock().unwrap() = true;
+                    probe->changed.notify();
+                }
+            };
+            callbacks.disconnected = [probe = probe.clone(), expected] {
+                bool valid = check_callback_terminal(probe, expected, true);
+                *probe->valid.lock().unwrap() &= valid;
+                probe->sequence.lock().unwrap()->push(2);
+                *probe->done.lock().unwrap() = true;
+                probe->changed.notify();
+            };
+            auto opened = co_await WebSocketClient::connect(
+                session.clone(),
+                qt_ws_target(mode ? "/terminal-error"_str : "/terminal-close"_str),
+                rstd::move(callbacks));
+            if (opened.is_err()) {
+                valid = false;
+                continue;
+            }
+            *probe->client.lock().unwrap() = Some(rstd::move(opened).unwrap());
+            auto ready = (*probe->client.lock().unwrap())
+                             ->send({ liwebsocketo::Kind::Text,
+                                      Bytes::copy_from_slice("ready"_str.as_bytes()) })
+                             .unwrap();
+            (void)co_await ready.written();
+            for (;;) {
+                auto changed = probe->changed.listen();
+                if (*probe->done.lock().unwrap()) break;
+                co_await rstd::move(changed);
+            }
+            auto shutdown = (*probe->client.lock().unwrap())->shutdown();
+            valid         = (co_await rstd::move(shutdown)).is_ok() && valid;
+            auto close    = (*probe->client.lock().unwrap())->close();
+            auto closed   = co_await rstd::move(close);
+            valid         = closed.is_ok() == ! mode && valid;
+            if (mode && closed.is_err())
+                valid = closed.as_ref().unwrap_err().code() == expected && valid;
+            auto sequence = probe->sequence.lock().unwrap();
+            valid         = sequence->len() == usize(mode == 1 ? 3 : 2) && valid;
+            if (sequence->len() >= usize(2)) {
+                valid = (*sequence)[usize()] == 0 && valid;
+                valid = (*sequence)[usize(1)] == (mode ? 1 : 2) && valid;
+            }
+            if (mode == 1 && sequence->len() == usize(3))
+                valid = (*sequence)[usize(2)] == 2 && valid;
+            valid                          = *probe->valid.lock().unwrap() && valid;
+            *probe->client.lock().unwrap() = None();
+            valid                          = engine.resources().usage().bytes == usize() && valid;
+        }
+        valid = (co_await session->close()).is_ok() && valid;
+        valid = (co_await backend.close()).is_ok() && valid;
+        valid = (co_await engine.close()).is_ok() && valid;
+        co_return valid;
+    };
+    EXPECT_TRUE(runtime.block_on(test()));
+}
+TEST(QtWebSocket, NativeCallbacksConsumeAnImmediateBurstWithinOneReceiveSlot) {
+    if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
+    auto runtime = rstd::async::RuntimeBuilder::multi_thread()
+                       .worker_threads(usize(3))
+                       .enable_all()
+                       .build()
+                       .unwrap();
+    auto test    = [&]() -> coro<empty> {
+        auto engine  = lf::Engine::make(runtime.handle()).unwrap();
+        auto backend = qt::Backend::make(engine.resources()).unwrap();
+        auto session = Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
+        auto probe   = Arc<ExecutorProbe>::make();
+        WebSocketCallbacks callbacks;
+        callbacks.connected = [probe = probe.clone()] {
+            probe->sequence.lock().unwrap()->push(-1);
+        };
+        callbacks.message = [probe = probe.clone()](liwebsocketo::Message message) {
+            auto bytes = message.data.as_slice();
+            EXPECT_EQ(bytes.len(), usize(2));
+            int value =
+                (int(bytes[usize()].to_primitive()) << 8) | int(bytes[usize(1)].to_primitive());
+            probe->sequence.lock().unwrap()->push(int(value));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            probe->changed.notify();
+        };
+        callbacks.error = [probe = probe.clone()](WebSocketError) {
+            probe->sequence.lock().unwrap()->push(-2);
+            probe->changed.notify();
+        };
+        WebSocketOptions options;
+        options.receive_messages = usize(1);
+        options.receive_bytes    = usize(2);
+        auto client              = (co_await WebSocketClient::connect(session.clone(),
+                                                                      qt_ws_target("/burst"_str),
+                                                                      rstd::move(callbacks),
+                                                                      {},
+                                                                      {},
+                                                                      options))
+                                       .unwrap();
+        for (;;) {
+            auto changed = probe->changed.listen();
+            bool done;
+            {
+                auto sequence = probe->sequence.lock().unwrap();
+                done = sequence->len() == usize(513) ||
+                       (! sequence->is_empty() && (*sequence)[sequence->len() - usize(1)] == -2);
+            }
+            if (done) break;
+            co_await rstd::move(changed);
+        }
+        {
+            auto sequence = probe->sequence.lock().unwrap();
+            EXPECT_EQ(sequence->len(), usize(513));
+            if (sequence->len() == usize(513)) {
+                EXPECT_EQ((*sequence)[usize()], -1);
+                for (usize i; i < usize(512); ++i)
+                    EXPECT_EQ((*sequence)[i + usize(1)], int(i.to_primitive()));
+            }
+        }
+        EXPECT_TRUE((co_await client.close()).is_ok());
+        EXPECT_TRUE((co_await client.shutdown()).is_ok());
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        EXPECT_TRUE((co_await backend.close()).is_ok());
+        EXPECT_EQ(engine.resources().usage().bytes, usize());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(test());
+}
+TEST(QtWebSocket, NativeCallbackThreadOrderAndActiveShutdownBarrier) {
     if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
     auto    runtime = rstd::async::RuntimeBuilder::multi_thread()
                           .worker_threads(usize(3))
@@ -368,20 +561,23 @@ TEST(QtWebSocket, CallbackExecutorThreadOrderAndActiveShutdownBarrier) {
     thread.start();
     QObject bridge;
     bridge.moveToThread(&thread);
-    Option<qt::CallbackExecutor> executor;
+    QNetworkAccessManager* manager {};
+    Option<qt::Backend>    backend;
     QMetaObject::invokeMethod(
         &bridge,
         [&] {
-            executor = Some(qt::CallbackExecutor::make(&bridge).unwrap());
+            manager = new QNetworkAccessManager;
+            manager->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+            qt::Options options;
+            options.manager = manager;
+            backend = Some(qt::Backend::make(engine.resources(), rstd::move(options)).unwrap());
         },
         Qt::BlockingQueuedConnection);
     auto test = [&]() -> coro<empty> {
-        auto backend = qt::Backend::make(engine.resources()).unwrap();
-        auto session = Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
+        auto session = Session::from_backend(engine.handle(), backend->shared_binding()).unwrap();
         for (int mode {}; mode < 3; ++mode) {
             auto               probe = Arc<ExecutorProbe>::make();
             WebSocketCallbacks callbacks;
-            callbacks.executor  = Some(rstd::async::AnyExecutor::from_executor(executor->clone()));
             callbacks.connected = [probe = probe.clone(), &thread] {
                 EXPECT_EQ(QThread::currentThread(), &thread);
                 probe->sequence.lock().unwrap()->push(0);
@@ -469,7 +665,7 @@ TEST(QtWebSocket, CallbackExecutorThreadOrderAndActiveShutdownBarrier) {
             if (! mode) EXPECT_EQ((*values)[usize(2)], 3);
         }
         EXPECT_TRUE((co_await session->close()).is_ok());
-        EXPECT_TRUE((co_await backend.close()).is_ok());
+        EXPECT_TRUE((co_await backend->close()).is_ok());
         EXPECT_TRUE((co_await engine.close()).is_ok());
         co_return empty {};
     };
@@ -477,55 +673,15 @@ TEST(QtWebSocket, CallbackExecutorThreadOrderAndActiveShutdownBarrier) {
     QMetaObject::invokeMethod(
         &bridge,
         [&] {
-            executor->close();
+            backend = None();
+            delete manager;
             bridge.moveToThread(QCoreApplication::instance()->thread());
         },
         Qt::BlockingQueuedConnection);
     thread.quit();
     thread.wait();
 }
-TEST(QtWebSocket, DestroyedCallbackContextCancelsAcceptedJobs) {
-    QThread thread;
-    thread.start();
-    QObject bridge;
-    bridge.moveToThread(&thread);
-    Option<qt::CallbackExecutor> executor;
-    int                          ran {}, canceled {};
-    QMetaObject::invokeMethod(
-        &bridge,
-        [&] {
-            auto* context = new QObject;
-            executor      = Some(qt::CallbackExecutor::make(context).unwrap());
-            EXPECT_TRUE(executor->post_job(rstd::async::ExecutorJob::make(
-                [&] {
-                    ++ran;
-                },
-                [&] {
-                    ++canceled;
-                })));
-            delete context;
-        },
-        Qt::BlockingQueuedConnection);
-    EXPECT_TRUE(executor->is_closed());
-    EXPECT_EQ(ran, 0);
-    EXPECT_EQ(canceled, 1);
-    EXPECT_FALSE(executor->post_job(rstd::async::ExecutorJob::make(
-        [&] {
-            ++ran;
-        },
-        [&] {
-            ++canceled;
-        })));
-    EXPECT_EQ(canceled, 2);
-    QMetaObject::invokeMethod(
-        &bridge,
-        [&] {
-            bridge.moveToThread(QCoreApplication::instance()->thread());
-        },
-        Qt::BlockingQueuedConnection);
-    thread.quit();
-    thread.wait();
-}
+
 TEST(QtWebSocket, OwnedSessionClosesTheSharedBackend) {
     if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
@@ -547,50 +703,25 @@ TEST(QtWebSocket, OwnedSessionClosesTheSharedBackend) {
     };
     runtime.block_on(test());
 }
-TEST(QtWebSocket, CallbackPostingCanRaceContextDestruction) {
-    QThread thread;
-    thread.start();
-    QObject bridge;
-    bridge.moveToThread(&thread);
-    QObject*                     context {};
-    Option<qt::CallbackExecutor> executor;
-    QMetaObject::invokeMethod(
-        &bridge,
-        [&] {
-            context  = new QObject;
-            executor = Some(qt::CallbackExecutor::make(context).unwrap());
-        },
-        Qt::BlockingQueuedConnection);
-    std::atomic<unsigned> ran {}, canceled {}, posted {};
-    std::thread           producer([executor = executor->clone(), &ran, &canceled, &posted] {
-        for (unsigned i {}; i < 2000; ++i) {
-            (void)executor.post_job(rstd::async::ExecutorJob::make(
-                [&ran] {
-                    ++ran;
-                },
-                [&canceled] {
-                    ++canceled;
-                }));
-            ++posted;
-        }
-    });
-    while (posted.load() == 0) std::this_thread::yield();
-    QMetaObject::invokeMethod(
-        &bridge,
-        [&] {
-            delete context;
-        },
-        Qt::BlockingQueuedConnection);
-    producer.join();
-    EXPECT_TRUE(executor->is_closed());
-    EXPECT_EQ(ran.load() + canceled.load(), 2000u);
-    QMetaObject::invokeMethod(
-        &bridge,
-        [&] {
-            bridge.moveToThread(QCoreApplication::instance()->thread());
-        },
-        Qt::BlockingQueuedConnection);
-    thread.quit();
-    thread.wait();
+
+TEST(QtWebSocket, WaitingPullIsRejectedBeforeDispatch) {
+    if (! ::getenv("NCREQUEST_QT_WS_URL")) GTEST_SKIP();
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto test    = [&]() -> coro<empty> {
+        auto engine  = lf::Engine::make(runtime.handle()).unwrap();
+        auto backend = qt::Backend::make(engine.resources()).unwrap();
+        auto session = Session::from_backend(engine.handle(), backend.shared_binding()).unwrap();
+        auto result = co_await WebSocketConnection::connect(session.clone(),
+                                                            qt_ws_target("/must-not-dispatch"_str));
+        EXPECT_TRUE(result.is_err());
+        if (result.is_err()) EXPECT_TRUE(result.as_ref().unwrap_err().admission->is_Unsupported());
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        EXPECT_TRUE((co_await backend.close()).is_ok());
+        EXPECT_EQ(engine.resources().usage().bytes, usize());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(test());
 }
+
 #endif

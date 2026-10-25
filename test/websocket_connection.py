@@ -86,6 +86,10 @@ class Handler(socketserver.BaseRequestHandler):
                 if opcode != 8:
                     raise ValueError("close missing")
                 sock.sendall(frame(8, data))
+            elif mode in (20, 21):
+                sock.sendall(response + frame(1, b"ab") + frame(1, b"cd") + frame(1, b"ef") + frame(8))
+                if receive(sock)[0] != 8:
+                    raise ValueError("close reply missing")
             elif mode in (10,11,12,13,14,15,16,17):
                 sock.sendall(response)
                 if mode==17:

@@ -58,6 +58,14 @@ class Handler(socketserver.BaseRequestHandler):
                 return
             accept = base64.b64encode(hashlib.sha1(headers[b"sec-websocket-key"] + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
             sock.sendall(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+            if path in ("/terminal-close", "/terminal-error"):
+                assert receive(sock) == (1, b"ready")
+                if path == "/terminal-close":
+                    sock.sendall(frame(8, b"\x03\xe8"))
+                    assert receive(sock)[0] == 8
+                return
+            if path == "/burst":
+                sock.sendall(b"".join(frame(2, n.to_bytes(2, "big")) for n in range(512)))
             if path == "/stream":
                 time.sleep(0.06)
                 sock.sendall(frame(1, b"") + frame(2, b"binary") + frame(8, b"\x03\xe8"))

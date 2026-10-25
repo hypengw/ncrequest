@@ -22,6 +22,7 @@ public:
     auto written() const -> coro<WebSocketResult<empty>>;
     void cancel() const;
 };
+// A delivered message holds receive credit until this handle is released.
 class PendingReceive {
     Arc<WebSocketState>        owner_;
     Arc<WebSocketReceiveState> state_;
@@ -43,8 +44,10 @@ class WebSocketConnection {
     Arc<WebSocketState>        state_;
     lifetchto::Transfer<empty> transfer_;
     explicit WebSocketConnection(Arc<WebSocketState>, lifetchto::Transfer<empty>);
-    friend struct WebSocketClientState;
-    void fail(WebSocketError) const;
+    friend class WebSocketClient;
+    static auto connect_with_events(Arc<Session>, DuplexRequest, lihttpto::Headers, Vec<String>,
+                                    WebSocketOptions, WebSocketCallbacks)
+        -> coro<rstd::Result<WebSocketConnection, WebSocketConnectFailure>>;
 
 public:
     class MessageStream {

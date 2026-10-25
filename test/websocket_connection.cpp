@@ -20,12 +20,17 @@ static auto scenario(Arc<Session> session, unsigned mode) -> rstd::async::coro<b
     Vec<String> protocols;
     protocols.push(String::make("fern.test"_str));
     WebSocketOptions options;
+    if (! session->websocket_capabilities().receive_backpressure || mode == 4 || mode == 7 ||
+        mode == 13 || mode == 14 || mode == 15)
+        options.receive_policy = ReceivePolicy::Fail;
     options.close_timeout = rstd::time::Duration::from_millis(u64(60));
     if (mode == 4) options.receive_messages = usize(1);
     if (mode == 7) options.receive_bytes = usize(1);
     if (mode == 18)
         options.upgrade.duplex.total_timeout =
             Some(lifetchto::http::TotalTimeout::after(rstd::time::Duration::from_millis(u64(100))));
+    if (mode == 20) options.receive_messages = usize(1);
+    if (mode == 21) options.receive_bytes = usize(3);
     if (mode == 17) options.limits.message_bytes = usize(3);
     if (mode == 10) options.limits.frame_bytes = usize(32);
     if (mode == 11) {
@@ -47,7 +52,25 @@ static auto scenario(Arc<Session> session, unsigned mode) -> rstd::async::coro<b
     if (connection.protocol().is_none() || connection.protocol()->as_str() != "fern.test"_str)
         co_return failure(__LINE__);
     bool ok = false;
-    if (mode == 0) {
+    if (mode == 20 || mode == 21) {
+        {
+            auto pending = connection.receive();
+            auto first   = co_await pending.message();
+            if (first.is_err() || first->data.as_slice() != "ab"_str.as_bytes())
+                co_return failure(__LINE__);
+            auto busy = co_await read_ws(connection);
+            if (busy.is_ok() || busy.unwrap_err() != WebSocketError::Busy ||
+                connection.failure().is_some())
+                co_return failure(__LINE__);
+        }
+        for (auto value : array<ref<str>, 2> { "cd"_str, "ef"_str }) {
+            auto received = co_await read_ws(connection);
+            if (received.is_err() || received->data.as_slice() != value.as_bytes())
+                co_return failure(__LINE__);
+        }
+        auto end = co_await read_ws(connection);
+        ok       = end.is_err() && end.unwrap_err() == WebSocketError::Closed;
+    } else if (mode == 0) {
         auto ready = co_await read_ws(connection);
         if (ready.is_err() || ready->data.as_slice() != "ready"_str.as_bytes())
             co_return failure(__LINE__);
@@ -109,7 +132,7 @@ static auto scenario(Arc<Session> session, unsigned mode) -> rstd::async::coro<b
         auto pending = connection.receive();
         auto closed  = co_await pending.message();
         ok           = closed.is_err() && closed.as_ref().unwrap_err() == WebSocketError::Closed;
-    } else if (mode == 10 || mode == 11 || mode == 13 || mode == 14) {
+    } else if (mode == 10 || mode == 11 || mode == 13 || mode == 14 || mode == 15) {
         (void)co_await connection.completion().wait();
         auto pending = connection.receive();
         auto done    = co_await pending.message();
@@ -189,6 +212,7 @@ static void run(unsigned mode) {
 #if ! LITO_FEAT_QT
         if (backend_mode == 2) continue;
 #endif
+        if ((mode == 20 || mode == 21) && backend_mode == 2) continue;
         auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
         auto test    = [&]() -> coro<bool> {
             auto engine  = lifetchto::Engine::make(runtime.handle()).unwrap();
@@ -298,3 +322,6 @@ TEST(WebSocketConnection, RegisteredTaskQuotaFailureClosesNativeStream) {
         runtime.block_on(test());
     }
 }
+
+TEST(WebSocketConnection, WaitingCountWindowResumesAfterReceiptRelease) { run(20); }
+TEST(WebSocketConnection, WaitingByteWindowResumesAfterReceiptRelease) { run(21); }

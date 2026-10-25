@@ -97,7 +97,7 @@ auto Session::websocket_backend() const -> Option<Arc<rstd::dyn<WebSocketBackend
 auto Session::websocket_capabilities() const -> WebSocketCapabilities {
     if (state_->websocket.is_some()) return (*state_->websocket)->capabilities();
     bool supported = capabilities().duplex;
-    return { supported, supported, supported, supported };
+    return { supported, supported, supported, supported, supported };
 }
 auto Session::prepare_connection(DuplexRequest input, DuplexOptions options) const
     -> rstd::Result<http::ConnectionPlan, lifetchto::Rejected<DuplexRequest>> {

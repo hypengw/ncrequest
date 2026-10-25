@@ -119,14 +119,15 @@ struct Endpoint {
 };
 struct Backend {
     Arc<State> state;
-    auto       capabilities() const -> WebSocketCapabilities { return { true }; }
+    bool       finish_during_connect {};
+    auto       capabilities() const -> WebSocketCapabilities {
+        return { .supported            = true,
+                 .receive_backpressure = true,
+                 .native_callbacks     = finish_during_connect };
+    }
     auto connect(lf::ResourceContext, lf::http::ConnectionPlan, lihttpto::Headers, Vec<String>,
-                 WebSocketOptions) const
+                 WebSocketOptions, WebSocketBackendEvents) const
         -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>>;
-};
-struct PostProbe {
-    rstd::sync::Mutex<usize> count { usize() };
-    lf::Event                changed;
 };
 struct TaskBlocker {
     auto run(lf::Cancellation cancellation) const -> coro<lf::Result<empty>> {
@@ -134,26 +135,9 @@ struct TaskBlocker {
         co_return Ok(empty {});
     }
 };
-struct PausedExecutor {
-    rstd::async::LocalExecutor executor;
-    Arc<PostProbe>             probe;
-    auto                       post_job(rstd::async::ExecutorJob job) -> bool {
-        auto accepted = executor.post_job(rstd::move(job));
-        ++*probe->count.lock().unwrap();
-        probe->changed.notify();
-        return accepted;
-    }
-    auto is_closed() -> bool { return executor.is_closed(); }
-};
 } // namespace flow_test
 namespace rstd
 {
-template<>
-struct Impl<async::Executor, flow_test::PausedExecutor> : ImplBase<flow_test::PausedExecutor> {
-    auto post_job(async::ExecutorJob job) { return this->self().post_job(rstd::move(job)); }
-    auto is_closed() { return this->self().is_closed(); }
-};
-
 template<>
 struct Impl<ncrequest::WebSocketEndpoint, flow_test::Endpoint> : ImplBase<flow_test::Endpoint> {
     auto protocol() const { return this->self().protocol(); }
@@ -176,32 +160,41 @@ struct Impl<ncrequest::WebSocketBackend, flow_test::Backend> : ImplBase<flow_tes
     auto capabilities() const { return this->self().capabilities(); }
     auto connect(lifetchto::ResourceContext resources, lifetchto::http::ConnectionPlan plan,
                  lihttpto::Headers headers, ::alloc::vec::Vec<::alloc::string::String> protocols,
-                 ncrequest::WebSocketOptions options) const {
+                 ncrequest::WebSocketOptions       options,
+                 ncrequest::WebSocketBackendEvents events) const {
         return this->self().connect(rstd::move(resources),
                                     rstd::move(plan),
                                     rstd::move(headers),
                                     rstd::move(protocols),
-                                    options);
+                                    options,
+                                    rstd::move(events));
     }
 };
 } // namespace rstd
 namespace flow_test
 {
 auto Backend::connect(lf::ResourceContext resources, lf::http::ConnectionPlan, lihttpto::Headers,
-                      Vec<String>, WebSocketOptions) const
+                      Vec<String>, WebSocketOptions, WebSocketBackendEvents events) const
     -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>> {
     auto transfer = resources.handle()
                         .submit(lf::PreparedOperation<empty>::make(Driver { state.clone() }))
                         .unwrap();
     (co_await transfer.output()).unwrap();
+    if (finish_during_connect) {
+        if (events.connected) events.connected();
+        state->stop(ws::WebSocketError::Closed);
+        if (events.terminal) events.terminal(WebSocketError::Closed);
+    }
     co_return Ok(
         Arc<rstd::dyn<WebSocketEndpoint>>::make(Endpoint { state.clone(), rstd::move(transfer) }));
 }
-auto session(lf::Engine& engine, Arc<State> state) -> Arc<Session> {
-    auto http    = lf::http::NativeBackend::make(engine.resources()).unwrap().backend();
-    auto binding = ncrequest::BackendBinding::Owned(
-        rstd::move(http),
-        Some(Arc<rstd::dyn<WebSocketBackend>>::make(Backend { rstd::move(state) })));
+auto session(lf::Engine& engine, Arc<State> state, bool finish_during_connect = false)
+    -> Arc<Session> {
+    auto http = lf::http::NativeBackend::make(engine.resources()).unwrap().backend();
+    auto binding =
+        ncrequest::BackendBinding::Owned(rstd::move(http),
+                                         Some(Arc<rstd::dyn<WebSocketBackend>>::make(Backend {
+                                             rstd::move(state), finish_during_connect })));
     return Session::from_backend(engine.handle(), binding).unwrap();
 }
 auto target() -> DuplexRequest {
@@ -218,6 +211,45 @@ auto wait_writes(Arc<State> state, usize count) -> coro<empty> {
     }
 }
 } // namespace flow_test
+TEST(WebSocketFlow, NativeTerminalBeforeConnectReturnsKeepsThePublicState) {
+    using namespace flow_test;
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto test    = [&]() -> coro<bool> {
+        auto               engine = lf::Engine::make(runtime.handle()).unwrap();
+        auto               state  = Arc<State>::make();
+        auto               owner  = session(engine, state.clone(), true);
+        Vec<int>           sequence;
+        WebSocketCallbacks callbacks;
+        callbacks.connected = [&sequence] {
+            sequence.push(0);
+        };
+        callbacks.disconnected = [&sequence] {
+            sequence.push(1);
+        };
+        auto client =
+            (co_await WebSocketClient::connect(owner.clone(), target(), rstd::move(callbacks)))
+                .unwrap();
+        bool valid =
+            sequence.len() == usize(2) && sequence[usize()] == 0 && sequence[usize(1)] == 1;
+        valid         = ! client.is_connected() && valid;
+        auto failure  = client.failure();
+        valid         = failure.is_some() && *failure == WebSocketError::Closed && valid;
+        auto rejected = client.send(message("late"_str));
+        valid         = rejected.is_err() && valid;
+        if (rejected.is_err())
+            valid = rejected.as_ref().unwrap_err().error == WebSocketError::Closed && valid;
+        client.disconnect();
+        failure = client.failure();
+        valid   = failure.is_some() && *failure == WebSocketError::Closed && valid;
+        valid   = (co_await client.close()).is_ok() && valid;
+        valid   = (co_await client.shutdown()).is_ok() && valid;
+        valid   = (co_await owner->close()).is_ok() && valid;
+        valid   = engine.resources().usage().bytes == usize() && valid;
+        valid   = (co_await engine.close()).is_ok() && valid;
+        co_return valid;
+    };
+    EXPECT_TRUE(runtime.block_on(test()));
+}
 TEST(WebSocketFlow, QueueBudgetInputReturnCancellationAndFifo) {
     using namespace flow_test;
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
@@ -359,57 +391,7 @@ TEST(WebSocketFlow, GracefulCloseSealsAdmissionAndDrainsAcceptedMessages) {
     };
     runtime.block_on(test());
 }
-TEST(WebSocketFlow, ExecutorRejectionAndShutdownRevokeQueuedCallbacks) {
-    using namespace flow_test;
-    for (int mode {}; mode < 2; ++mode) {
-        auto runtime = rstd::async::RuntimeBuilder::multi_thread()
-                           .worker_threads(usize(3))
-                           .enable_all()
-                           .build()
-                           .unwrap();
-        auto test    = [&]() -> coro<empty> {
-            auto engine   = lf::Engine::make(runtime.handle()).unwrap();
-            auto state    = Arc<State>::make();
-            auto owner    = session(engine, state.clone());
-            auto executor = rstd::async::LocalExecutorContext::make();
-            if (mode) executor.close();
-            auto               count = Arc<rstd::sync::Mutex<usize>>::make(usize());
-            auto               posts = Arc<PostProbe>::make();
-            WebSocketCallbacks callbacks;
-            callbacks.executor  = Some(rstd::async::AnyExecutor::from_executor(
-                PausedExecutor { executor.executor(), posts.clone() }));
-            callbacks.connected = [count = count.clone()] {
-                ++*count->lock().unwrap();
-            };
-            callbacks.disconnected = callbacks.connected.clone();
-            auto client =
-                (co_await WebSocketClient::connect(owner.clone(), target(), rstd::move(callbacks)))
-                    .unwrap();
-            for (;;) {
-                auto event = posts->changed.listen();
-                if (*posts->count.lock().unwrap() > usize()) break;
-                co_await rstd::move(event);
-            }
-            if (mode)
-                for (;;) {
-                    auto event = state->changed.listen();
-                    if (state->fields.lock().unwrap()->terminal.is_some()) break;
-                    co_await rstd::move(event);
-                }
-            EXPECT_EQ(*count->lock().unwrap(), usize());
-            if (mode) EXPECT_EQ(*client.failure(), WebSocketError::CallbackExecutorClosed);
-            EXPECT_TRUE((co_await client.shutdown()).is_ok());
-            EXPECT_EQ(executor.run_ready(), usize(mode ? 0 : 1));
-            EXPECT_EQ(*posts->count.lock().unwrap(), usize(1));
-            EXPECT_EQ(*count->lock().unwrap(), usize());
-            EXPECT_TRUE((co_await owner->close()).is_ok());
-            EXPECT_EQ(engine.resources().usage().tasks, usize());
-            EXPECT_TRUE((co_await engine.close()).is_ok());
-            co_return empty {};
-        };
-        runtime.block_on(test());
-    }
-}
+
 namespace flow_test
 {
 auto enqueue(Arc<WebSocketConnection> wire, Arc<rstd::sync::Mutex<Vec<PendingSend>>> accepted)
@@ -571,59 +553,52 @@ TEST(WebSocketFlow, WriterAndCallbackAdmissionFailuresPreserveCleanupReports) {
     };
     runtime.block_on(test());
 }
-TEST(WebSocketFlow, QueuedCallbackCancellationRetainsItsFailureAfterWireExit) {
+
+TEST(WebSocketFlow, CallbacksConsumeMessagesAndReportTerminalInOrder) {
     using namespace flow_test;
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
     auto test    = [&]() -> coro<empty> {
-        for (int mode {}; mode < 2; ++mode) {
-            auto engine = lf::Engine::make(runtime.handle()).unwrap();
-            auto state  = Arc<State>::make();
-            auto owner  = session(engine, state.clone());
-            Option<rstd::async::LocalExecutorContext> executor =
-                Some(rstd::async::LocalExecutorContext::make());
-            auto               posts = Arc<PostProbe>::make();
+        for (bool failure : array<bool, 2> { false, true }) {
+            auto               engine = lf::Engine::make(runtime.handle()).unwrap();
+            auto               state  = Arc<State>::make();
+            auto               owner  = session(engine, state.clone());
+            Vec<int>           sequence;
             WebSocketCallbacks callbacks;
-            callbacks.executor = Some(rstd::async::AnyExecutor::from_executor(
-                PausedExecutor { executor->executor(), posts.clone() }));
-            callbacks.message  = [](liwebsocketo::Message) {
+            callbacks.connected = [&sequence] {
+                sequence.push(0);
             };
-            callbacks.disconnected = [] {
+            callbacks.message = [&sequence](ws::Message value) {
+                EXPECT_TRUE(value.data.as_slice() == "payload"_str.as_bytes());
+                sequence.push(1);
+            };
+            callbacks.error = [&sequence](WebSocketError error) {
+                EXPECT_EQ(error, WebSocketError::Overflow);
+                sequence.push(2);
+            };
+            callbacks.disconnected = [&sequence] {
+                sequence.push(3);
             };
             auto client =
                 (co_await WebSocketClient::connect(owner.clone(), target(), rstd::move(callbacks)))
                     .unwrap();
             for (;;) {
-                auto event = state->changed.listen();
+                auto changed = state->changed.listen();
                 if (state->fields.lock().unwrap()->receiver.is_some()) break;
-                co_await rstd::move(event);
+                co_await rstd::move(changed);
             }
             state->deliver();
-            for (;;) {
-                auto event = posts->changed.listen();
-                if (*posts->count.lock().unwrap() > usize()) break;
-                co_await rstd::move(event);
-            }
-            state->stop(mode ? ws::WebSocketError::Overflow : ws::WebSocketError::Closed);
-            while (engine.resources().usage().operations > usize())
-                co_await rstd::async::yield_now();
-            EXPECT_EQ(*client.failure(), mode ? WebSocketError::Overflow : WebSocketError::Closed);
-            EXPECT_EQ(engine.resources().usage().bytes, usize(1048576));
-            executor = None();
+            while (sequence.len() < usize(2)) co_await rstd::async::yield_now();
+            state->stop(failure ? ws::WebSocketError::Overflow : ws::WebSocketError::Closed);
+            while (sequence.len() < usize(failure ? 4 : 3)) co_await rstd::async::yield_now();
+            EXPECT_EQ(sequence[usize()], 0);
+            EXPECT_EQ(sequence[usize(1)], 1);
+            if (failure) EXPECT_EQ(sequence[usize(2)], 2);
+            EXPECT_EQ(sequence[sequence.len() - usize(1)], 3);
+            EXPECT_FALSE(client.is_connected());
             EXPECT_TRUE((co_await client.shutdown()).is_ok());
-            auto failure = client.failure().unwrap();
-            EXPECT_EQ(failure, WebSocketError::CallbackExecutorClosed);
-            EXPECT_EQ(*posts->count.lock().unwrap(), usize(1));
-            if (mode) {
-                EXPECT_TRUE(failure.cause().is_some() && failure.cause()->is_Extension());
-                auto erased = Arc<rstd::dyn<rstd::error::Error>>::make(failure.clone());
-                EXPECT_TRUE(erased->source().is_some());
-                if (failure.cause().is_some() && failure.cause()->is_Extension()) {
-                    auto original = rstd::error::downcast_ref<WebSocketError>(
-                        failure.cause()->as_Extension().cause.deref());
-                    EXPECT_TRUE(original.is_some() && *original == WebSocketError::Overflow);
-                }
-            }
+            EXPECT_EQ(state->fields.lock().unwrap()->receipts, usize());
             EXPECT_TRUE((co_await owner->close()).is_ok());
+            EXPECT_EQ(engine.resources().usage().bytes, usize());
             EXPECT_TRUE((co_await engine.close()).is_ok());
         }
         co_return empty {};

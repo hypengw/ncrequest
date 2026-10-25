@@ -1,6 +1,7 @@
 export module ncrequest:websocket_backend;
 export import :error;
 export import :upgrade;
+export import :client.callback;
 export import liwebsocketo;
 using namespace rstd::prelude;
 export namespace ncrequest
@@ -25,8 +26,7 @@ public:
         MessageTooLarge,
         ReceiveMessagesFull,
         ReceiveBytesFull,
-        CallbackExecutorClosed,
-        IncomingLimit
+        IncomingLimit = 14
     };
 
 private:
@@ -64,6 +64,7 @@ public:
 };
 template<class T>
 using WebSocketResult = rstd::Result<T, WebSocketError>;
+using liwebsocketo::ReceivePolicy;
 struct WebSocketOptions : liwebsocketo::WebSocketOptions {
 private:
     using liwebsocketo::WebSocketOptions::retain_received;
@@ -76,6 +77,19 @@ public:
 struct WebSocketCapabilities {
     bool supported {}, handshake_response {}, handshake_limits {}, peer_close_confirmation {},
         receive_backpressure {}, receive_limit_details { true }, frame_sized_read_window {};
+    bool native_callbacks {};
+};
+// Callbacks run synchronously in the backend receive context; callers own thread handoff.
+struct WebSocketCallbacks {
+    client::Callback<void()>                      connected, disconnected;
+    client::Callback<void(liwebsocketo::Message)> message;
+    client::Callback<void(WebSocketError)>        error;
+};
+struct WebSocketBackendEvents {
+    client::Callback<void()>                      connected;
+    client::Callback<void(liwebsocketo::Message)> message;
+    // Reports the terminal reason synchronously before native cleanup completes.
+    client::Callback<void(WebSocketError)> terminal;
 };
 struct WebSocketConnectFailure {
     Option<lifetchto::Error>               admission;
@@ -129,15 +143,16 @@ struct WebSocketBackend {
         using Trait = WebSocketBackend;
         auto capabilities() const -> WebSocketCapabilities { return rstd::trait_call<0>(this); }
         auto connect(lifetchto::ResourceContext resources, lifetchto::http::ConnectionPlan plan,
-                     lihttpto::Headers headers, Vec<String> protocols,
-                     WebSocketOptions options) const
+                     lihttpto::Headers headers, Vec<String> protocols, WebSocketOptions options,
+                     WebSocketBackendEvents events = {}) const
             -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>> {
             return rstd::trait_call<1>(this,
                                        rstd::move(resources),
                                        rstd::move(plan),
                                        rstd::move(headers),
                                        rstd::move(protocols),
-                                       options);
+                                       options,
+                                       rstd::move(events));
         }
     };
     template<class T>

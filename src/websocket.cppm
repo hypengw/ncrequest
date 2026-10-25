@@ -4,12 +4,6 @@ export import :client.callback;
 using namespace rstd::prelude;
 export namespace ncrequest
 {
-struct WebSocketCallbacks {
-    Option<rstd::async::AnyExecutor>              executor;
-    client::Callback<void()>                      connected, disconnected;
-    client::Callback<void(liwebsocketo::Message)> message;
-    client::Callback<void(WebSocketError)>        error;
-};
 struct WebSocketClientState;
 class WebSocketClient {
     Arc<WebSocketClientState>            state_;

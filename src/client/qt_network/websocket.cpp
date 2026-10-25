@@ -50,6 +50,7 @@ struct WsState {
     lihttpto::Headers           headers;
     Vec<String>                 protocols;
     WebSocketOptions            options;
+    WebSocketBackendEvents      events;
     usize                       window;
     lf::Instant                 handshake_deadline;
     Option<lf::ResourcePermit>  native_buffer;
@@ -57,11 +58,12 @@ struct WsState {
     lf::Event                   changed;
     Dispatch                    dispatch;
     WsState(h::ConnectionPlan plan, lihttpto::Headers headers, Vec<String> protocols,
-            WebSocketOptions options, Dispatch dispatch)
+            WebSocketOptions options, Dispatch dispatch, WebSocketBackendEvents events)
         : plan(rstd::move(plan)),
           headers(rstd::move(headers)),
           protocols(rstd::move(protocols)),
           options(options),
+          events(rstd::move(events)),
           window(options.limits.frame_bytes < usize(65536) ? usize(65536)
                                                            : options.limits.frame_bytes),
           handshake_deadline(lf::Instant::now() + options.upgrade.handshake_timeout),
@@ -100,7 +102,21 @@ struct WsState {
         }
         notify();
     }
+    auto failure() const -> Option<ncrequest::WebSocketError> {
+        auto f = fields.lock().unwrap();
+        if (f->failure.is_some()) return Some(f->failure->clone());
+        if (f->terminal.is_none()) return None();
+        if (*f->terminal == WebSocketError::Overflow) {
+            auto error = ncrequest::WebSocketError(ncrequest::WebSocketError::IncomingLimit);
+            return f->cause.is_some() ? Some(rstd::move(error).with_cause(f->cause->clone()))
+                                      : Some(rstd::move(error));
+        }
+        auto error = ncrequest::WebSocketError(*f->terminal);
+        if (f->cause.is_some()) return Some(rstd::move(error).with_cause(f->cause->clone()));
+        return Some(rstd::move(error));
+    }
     void receive(liwebsocketo::Message message) {
+        bool callback = false;
         {
             auto f = fields.lock().unwrap();
             if (f->terminal.is_some() ||
@@ -125,6 +141,11 @@ struct WsState {
                         count ? f->incoming.len() + f->retained_messages + usize(1)
                               : f->bytes + message.data.len()));
                     finish_locked(*f, WebSocketError::Overflow);
+                } else if (events.message) {
+                    f->bytes += message.data.len();
+                    f->retained_bytes += message.data.len();
+                    ++f->retained_messages;
+                    callback = true;
                 } else if (f->receiver.is_some()) {
                     f->bytes += message.data.len();
                     f->retained_bytes += message.data.len();
@@ -136,6 +157,14 @@ struct WsState {
                     f->incoming.push(rstd::move(message));
                 }
             }
+        }
+        if (callback) {
+            auto size = message.data.len();
+            events.message(rstd::move(message));
+            auto f   = fields.lock().unwrap();
+            f->bytes = f->bytes >= size ? f->bytes - size : usize();
+            f->retained_bytes -= size;
+            --f->retained_messages;
         }
         notify();
     }
@@ -190,7 +219,15 @@ void ws_dispose(WsActive& active) {
         active.socket->abort();
         delete active.socket.data();
     }
-    active.state->complete();
+    auto state     = active.state.clone();
+    bool connected = state->fields.lock().unwrap()->connected;
+    if (connected && state->events.terminal) {
+        auto error = state->failure();
+        state->events.terminal(error.is_some()
+                                   ? error->clone()
+                                   : ncrequest::WebSocketError(ncrequest::WebSocketError::Closed));
+    }
+    state->complete();
 }
 struct WsDriver {
     Arc<WebSocketServiceState> service;
@@ -299,7 +336,7 @@ struct QtEndpoint {
     }
     auto receive() const -> Completion<WebSocketResult<liwebsocketo::Message>> {
         auto f = state->fields.lock().unwrap();
-        if (f->receiver.is_some() || f->retained_messages > usize())
+        if (state->events.message || f->receiver.is_some() || f->retained_messages > usize())
             return ws_rejected<liwebsocketo::Message>(WebSocketError::Busy);
         if (f->incoming.is_empty() && f->terminal.is_some())
             return ws_rejected<liwebsocketo::Message>(*f->terminal);
@@ -349,19 +386,7 @@ struct QtEndpoint {
         f->retained_bytes = {};
         f->retained_messages = {};
     }
-    auto failure() const -> Option<ncrequest::WebSocketError> {
-        auto f = state->fields.lock().unwrap();
-        if (f->failure.is_some()) return Some(f->failure->clone());
-        if (f->terminal.is_none()) return None();
-        if (*f->terminal == WebSocketError::Overflow) {
-            auto error = ncrequest::WebSocketError(ncrequest::WebSocketError::IncomingLimit);
-            return f->cause.is_some() ? Some(rstd::move(error).with_cause(f->cause->clone()))
-                                      : Some(rstd::move(error));
-        }
-        auto error = ncrequest::WebSocketError(*f->terminal);
-        if (f->cause.is_some()) return Some(rstd::move(error).with_cause(f->cause->clone()));
-        return Some(rstd::move(error));
-    }
+    auto        failure() const -> Option<ncrequest::WebSocketError> { return state->failure(); }
     static auto finish(Arc<WsState> state, lf::TransferControl control) -> coro<lf::Result<empty>> {
         bool closed = [&] {
             auto f = state->fields.lock().unwrap();
@@ -380,10 +405,11 @@ struct QtMessageBackend {
     auto                       capabilities() const -> WebSocketCapabilities {
         return { .supported               = true,
                  .receive_limit_details   = false,
-                 .frame_sized_read_window = true };
+                 .frame_sized_read_window = true,
+                 .native_callbacks        = true };
     }
     auto connect(lf::ResourceContext, h::ConnectionPlan, lihttpto::Headers, Vec<String>,
-                 WebSocketOptions) const
+                 WebSocketOptions, WebSocketBackendEvents) const
         -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>>;
 };
 } // namespace ncrequest::client::qt_network
@@ -413,12 +439,14 @@ struct Impl<ncrequest::WebSocketBackend, ncrequest::client::qt_network::QtMessag
     auto capabilities() const { return this->self().capabilities(); }
     auto connect(lifetchto::ResourceContext resources, lifetchto::http::ConnectionPlan plan,
                  lihttpto::Headers headers, ::alloc::vec::Vec<::alloc::string::String> protocols,
-                 ncrequest::WebSocketOptions options) const {
+                 ncrequest::WebSocketOptions       options,
+                 ncrequest::WebSocketBackendEvents events) const {
         return this->self().connect(rstd::move(resources),
                                     rstd::move(plan),
                                     rstd::move(headers),
                                     rstd::move(protocols),
-                                    options);
+                                    options,
+                                    rstd::move(events));
     }
 };
 } // namespace rstd
@@ -426,7 +454,7 @@ namespace ncrequest::client::qt_network
 {
 auto connect_qt_websocket(Arc<WebSocketServiceState> state, lf::ResourceContext resources,
                           h::ConnectionPlan plan, lihttpto::Headers headers, Vec<String> protocols,
-                          WebSocketOptions options)
+                          WebSocketOptions options, WebSocketBackendEvents events)
     -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>> {
     auto invalid = [](lf::Error error) {
         return WebSocketConnectFailure { .admission = Some(rstd::move(error)) };
@@ -439,6 +467,9 @@ auto connect_qt_websocket(Arc<WebSocketServiceState> state, lf::ResourceContext 
         options.limits.frame_bytes > usize(QWebSocket::maxIncomingFrameSize()) ||
         options.limits.message_bytes > usize(QWebSocket::maxIncomingMessageSize()))
         co_return Err(invalid(lf::Error::InvalidOptions("invalid Qt WebSocket options"_Str)));
+    if (! events.message && options.receive_policy == ReceivePolicy::Wait)
+        co_return Err(
+            invalid(lf::Error::Unsupported("QWebSocket cannot wait for receive capacity"_Str)));
     if (plan.request.route.route.is_some())
         co_return Err(
             invalid(lf::Error::Unsupported("QWebSocket does not support explicit routes"_Str)));
@@ -458,7 +489,8 @@ auto connect_qt_websocket(Arc<WebSocketServiceState> state, lf::ResourceContext 
                                         rstd::move(headers),
                                         rstd::move(protocols),
                                         options,
-                                        state->dispatch.operation());
+                                        state->dispatch.operation(),
+                                        rstd::move(events));
     auto submitted = resources.handle().submit(
         lf::PreparedOperation<empty>::make(WsDriver { state.clone(), wire.clone() }),
         wire->plan.transfer);
@@ -478,14 +510,15 @@ auto connect_qt_websocket(Arc<WebSocketServiceState> state, lf::ResourceContext 
 }
 auto QtMessageBackend::connect(lf::ResourceContext resources, h::ConnectionPlan plan,
                                lihttpto::Headers headers, Vec<String> protocols,
-                               WebSocketOptions options) const
+                               WebSocketOptions options, WebSocketBackendEvents events) const
     -> coro<rstd::Result<Arc<rstd::dyn<WebSocketEndpoint>>, WebSocketConnectFailure>> {
     return connect_qt_websocket(state.clone(),
                                 rstd::move(resources),
                                 rstd::move(plan),
                                 rstd::move(headers),
                                 rstd::move(protocols),
-                                options);
+                                options,
+                                rstd::move(events));
 }
 WebSocketService::WebSocketService(QSslConfiguration ssl, QNetworkProxy proxy,
                                    h::TlsVerification verification, Dispatch dispatch)
@@ -563,6 +596,7 @@ void ws_start(const Arc<WebSocketServiceState>& service, Arc<WsState> state, QOb
                 f->connected = true;
                 if (! protocol.is_empty()) f->protocol = Some(rstd::move(protocol));
             }
+            if (state->events.connected) state->events.connected();
             state->notify();
         });
     QObject::connect(
