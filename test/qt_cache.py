@@ -41,8 +41,18 @@ class Peer(BaseHTTPRequestHandler):
         self.send_response_only(status)
         now = datetime.now(timezone.utc)
         self.send_header('Date', format_datetime(now - timedelta(seconds=120) if stale and not conditional else now, usegmt=True))
-        self.send_header('Cache-Control', 'no-store' if self.path.endswith(('/no-store', '/slow', '/retry')) else 'max-age=0, no-cache' if stale and not conditional else 'max-age=3600')
-        self.send_header('ETag', '"version-1"')
+        resource = self.path.startswith('/resource/')
+        control = 'no-store' if self.path.endswith(('/no-store', '/slow', '/retry')) else 'no-cache' if self.path.endswith('/no-cache') else 'max-age=0' if self.path.endswith('/max-age-zero') else 'max-age=0, no-cache' if (stale and not conditional) or self.path.endswith('/changing') else 'max-age=3600'
+        if not self.path.endswith(('/fallback', '/zero', '/expired')):
+            self.send_header('Cache-Control', control)
+        if self.path.endswith('/expired'):
+            self.send_header('Expires', format_datetime(now - timedelta(seconds=120), usegmt=True))
+        if self.path.endswith('/aged'):
+            self.send_header('Age', '7200')
+        if self.path.endswith('/local'):
+            self.send_header('X-Local-Resource', 'file:///tmp/image')
+        if not resource or stale:
+            self.send_header('ETag', '"version-1"')
         if status == 302:
             self.send_header('Location', '/external/fresh')
         if self.path.endswith('/set-cookie'):
@@ -107,6 +117,10 @@ try:
         assert fields.get('Cache-Control') == 'no-cache' and fields.get('Pragma') == 'no-cache', requests
         assert 'Cache-Control' not in requests[1]['headers'], requests
     print('QNAM native cache wire assertions passed:', dict(counts))
+    assert counts['/resource/fresh'] == 2, counts
+    assert counts['/resource/fallback'] == 1 and counts['/resource/stale'] == 2, counts
+    resource_stale = [e for e in server.events if e['path'] == '/resource/stale']
+    assert resource_stale[1]['headers']['If-None-Match'] == '"version-1"', resource_stale
 finally:
     server.shutdown()
     server.server_close()
