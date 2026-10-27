@@ -1,5 +1,6 @@
 module;
 #include <QNetworkAccessManager>
+#include <rstd/enum.hpp>
 export module ncrequest:client.qt_network.backend;
 export import :session;
 using namespace rstd::prelude;
@@ -10,9 +11,17 @@ struct BackendState;
 }
 export namespace ncrequest::client::qt_network
 {
+struct DiskCacheOptions {
+    String directory;
+    i64    maximum_bytes { 50 * 1024 * 1024 };
+};
+class NativeCache {
+    RSTD_ENUM(NativeCache, (Existing), (Disk, (DiskCacheOptions options;)))
+};
 struct Options {
     usize                                    window { 65536 }, head_limit { 65536 };
     QNetworkAccessManager*                   manager {};
+    Option<NativeCache>                      cache;
     lifetchto::http::TlsOptions              tls;
     lifetchto::http::ProxyOptions            proxy;
     lifetchto::http::TcpOptions              tcp;
@@ -65,7 +74,7 @@ public:
             rstd::move(input) });
     }
     auto prepare(lihttpto::RequestParts, lifetchto::http::UploadMetadata,
-                 lifetchto::http::RouteChoice) const
+                 lifetchto::http::RouteChoice, lifetchto::http::CacheDirective) const
         -> lifetchto::Result<lifetchto::http::PreparedExchange>;
     auto operation(lifetchto::http::ExchangeInput) const
         -> rstd::Result<lifetchto::PreparedOperation<lifetchto::http::ResponseMessage>,
@@ -110,8 +119,8 @@ template<>
 struct Impl<lifetchto::http::ExchangeBackend, ncrequest::client::qt_network::Backend>
     : ImplBase<ncrequest::client::qt_network::Backend> {
     auto prepare(lihttpto::RequestParts p, lifetchto::http::UploadMetadata u,
-                 lifetchto::http::RouteChoice r) const {
-        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r));
+                 lifetchto::http::RouteChoice r, lifetchto::http::CacheDirective directive) const {
+        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r), directive);
     }
     auto operation(lifetchto::http::ExchangeInput i) const {
         return this->self().operation(rstd::move(i));

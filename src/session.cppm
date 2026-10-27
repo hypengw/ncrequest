@@ -58,6 +58,7 @@ public:
     auto upgrade(UpgradeRequest, UpgradeOptions = {}) const
         -> rstd::Result<PendingUpgrade, lifetchto::Rejected<UpgradeRequest>>;
     auto capabilities() const -> lifetchto::http::BackendCapabilities;
+    auto cache_capabilities() const -> lifetchto::http::CacheCapabilities;
     auto resources() const -> lifetchto::ResourceContext;
     void request_close() const;
     auto close() const -> coro<lifetchto::CloseReport>;

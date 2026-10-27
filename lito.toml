@@ -44,7 +44,7 @@ liwebsocketo = { version = "0.1.0", pub = true }
 
 [[test]]
 name = "ncrequest-tests"
-sources = ["test/main.cpp", "test/session.cpp", "test/http.cpp", "test/upload.cpp", "test/cache.cpp", "test/http_peer.cpp", "test/adapters.cpp", "test/managed_duplex.cpp", "test/upgrade.cpp", "test/websocket_connection.cpp", "test/websocket.cpp", "test/qt_websocket.cpp", "test/qt_events.cpp", "test/websocket_flow.cpp", "test/transport.cpp"]
+sources = ["test/main.cpp", "test/session.cpp", "test/http.cpp", "test/upload.cpp", "test/cache.cpp", "test/qt_cache.cpp", "test/http_peer.cpp", "test/adapters.cpp", "test/managed_duplex.cpp", "test/upgrade.cpp", "test/websocket_connection.cpp", "test/websocket.cpp", "test/qt_websocket.cpp", "test/qt_events.cpp", "test/websocket_flow.cpp", "test/transport.cpp"]
 link-stdlib = true
 
 [dev-dependencies]

@@ -90,6 +90,9 @@ Session::Session(ConstructionKey, Arc<SessionState> state): state_(rstd::move(st
 auto Session::capabilities() const -> http::BackendCapabilities {
     return state_->client.capabilities();
 }
+auto Session::cache_capabilities() const -> http::CacheCapabilities {
+    return state_->client.cache_capabilities();
+}
 auto Session::resources() const -> lifetchto::ResourceContext { return state_->client.resources(); }
 auto Session::websocket_backend() const -> Option<Arc<rstd::dyn<WebSocketBackend>>> {
     return state_->websocket.clone();

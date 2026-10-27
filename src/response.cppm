@@ -42,7 +42,7 @@ class Response {
     lihttpto::ResponseHead                  head_;
     lihttpto::RequestParts                  request_;
     ResponseTiming                          timing_;
-    bool                                    cached_;
+    lifetchto::http::CacheObservation       cache_;
     lifetchto::http::ExecutionObserver      execution_;
     lifetchto::TransferControl              completion_;
     rstd::sync::Mutex<Option<ResponseBody>> body_;
@@ -70,14 +70,15 @@ class Response {
     }
 
 public:
-    Response(ConstructionKey, lihttpto::ResponseHead, lihttpto::RequestParts, ResponseTiming, bool,
-             lifetchto::http::ExecutionObserver, ResponseBody);
+    Response(ConstructionKey, lihttpto::ResponseHead, lihttpto::RequestParts, ResponseTiming,
+             lifetchto::http::CacheObservation, lifetchto::http::ExecutionObserver, ResponseBody);
     Response(const Response&) = delete;
     auto head() const -> const lihttpto::ResponseHead& { return head_; }
     auto header() const -> const lihttpto::Headers& { return head_.headers; }
     auto request() const -> const lihttpto::RequestParts& { return request_; }
     auto timing() const -> ResponseTiming { return timing_; }
-    auto from_cache() const -> bool { return cached_; }
+    auto from_cache() const -> bool { return cache_.from_cache(); }
+    auto cache() const -> lifetchto::http::CacheObservation { return cache_; }
     auto execution() const -> lifetchto::http::ExecutionObserver { return execution_.clone(); }
     auto completion() const -> lifetchto::TransferControl { return completion_.clone(); }
     void cancel() const { completion_.cancel(); }

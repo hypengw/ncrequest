@@ -12,6 +12,7 @@ using lf::Bytes;
 using lf::coro;
 struct ExchangeFields {
     Option<lihttpto::ResponseHead> head;
+    h::CacheObservation            cache;
     lihttpto::Headers              trailers;
     Option<lf::Error>              error;
     bool                           demand {}, done {}, dispatched {}, stopped {};
@@ -203,13 +204,15 @@ namespace ncrequest::client
 auto deliver(Arc<Exchange> exchange, lf::OutputSender<h::ResponseMessage> output)
     -> coro<lf::ProtocolCompletion> {
     Option<lihttpto::ResponseHead> head;
+    h::CacheObservation            cache;
     for (;;) {
         auto event = exchange->changed.listen();
         {
             auto f = exchange->fields.lock().unwrap();
-            if (f->head.is_some())
-                head = f->head.take();
-            else if (f->error.is_some())
+            if (f->head.is_some()) {
+                head  = f->head.take();
+                cache = f->cache;
+            } else if (f->error.is_some())
                 co_return lf::ProtocolCompletion { Err(f->error->clone()),
                                                    f->dispatched
                                                        ? lf::RemoteOutcome::Unknown
@@ -221,10 +224,10 @@ auto deliver(Arc<Exchange> exchange, lf::OutputSender<h::ResponseMessage> output
     auto body = h::ResponseBody::from_source(
         Arc<rstd::dyn<h::ResponseSource>>::make(Source { exchange.clone() }));
     auto control   = body.completion();
-    auto published = output.publish({ head.take().unwrap(), rstd::move(body) });
+    auto published = output.publish({ head.take().unwrap(), rstd::move(body), cache });
     if (published.is_err()) exchange->stop();
     auto result = co_await control.wait();
-    co_return lf::ProtocolCompletion { rstd::move(result), lf::RemoteOutcome::Confirmed };
+    co_return lf::ProtocolCompletion { rstd::move(result), cache.remote() };
 }
 auto release_exchange(Arc<Exchange> exchange) -> coro<lf::Result<empty>> {
     exchange->stop();
@@ -242,8 +245,8 @@ auto release_exchange(Arc<Exchange> exchange) -> coro<lf::Result<empty>> {
     co_return rstd::move(result);
 }
 auto prepare_exchange(h::BackendIdentity identity, lihttpto::RequestParts parts,
-                      h::UploadMetadata upload, h::RouteChoice route, usize limit)
-    -> lf::Result<h::PreparedExchange> {
+                      h::UploadMetadata upload, h::RouteChoice route, usize limit,
+                      h::CacheDirective directive) -> lf::Result<h::PreparedExchange> {
     auto parsed = lihttpto::PreparedRequest::make(
         rstd::move(parts),
         upload.length,
@@ -255,6 +258,7 @@ auto prepare_exchange(h::BackendIdentity identity, lihttpto::RequestParts parts,
                                         rstd::move(identity),
                                         rstd::move(upload),
                                         rstd::move(route),
-                                        rstd::move(scope)));
+                                        rstd::move(scope),
+                                        directive));
 }
 } // namespace ncrequest::client

@@ -939,9 +939,11 @@ auto Backend::duplex(h::DuplexRequest input) const
         RawDriver { state_.clone(),
                     Arc<RawExchange>::make(rstd::move(input), rstd::move(selected).unwrap()) }));
 }
-auto Backend::prepare(lihttpto::RequestParts parts, h::UploadMetadata upload,
-                      h::RouteChoice route) const -> lf::Result<h::PreparedExchange> {
+auto Backend::prepare(lihttpto::RequestParts parts, h::UploadMetadata upload, h::RouteChoice route,
+                      h::CacheDirective directive) const -> lf::Result<h::PreparedExchange> {
     if (state_->fields.lock().unwrap()->closed) return Err(lf::Error::Closed());
+    if (directive != h::CacheDirective::Disabled)
+        return Err(lf::Error::Unsupported("curl has no native response cache"_Str));
     if (route.route.is_some() && state_->options.proxy.enabled())
         return Err(lf::Error::Unsupported("explicit routes require a disabled proxy profile"_Str));
     if (parts.url.http_origin().is_none())
@@ -963,7 +965,8 @@ auto Backend::prepare(lihttpto::RequestParts parts, h::UploadMetadata upload,
                                      rstd::move(parts),
                                      rstd::move(upload),
                                      rstd::move(route),
-                                     state_->options.head_limit);
+                                     state_->options.head_limit,
+                                     directive);
     if (prepared.is_ok()) prepared->set_proxy(rstd::move(proxy).unwrap());
     return prepared;
 }
@@ -971,6 +974,10 @@ auto Backend::operation(h::ExchangeInput input) const
     -> rstd::Result<lf::PreparedOperation<h::ResponseMessage>, lf::Rejected<h::ExchangeInput>> {
     if (state_->fields.lock().unwrap()->closed)
         return Err(lf::Rejected<h::ExchangeInput> { lf::Error::Closed(), rstd::move(input) });
+    if (input.prepared.cache_directive() != h::CacheDirective::Disabled)
+        return Err(lf::Rejected<h::ExchangeInput> {
+            lf::Error::Unsupported("backend has no native response cache"_Str),
+            rstd::move(input) });
     if (! input.prepared.backend_identity().matches(state_->identity))
         return Err(lf::Rejected<h::ExchangeInput> {
             lf::Error::InvalidOptions("exchange belongs to another backend"_Str),

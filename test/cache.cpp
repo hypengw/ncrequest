@@ -17,7 +17,8 @@ TEST(HttpCache, SharedStoreAndPolicyReplacementHaveOneOwner) {
         auto shared = h::BackendBinding::Shared(backend(script));
         auto config = [&]() {
             SessionOptions options;
-            options.http.cache           = Some(h::StoreBinding::Shared(cache.store()));
+            options.http.cache =
+                Some(h::CacheBinding::Store(h::StoreBinding::Shared(cache.store())));
             options.http.policy.cache    = h::CacheMode::Default;
             options.http.policy.redirect = Some(h::RedirectPolicy {});
             return options;
@@ -61,7 +62,7 @@ TEST(HttpCache, TruncatedResponseCannotPublishAnEntry) {
         reply.headers.add("Cache-Control"_str, "max-age=60"_str).unwrap();
         script->lock().unwrap()->replies.push(rstd::move(reply));
         SessionOptions config;
-        config.http.cache        = Some(h::StoreBinding::Shared(cache.store()));
+        config.http.cache = Some(h::CacheBinding::Store(h::StoreBinding::Shared(cache.store())));
         config.http.policy.cache = h::CacheMode::Default;
         auto session = Session::from_http_backend(engine.handle(),
                                                   h::BackendBinding::Shared(backend(script)),
@@ -78,6 +79,30 @@ TEST(HttpCache, TruncatedResponseCannotPublishAnEntry) {
         if (miss.is_err()) EXPECT_TRUE(miss.unwrap_err().as_Transport().cause.is_CacheMiss());
         EXPECT_TRUE((co_await session->close()).is_ok());
         EXPECT_TRUE((co_await cache.close()).is_ok());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(task());
+}
+TEST(HttpCache, NativeProviderIsRejectedByNativeAndCurl) {
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto task    = [&]() -> coro<empty> {
+        auto           engine = lf::Engine::make(runtime.handle()).unwrap();
+        SessionOptions options;
+        options.http.cache = Some(h::CacheBinding::Backend());
+        auto native        = h::NativeBackend::make(engine.resources()).unwrap();
+        auto rejected      = Session::from_http_backend(
+            engine.handle(), h::BackendBinding::Shared(native.backend()), options);
+        EXPECT_TRUE(rejected.is_err());
+        EXPECT_TRUE(rejected.as_ref().unwrap_err().as_Transport().cause.is_Unsupported());
+        EXPECT_TRUE((co_await native.close()).is_ok());
+#if LITO_FEAT_CURL
+        auto curl        = client::curl::Backend::make(engine.resources()).unwrap();
+        auto unsupported = Session::from_backend(engine.handle(), curl.shared_binding(), options);
+        EXPECT_TRUE(unsupported.is_err());
+        EXPECT_TRUE(unsupported.as_ref().unwrap_err().as_Transport().cause.is_Unsupported());
+        EXPECT_TRUE((co_await curl.close()).is_ok());
+#endif
         EXPECT_TRUE((co_await engine.close()).is_ok());
         co_return empty {};
     };

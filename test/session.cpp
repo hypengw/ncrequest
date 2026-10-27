@@ -275,8 +275,8 @@ TEST(session, FailedFactoryRetainsBindingsAndClosePreservesEveryError) {
         auto           binding              = h::BackendBinding::Owned(test_http::backend(script));
         auto           closes               = Arc<rstd::sync::Mutex<usize>>::make(usize());
         SessionOptions options;
-        options.http.cache         = Some(h::StoreBinding::Owned(
-            Arc<rstd::dyn<h::CacheStore>>::make(FailingStore { cache.store(), closes.clone() })));
+        options.http.cache         = Some(h::CacheBinding::Store(h::StoreBinding::Owned(
+            Arc<rstd::dyn<h::CacheStore>>::make(FailingStore { cache.store(), closes.clone() }))));
         options.http.total_timeout = Some(Duration {});
         EXPECT_TRUE(Session::from_http_backend(engine.handle(), binding, options).is_err());
         EXPECT_TRUE(Session::make(runtime.handle(), {}, options).is_err());

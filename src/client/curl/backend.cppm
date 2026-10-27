@@ -54,7 +54,7 @@ public:
         -> rstd::Result<lifetchto::PreparedOperation<lifetchto::DuplexStream>,
                         lifetchto::Rejected<lifetchto::http::DuplexRequest>>;
     auto prepare(lihttpto::RequestParts, lifetchto::http::UploadMetadata,
-                 lifetchto::http::RouteChoice) const
+                 lifetchto::http::RouteChoice, lifetchto::http::CacheDirective) const
         -> lifetchto::Result<lifetchto::http::PreparedExchange>;
     auto operation(lifetchto::http::ExchangeInput) const
         -> rstd::Result<lifetchto::PreparedOperation<lifetchto::http::ResponseMessage>,
@@ -84,8 +84,8 @@ template<>
 struct Impl<lifetchto::http::ExchangeBackend, ncrequest::client::curl::Backend>
     : ImplBase<ncrequest::client::curl::Backend> {
     auto prepare(lihttpto::RequestParts p, lifetchto::http::UploadMetadata u,
-                 lifetchto::http::RouteChoice r) const {
-        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r));
+                 lifetchto::http::RouteChoice r, lifetchto::http::CacheDirective directive) const {
+        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r), directive);
     }
     auto operation(lifetchto::http::ExchangeInput i) const {
         return this->self().operation(rstd::move(i));

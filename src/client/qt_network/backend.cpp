@@ -2,6 +2,10 @@ module;
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QNetworkAccessManager>
+#include <QAbstractNetworkCache>
+#include <QNetworkDiskCache>
+#include <QDir>
+#include <QTemporaryFile>
 #include <QNetworkReply>
 #include <QNetworkProxy>
 #include <QNetworkRequest>
@@ -82,7 +86,8 @@ auto failure(QNetworkReply* reply) -> lf::Error {
 }
 struct Fields {
     Vec<rstd::tuple<Arc<Exchange>, Dispatch>> queued;
-    bool                                      closed {}, finished {};
+    bool                                      closed {}, finished {}, cache_ready {};
+    Option<lf::Error>                         initialization_error;
     usize                                     handles { 1 };
 };
 struct BackendState {
@@ -90,6 +95,7 @@ struct BackendState {
     QSslConfiguration         ssl;
     QNetworkProxy             proxy;
     h::BackendIdentity        identity;
+    h::BackendCapabilities    capabilities;
     Dispatch                  dispatch;
     WebSocketService          websockets;
     rstd::sync::Mutex<Fields> fields { Fields {} };
@@ -112,9 +118,10 @@ void fail_pending(const Arc<BackendState>& state, const lf::Error& error) {
     state->websockets.dispose();
     Vec<rstd::tuple<Arc<Exchange>, Dispatch>> queued;
     {
-        auto f    = state->fields.lock().unwrap();
-        f->closed = true;
-        queued    = rstd::move(f->queued);
+        auto f                  = state->fields.lock().unwrap();
+        f->closed               = true;
+        f->initialization_error = Some(error.clone());
+        queued                  = rstd::move(f->queued);
     }
     for (const auto& queued_exchange : queued) {
         auto& exchange = queued_exchange.get<0>();
@@ -168,7 +175,7 @@ struct Active {
     Arc<Exchange>           exchange;
     QPointer<QNetworkReply> reply;
     QPointer<UploadDevice>  upload;
-    bool                    head {}, deleting {};
+    bool                    head {}, deleting {}, readable {};
     Dispatch                dispatch;
     u64                     received {};
     Option<u64>             length;
@@ -176,11 +183,12 @@ struct Active {
         : exchange(rstd::move(exchange)), dispatch(rstd::move(dispatch)) {}
 };
 class Router : public QObject {
-    Arc<BackendState>      state_;
-    QNetworkAccessManager* manager_;
-    QEventLoop*            loop_;
-    Vec<Box<Active>>       active_;
-    void                   head(Active& active) {
+    Arc<BackendState>               state_;
+    QNetworkAccessManager*          manager_;
+    QEventLoop*                     loop_;
+    QPointer<QAbstractNetworkCache> cache_;
+    Vec<Box<Active>>                active_;
+    void                            head(Active& active) {
         if (active.head || ! active.reply) return;
         auto status = active.reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
         if (! status.isValid() || status.toInt() < 200) return;
@@ -228,7 +236,13 @@ class Router : public QObject {
         {
             auto f                = active.exchange->fields.lock().unwrap();
             f->trailers_available = ! headers.contains("transfer-encoding"_str);
-            f->head               = Some(lihttpto::ResponseHead {
+            bool cached =
+                active.reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool();
+            f->cache = cached ? h::CacheObservation { h::CacheOrigin::BackendCache,
+                                                      h::NetworkAccess::Unknown,
+                                                      h::CacheValidation::Unknown }
+                              : h::CacheObservation {};
+            f->head  = Some(lihttpto::ResponseHead {
                 rstd::move(parsed).unwrap(), rstd::move(headers), {}, {} });
         }
         active.exchange->notify();
@@ -273,8 +287,8 @@ class Router : public QObject {
         }
         head(active);
         unsigned batches {};
-        while (batches++ < 4 && active.head && reply->bytesAvailable() > 0 &&
-               active.exchange->incoming->available() > usize()) {
+        while (batches++ < 4 && active.head && (active.readable || reply->isFinished()) &&
+               reply->bytesAvailable() > 0 && active.exchange->incoming->available() > usize()) {
             auto maximum = rstd::min(active.exchange->incoming->available(), usize(16384));
             auto part    = reply->read(qint64(maximum.to_primitive()));
             if (part.isEmpty()) break;
@@ -288,8 +302,8 @@ class Router : public QObject {
                 return;
             }
         }
-        if (active.head && reply->bytesAvailable() > 0 &&
-            active.exchange->incoming->available() > usize())
+        if (active.head && (active.readable || reply->isFinished()) &&
+            reply->bytesAvailable() > 0 && active.exchange->incoming->available() > usize())
             active.dispatch.notify();
         if (active.upload) {
             auto readable = active.exchange->outgoing->readable();
@@ -310,6 +324,11 @@ class Router : public QObject {
         dispose(active);
     }
     void start(Arc<Exchange> exchange, Dispatch dispatch) {
+        if (state_->options.cache.is_some() && (! cache_ || manager_->cache() != cache_.data())) {
+            exchange->fail(lf::Error::Closed());
+            exchange->complete();
+            return;
+        }
         auto            active = Box<Active>::make(exchange.clone(), rstd::move(dispatch));
         auto&           parts  = exchange->prepared.parts();
         QNetworkRequest request(
@@ -318,9 +337,13 @@ class Router : public QObject {
         request.setSslConfiguration(state_->ssl);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                              QNetworkRequest::ManualRedirectPolicy);
+        bool native_cache = exchange->prepared.cache_directive() == h::CacheDirective::Default &&
+                            parts.method.as_ref() == "GET"_str &&
+                            exchange->prepared.upload().length == Some(u64());
         request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                             QNetworkRequest::AlwaysNetwork);
-        request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+                             native_cache ? QNetworkRequest::PreferNetwork
+                                          : QNetworkRequest::AlwaysNetwork);
+        request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, native_cache);
         request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
         request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
         request.setAttribute(QNetworkRequest::AuthenticationReuseAttribute,
@@ -343,6 +366,8 @@ class Router : public QObject {
         auto method = parts.method.as_ref();
         if (method == "HEAD"_str)
             active->reply = manager_->head(request);
+        else if (method == "GET"_str && exchange->prepared.upload().length == Some(u64()))
+            active->reply = manager_->get(request);
         else if (exchange->prepared.upload().length == Some(u64()))
             active->reply =
                 manager_->sendCustomRequest(request,
@@ -374,7 +399,11 @@ class Router : public QObject {
             exchange.get<0>()->notify();
         };
         QObject::connect(reply, &QNetworkReply::metaDataChanged, this, wake);
-        QObject::connect(reply, &QNetworkReply::readyRead, this, wake);
+        // Cached data can be visible before Qt starts its completion flow.
+        QObject::connect(reply, &QNetworkReply::readyRead, this, [active = &*active, wake] {
+            active->readable = true;
+            wake();
+        });
         QObject::connect(reply, &QNetworkReply::finished, this, wake);
         QObject::connect(
             reply, &QNetworkReply::errorOccurred, this, [wake](QNetworkReply::NetworkError) {
@@ -387,6 +416,13 @@ class Router : public QObject {
 public:
     Router(Arc<BackendState> state, QNetworkAccessManager* manager, QEventLoop* loop)
         : QObject(manager), state_(rstd::move(state)), manager_(manager), loop_(loop) {
+        cache_                                      = manager->cache();
+        state_->fields.lock().unwrap()->cache_ready = ! cache_.isNull();
+        if (state_->options.cache.is_some() && cache_) {
+            QObject::connect(cache_, &QObject::destroyed, this, [this] {
+                stop(state_);
+            });
+        }
         auto holder = make_clone_tuple(state_.clone());
         QObject::connect(this, &QObject::destroyed, [holder] {
             auto state                              = holder.get<0>().clone();
@@ -479,6 +515,25 @@ struct Worker {
             QEventLoop            loop;
             QNetworkAccessManager manager;
             manager.setProxy(state->proxy);
+            if (state->options.cache.is_some()) {
+                const auto& options   = state->options.cache->as_Disk().options;
+                auto        directory = QString::fromUtf8(
+                    reinterpret_cast<const char*>(options.directory.as_str().data()),
+                    qsizetype(options.directory.len().to_primitive()));
+                {
+                    QTemporaryFile probe(QDir(directory).filePath(".ncrequest-XXXXXX"));
+                    if (! QDir().mkpath(directory) || ! probe.open()) {
+                        auto error =
+                            lf::Error::InvalidOptions("Qt cache directory is not writable"_Str);
+                        fail_pending(state, error);
+                        return lf::Result<empty>(Err(rstd::move(error)));
+                    }
+                }
+                auto* cache = new QNetworkDiskCache(&manager);
+                cache->setCacheDirectory(directory);
+                cache->setMaximumCacheSize(options.maximum_bytes.to_primitive());
+                manager.setCache(cache);
+            }
             {
                 Router router(state.clone(), &manager, &loop);
                 loop.exec();
@@ -606,6 +661,19 @@ auto Backend::make(lf::ResourceContext resources, Options options) -> lf::Result
         return Err(lf::Error::InvalidOptions("invalid Qt limits"_Str));
     if (options.manager && options.manager->thread() != QThread::currentThread())
         return Err(lf::Error::InvalidOptions("create Qt backend on the manager thread"_Str));
+    if (options.cache.is_some()) {
+        if (options.cache->is_Existing() && (! options.manager || ! options.manager->cache()))
+            return Err(lf::Error::InvalidOptions(
+                "Qt Existing cache requires a configured external manager"_Str));
+        if (options.cache->is_Existing() &&
+            options.manager->cache()->thread() != QThread::currentThread())
+            return Err(lf::Error::InvalidOptions("Qt cache must belong to the manager thread"_Str));
+        if (options.cache->is_Disk() &&
+            (options.manager || options.cache->as_Disk().options.directory.is_empty() ||
+             options.cache->as_Disk().options.maximum_bytes <= i64()))
+            return Err(lf::Error::InvalidOptions(
+                "Qt Disk cache requires an internal manager, directory and positive capacity"_Str));
+    }
     auto tcp = options.tcp.validate({});
     if (tcp.is_err()) return Err(rstd::move(tcp).unwrap_err());
     if (options.low_speed.is_some())
@@ -626,6 +694,20 @@ auto Backend::make(lf::ResourceContext resources, Options options) -> lf::Result
     auto* manager = options.manager;
     auto  state   = Arc<BackendState>::make(
         rstd::move(options), rstd::move(tls).unwrap(), rstd::move(native_proxy));
+    bool ssl            = QSslSocket::supportsSsl();
+    state->capabilities = { .http1            = true,
+                            .https            = ssl,
+                            .tls_custom_ca    = ssl,
+                            .tls_identity     = ssl,
+                            .tls_verification = ssl,
+                            .proxy            = proxy_capabilities() };
+    if (state->options.cache.is_some())
+        state->capabilities.cache = { .provider            = h::CacheProvider::Backend,
+                                      .configured          = true,
+                                      .default_mode        = true,
+                                      .isolation           = h::CacheIsolation::Manager,
+                                      .network_observation = false,
+                                      .commit              = h::CacheCommit::BackendCompletion };
     auto attached = resources.attach(
         empty {}, Arc<rstd::dyn<lf::ManagedResource>>::make(Owner { state.clone() }));
     if (attached.is_err()) return Err(rstd::move(attached).unwrap_err().error);
@@ -646,16 +728,26 @@ auto Backend::owned_binding() const -> ncrequest::BackendBinding {
     return ncrequest::BackendBinding::Owned(backend(), Some(state_->websockets.backend()));
 }
 auto Backend::capabilities() const -> h::BackendCapabilities {
-    return { .http1            = true,
-             .https            = QSslSocket::supportsSsl(),
-             .tls_custom_ca    = QSslSocket::supportsSsl(),
-             .tls_identity     = QSslSocket::supportsSsl(),
-             .tls_verification = QSslSocket::supportsSsl(),
-             .proxy            = proxy_capabilities() };
+    auto caps = state_->capabilities;
+    if (caps.cache.configured) {
+        auto fields          = state_->fields.lock().unwrap();
+        caps.cache.readiness = fields->initialization_error.is_some() ? h::CacheReadiness::Failed
+                               : fields->closed                       ? h::CacheReadiness::Closed
+                               : fields->cache_ready ? h::CacheReadiness::Ready
+                                                     : h::CacheReadiness::Initializing;
+    }
+    return caps;
 }
-auto Backend::prepare(lihttpto::RequestParts p, h::UploadMetadata u, h::RouteChoice r) const
-    -> lf::Result<h::PreparedExchange> {
-    if (state_->fields.lock().unwrap()->closed) return Err(lf::Error::Closed());
+auto Backend::prepare(lihttpto::RequestParts p, h::UploadMetadata u, h::RouteChoice r,
+                      h::CacheDirective directive) const -> lf::Result<h::PreparedExchange> {
+    {
+        auto fields = state_->fields.lock().unwrap();
+        if (fields->initialization_error.is_some())
+            return Err(fields->initialization_error->clone());
+        if (fields->closed) return Err(lf::Error::Closed());
+    }
+    auto cached = capabilities().validate_cache(directive, p, u);
+    if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
     auto supported = capabilities().validate(p, u, r);
     if (supported.is_err()) return Err(rstd::move(supported).unwrap_err());
     auto proxy = state_->options.proxy.select(p.url);
@@ -664,7 +756,8 @@ auto Backend::prepare(lihttpto::RequestParts p, h::UploadMetadata u, h::RouteCho
                                      rstd::move(p),
                                      rstd::move(u),
                                      rstd::move(r),
-                                     state_->options.head_limit);
+                                     state_->options.head_limit,
+                                     directive);
     if (prepared.is_ok()) prepared->set_proxy(rstd::move(proxy).unwrap());
     return prepared;
 }
@@ -672,6 +765,11 @@ auto Backend::operation(h::ExchangeInput input) const
     -> rstd::Result<lf::PreparedOperation<h::ResponseMessage>, lf::Rejected<h::ExchangeInput>> {
     if (state_->fields.lock().unwrap()->closed)
         return Err(lf::Rejected<h::ExchangeInput> { lf::Error::Closed(), rstd::move(input) });
+    auto cached = capabilities().validate_cache(
+        input.prepared.cache_directive(), input.prepared.parts(), input.prepared.upload());
+    if (cached.is_err())
+        return Err(
+            lf::Rejected<h::ExchangeInput> { rstd::move(cached).unwrap_err(), rstd::move(input) });
     if (! input.prepared.backend_identity().matches(state_->identity))
         return Err(lf::Rejected<h::ExchangeInput> {
             lf::Error::InvalidOptions("exchange belongs to another backend"_Str),

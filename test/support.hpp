@@ -95,7 +95,7 @@ struct Driver {
 struct Backend {
     Script             script;
     h::BackendIdentity identity;
-    auto prepare(lihttpto::RequestParts parts, h::UploadMetadata upload, h::RouteChoice route) const
+    auto prepare(lihttpto::RequestParts parts, h::UploadMetadata upload, h::RouteChoice route, h::CacheDirective directive) const
         -> lf::Result<h::PreparedExchange> {
         ++script->lock().unwrap()->prepared;
         auto parsed = lihttpto::PreparedRequest::make(
@@ -109,7 +109,7 @@ struct Backend {
                                             identity.clone(),
                                             rstd::move(upload),
                                             rstd::move(route),
-                                            rstd::move(cache)));
+                                            rstd::move(cache), directive));
     }
     auto operation(h::ExchangeInput input) const
         -> rstd::Result<lf::PreparedOperation<h::ResponseMessage>, lf::Rejected<h::ExchangeInput>> {
@@ -148,8 +148,8 @@ struct Impl<lifetchto::http::ExchangeBackend, test_http::Backend> : ImplBase<tes
         return { .http1 = true, .https = true, .unknown_upload_length = true, .upload_trailers = true, .response_trailers = true, .repeated_request_fields = true, .expect_continue = true };
     }
     auto prepare(lihttpto::RequestParts p, lifetchto::http::UploadMetadata u,
-                 lifetchto::http::RouteChoice r) const {
-        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r));
+                 lifetchto::http::RouteChoice r, lifetchto::http::CacheDirective directive) const {
+        return this->self().prepare(rstd::move(p), rstd::move(u), rstd::move(r), directive);
     }
     auto operation(lifetchto::http::ExchangeInput i) const {
         return this->self().operation(rstd::move(i));

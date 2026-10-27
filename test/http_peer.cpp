@@ -168,11 +168,11 @@ TEST(http, LocalHttpCacheAndRevalidation) {
         auto           cache   = h::MemoryCache::make(engine.resources()).unwrap();
         SessionOptions config;
         config.http.policy.cache = h::CacheMode::Default;
-        config.http.cache        = Some(h::StoreBinding::Shared(cache.store()));
-        auto session = Session::from_http_backend(engine.handle(),
-                                                  h::BackendBinding::Shared(backend.backend()),
-                                                  rstd::move(config))
-                           .unwrap();
+        config.http.cache = Some(h::CacheBinding::Store(h::StoreBinding::Shared(cache.store())));
+        auto session      = Session::from_http_backend(engine.handle(),
+                                                       h::BackendBinding::Shared(backend.backend()),
+                                                       rstd::move(config))
+                                .unwrap();
         for (int i = 0; i < 2; ++i) {
             auto value = (co_await response(*session, peer_request("/cache"_str))).unwrap();
             EXPECT_EQ(value->from_cache(), i != 0);

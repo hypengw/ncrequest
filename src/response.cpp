@@ -117,12 +117,12 @@ auto ResponseBody::close() const -> coro<Arc<lifetchto::TransferReport>> {
     return completion().close();
 }
 Response::Response(ConstructionKey, lihttpto::ResponseHead head, lihttpto::RequestParts request,
-                   ResponseTiming timing, bool cached, lifetchto::http::ExecutionObserver execution,
-                   ResponseBody body)
+                   ResponseTiming timing, lifetchto::http::CacheObservation cache,
+                   lifetchto::http::ExecutionObserver execution, ResponseBody body)
     : head_(rstd::move(head)),
       request_(rstd::move(request)),
       timing_(timing),
-      cached_(cached),
+      cache_(cache),
       execution_(rstd::move(execution)),
       completion_(body.completion()),
       body_(Some(rstd::move(body))) {}
@@ -136,7 +136,7 @@ auto Response::make(lifetchto::Transfer<lifetchto::http::ResponseMessage> transf
                                rstd::move(message.head),
                                facts.request.take().unwrap(),
                                ResponseTiming { facts.started, facts.head_received },
-                               facts.from_cache,
+                               message.cache,
                                rstd::move(execution),
                                rstd::move(body));
 }

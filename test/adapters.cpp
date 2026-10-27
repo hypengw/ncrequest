@@ -356,8 +356,8 @@ auto exercise_cookies(rstd::async::RuntimeHandle runtime) -> coro<empty> {
     auto           jar     = CookieJar::make().unwrap();
     auto           cache   = h::MemoryCache::make(engine.resources()).unwrap();
     SessionOptions options;
-    options.http.cookies         = Some(CookieBinding::Shared(jar.jar()));
-    options.http.cache           = Some(h::StoreBinding::Shared(cache.store()));
+    options.http.cookies = Some(CookieBinding::Shared(jar.jar()));
+    options.http.cache   = Some(h::CacheBinding::Store(h::StoreBinding::Shared(cache.store())));
     options.http.store_failure   = h::StoreFailure::Fail;
     options.http.policy.cache    = h::CacheMode::Default;
     options.http.policy.redirect = Some(h::RedirectPolicy {});
