@@ -23,7 +23,7 @@ public:
         return QNetworkAccessManager::createRequest(operation, request, body);
     }
 };
-auto receive(qt::ResourceRequest& request) -> bool {
+auto receive(qt::ResourceRequest& request, bool* cached = nullptr) -> bool {
     auto* reply = request.open();
     if (! reply) return false;
     QEventLoop loop;
@@ -33,6 +33,7 @@ auto receive(qt::ResourceRequest& request) -> bool {
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     timer.start(3000);
     if (! reply->isFinished()) loop.exec();
+    if (cached) *cached = reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool();
     return reply->isFinished() && reply->error() == QNetworkReply::NoError &&
            reply->readAll() == "cache-body";
 }
@@ -147,5 +148,75 @@ TEST(AdapterPeer, QtNativeCacheResourceMetadata) {
     EXPECT_TRUE(! replacedLease.reusable());
     auto unsupported = acquire("/resource/replace");
     EXPECT_TRUE(receive(unsupported) && ! unsupported.snapshot().reusable());
+}
+TEST(AdapterPeer, QtNativeCacheResourceAllOrigins) {
+    auto* base   = std::getenv("NCREQUEST_QT_CACHE_URL");
+    auto* second = std::getenv("NCREQUEST_QT_RESOURCE_SECOND_URL");
+    if (! base || ! second) GTEST_SKIP();
+    QTemporaryDir directory;
+    const QUrl    firstUrl(QString::fromUtf8(base) + "/resource/all-origins-first");
+    const QUrl    secondUrl(QString::fromUtf8(second) + "/resource/all-origins-second");
+    EXPECT_TRUE(firstUrl.port() != secondUrl.port());
+    {
+        ResourceManager   manager;
+        qt::ResourceCache resources(&manager);
+        auto* disk = resources.install_disk_cache(directory.path() + "/disabled", 1024 * 1024);
+        ASSERT_TRUE(disk != nullptr);
+        const QUrl url(QString::fromUtf8(base) + "/resource/default-disabled");
+        for (int i = 0; i < 2; ++i) {
+            auto request = resources.acquire(QNetworkRequest(url));
+            bool cached {};
+            EXPECT_TRUE(receive(request, &cached));
+            EXPECT_TRUE(! cached && ! request.snapshot().reusable());
+        }
+        EXPECT_TRUE(! disk->metaData(url).isValid());
+    }
+    for (int generation = 0; generation < 2; ++generation) {
+        ResourceManager     manager;
+        qt::ResourceOptions options;
+        options.all_origins = true;
+        options.excluded_response_headers.append("X-Local-Resource");
+        qt::ResourceCache resources(&manager, options);
+        auto* disk = resources.install_disk_cache(directory.path() + "/all", 1024 * 1024);
+        ASSERT_TRUE(disk != nullptr);
+        for (const auto& url : { firstUrl, secondUrl }) {
+            auto request = resources.acquire(QNetworkRequest(url));
+            EXPECT_TRUE(! request.snapshot().fresh());
+            bool cached {};
+            EXPECT_TRUE(receive(request, &cached));
+            EXPECT_TRUE(cached == (generation != 0));
+            EXPECT_TRUE(request.snapshot().fresh());
+            auto identity = request.snapshot().identity();
+            auto hit      = resources.acquire(QNetworkRequest(url));
+            EXPECT_TRUE(hit.snapshot().fresh() && hit.snapshot().identity() == identity);
+            EXPECT_TRUE(receive(hit, &cached) && cached);
+        }
+        if (generation != 0) continue;
+        for (const auto* path :
+             { "/resource/all/no-store", "/resource/all/no-cache", "/resource/all/local" }) {
+            for (int i = 0; i < 2; ++i) {
+                auto request =
+                    resources.acquire(QNetworkRequest(QUrl(QString::fromUtf8(base) + path)));
+                bool cached {};
+                EXPECT_TRUE(receive(request, &cached));
+                EXPECT_TRUE(! cached && ! request.snapshot().fresh());
+            }
+        }
+        for (const auto* header : { "Authorization", "Cookie" }) {
+            const QUrl url(QString::fromUtf8(base) + "/resource/all/" +
+                           QString::fromLatin1(header).toLower());
+            for (int i = 0; i < 2; ++i) {
+                QNetworkRequest input(url);
+                input.setRawHeader(header, "test");
+                auto request = resources.acquire(input);
+                bool cached {};
+                EXPECT_TRUE(receive(request, &cached));
+                EXPECT_TRUE(! cached && ! request.snapshot().reusable());
+            }
+            EXPECT_TRUE(! disk->metaData(url).isValid());
+        }
+        auto data = resources.acquire(QNetworkRequest(QUrl("data:text/plain,cache-body")));
+        EXPECT_TRUE(receive(data) && ! data.snapshot().reusable());
+    }
 }
 #endif

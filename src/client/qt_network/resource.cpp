@@ -170,6 +170,8 @@ public:
     }
     bool permitted(const QNetworkRequest& request) const {
         if (! manager || ! disk || manager->cache() != disk) return false;
+        const auto scheme = request.url().scheme();
+        if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) return false;
         if (! request.url().userInfo().isEmpty()) return false;
         if (request.hasRawHeader("Authorization") || request.hasRawHeader("Cookie") ||
             request.hasRawHeader("Range") || request.hasRawHeader("If-None-Match") ||
@@ -185,6 +187,7 @@ public:
             return false;
         auto load = request.attribute(QNetworkRequest::CacheLoadControlAttribute);
         if (load.isValid() && load.toInt() == QNetworkRequest::AlwaysNetwork) return false;
+        if (options.all_origins) return true;
         for (const auto& allowed : options.origins)
             if (origin(request.url()) == origin(allowed)) return true;
         return false;

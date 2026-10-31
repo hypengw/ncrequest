@@ -90,8 +90,14 @@ server.daemon_threads = True
 server.events = []
 server.lock = threading.Lock()
 threading.Thread(target=server.serve_forever, daemon=True).start()
+second = ThreadingHTTPServer(('127.0.0.1', 0), Peer)
+second.daemon_threads = True
+second.events = server.events
+second.lock = server.lock
+threading.Thread(target=second.serve_forever, daemon=True).start()
 try:
     env = dict(os.environ, NCREQUEST_QT_CACHE_URL=f'http://127.0.0.1:{server.server_port}',
+               NCREQUEST_QT_RESOURCE_SECOND_URL=f'http://127.0.0.1:{second.server_port}',
                NCREQUEST_QT_CACHE_DIR=str(a.work_dir.resolve()))
     with (a.work_dir / 'test.log').open('w') as log:
         result = subprocess.run([str(a.binary.resolve()), '--gtest_filter=HttpCache.Native*:AdapterPeer.QtNativeCache*'], env=env, stdout=log, stderr=subprocess.STDOUT, timeout=60)
@@ -105,7 +111,11 @@ try:
                 '/external/chunked': 1, '/external/no-store': 2, '/external/truncated': 2,
                 '/external/bypass': 2, '/external/disabled': 2,
                 '/external/commit': 1, '/external/cancel': 2, '/external/store': 1, '/external/set-cookie': 1, '/external/vary': 1, '/external/head': 2, '/external/retry': 2,
-                '/internal/persist': 1, '/failure/cache': 2, '/capacity/cache': 2}
+                '/internal/persist': 1, '/failure/cache': 2, '/capacity/cache': 2,
+                '/resource/default-disabled': 2, '/resource/all-origins-first': 1,
+                '/resource/all-origins-second': 1, '/resource/all/no-store': 2,
+                '/resource/all/no-cache': 2, '/resource/all/local': 2,
+                '/resource/all/authorization': 2, '/resource/all/cookie': 2}
     for path, count in expected.items():
         assert counts[path] == count, (path, counts[path], count)
     assert not any('/rejected' in e['path'] for e in server.events)
@@ -122,5 +132,7 @@ try:
     resource_stale = [e for e in server.events if e['path'] == '/resource/stale']
     assert resource_stale[1]['headers']['If-None-Match'] == '"version-1"', resource_stale
 finally:
+    second.shutdown()
+    second.server_close()
     server.shutdown()
     server.server_close()

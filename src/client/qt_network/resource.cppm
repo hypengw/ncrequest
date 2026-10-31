@@ -19,7 +19,9 @@ struct ResourceOptions {
     QList<QByteArray> excluded_response_headers;
     qint64            fallback_seconds {};
     qsizetype         maximum_entries { 256 };
-    auto              operator==(const ResourceOptions&) const -> bool = default;
+    // Callers guarantee fixed request variants for every HTTP(S) origin.
+    bool all_origins {};
+    auto operator==(const ResourceOptions&) const -> bool = default;
 };
 class ResourceSnapshot {
     QSharedPointer<ResourceRecord> record_;
