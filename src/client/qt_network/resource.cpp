@@ -15,6 +15,9 @@ module;
 #include <QNetworkCookie>
 #include <QSharedPointer>
 #include <QList>
+#include <QQueue>
+#include <QSet>
+#include <list>
 #include <memory>
 #include <functional>
 #include <algorithm>
@@ -34,7 +37,8 @@ struct ResourceRecord {
     QPointer<QNetworkAccessManager> manager;
     QString                         key;
     QUrl                            url;
-    QString identity { QStringLiteral("ncrequest-resource:%1").arg(next_resource.fetch_add(1)) };
+    const quint64                   revision { next_resource.fetch_add(1) };
+    QString               identity { QStringLiteral("ncrequest-resource:%1").arg(revision) };
     lihttpto::CachePolicy policy;
     QDeadlineTimer        deadline { 0, Qt::PreciseTimer };
     bool                  allowed {}, ready {}, invalid {};
@@ -113,6 +117,7 @@ ResourceSnapshot::ResourceSnapshot(QSharedPointer<ResourceRecord> record)
 auto ResourceSnapshot::identity() const -> QString {
     return record_ ? record_->identity : QString();
 }
+auto ResourceSnapshot::revision() const -> quint64 { return record_ ? record_->revision : 0; }
 auto ResourceSnapshot::reusable() const -> bool {
     return record_ && record_->allowed && record_->ready && ! record_->invalid &&
            record_->manager && record_->manager->cookieJar()->cookiesForUrl(record_->url).isEmpty();
@@ -132,15 +137,24 @@ public:
         QPointer<QObject>                receiver;
         std::function<void(const QUrl&)> callback;
     };
+    struct Entry {
+        QSharedPointer<ResourceRecord> record;
+        std::list<QString>::iterator   position;
+    };
     ResourceCache*                                         owner;
     QPointer<QNetworkAccessManager>                        manager;
     QPointer<QNetworkDiskCache>                            disk;
     ResourceOptions                                        options;
-    QHash<QString, QSharedPointer<ResourceRecord>>         entries;
+    QHash<QString, Entry>                                  entries;
+    std::list<QString>                                     recency;
+    QHash<QString, QWeakPointer<ResourceRecord>>           live;
+    QQueue<QString>                                        sweeping;
+    QSet<QString>                                          queued;
     QHash<QNetworkReply*, QWeakPointer<ResourceOperation>> operations;
     QList<Observer>                                        observers;
     QList<QSharedPointer<Parsed>>                          parsed;
     quint64                                                epoch {};
+    ResourceStatistics                                     counts;
     Private(ResourceCache* owner, QNetworkAccessManager* manager, ResourceOptions options)
         : owner(owner), manager(manager), options(std::move(options)) {}
     auto policy(const QHttpHeaders& headers, qint64 requested, qint64 received,
@@ -197,12 +211,47 @@ public:
             if (headers.contains(name)) return false;
         return true;
     }
-    void trim() {
-        while (entries.size() > qMax<qsizetype>(0, options.maximum_entries)) {
-            auto it             = entries.begin();
-            it.value()->invalid = true;
-            entries.erase(it);
+    void prune() {
+        const auto count = qMin<qsizetype>(8, sweeping.size());
+        for (qsizetype i = 0; i < count; ++i) {
+            auto name = sweeping.dequeue();
+            auto it   = live.find(name);
+            if (it == live.end() || it.value().isNull()) {
+                if (it != live.end()) live.erase(it);
+                queued.remove(name);
+            } else {
+                sweeping.enqueue(std::move(name));
+            }
         }
+    }
+    void remember(const QSharedPointer<ResourceRecord>& record) {
+        live.insert(record->key, record.toWeakRef());
+        if (! queued.contains(record->key)) {
+            queued.insert(record->key);
+            sweeping.enqueue(record->key);
+        }
+    }
+    void index(const QSharedPointer<ResourceRecord>& record) {
+        if (options.maximum_entries <= 0) return;
+        auto found = entries.find(record->key);
+        if (found == entries.end()) {
+            recency.push_back(record->key);
+            entries.insert(record->key, { record, std::prev(recency.end()) });
+        } else {
+            found->record = record;
+            recency.splice(recency.end(), recency, found->position);
+        }
+        while (entries.size() > qMax<qsizetype>(0, options.maximum_entries)) {
+            entries.remove(recency.front());
+            recency.pop_front();
+            ++counts.index_evictions;
+        }
+    }
+    void remove_index(const QString& name) {
+        auto found = entries.find(name);
+        if (found == entries.end()) return;
+        recency.erase(found->position);
+        entries.erase(found);
     }
     void headers(const QSharedPointer<ResourceOperation>& op) {
         if (! op->reply || op->discarded || op->epoch != epoch) return;
@@ -235,11 +284,17 @@ public:
             record->ready    = true;
             op->reusing      = true;
         }
-        auto prior = entries.value(record->key);
+        auto prior = live.value(record->key).toStrongRef();
         if (prior && prior != record) prior->invalid = true;
         op->selected = record;
-        if (record->allowed) entries.insert(record->key, record);
-        trim();
+        if (record->allowed) {
+            remember(record);
+            index(record);
+        } else {
+            live.remove(record->key);
+            remove_index(record->key);
+        }
+        prune();
     }
     auto open(const QSharedPointer<ResourceOperation>& op) -> QNetworkReply* {
         if (op->started) return op->reply;
@@ -252,7 +307,8 @@ public:
                                  QNetworkRequest::AlwaysNetwork);
             request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
         }
-        op->reply   = manager->get(request);
+        op->reply = manager->get(request);
+        ++counts.opened;
         auto* reply = op->reply.data();
         operations.insert(reply, op.toWeakRef());
         auto weak = op.toWeakRef();
@@ -272,12 +328,14 @@ public:
         operations.erase(it);
         if (! op) return;
         op->done = true;
+        if (reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool())
+            ++counts.cache_results;
         headers(op);
         if (! op->selected) return;
         auto record = op->selected;
         if (op->discarded || op->epoch != epoch ||
             (! op->reusing && reply->error() != QNetworkReply::NoError) ||
-            entries.value(record->key) != record) {
+            live.value(record->key).toStrongRef() != record) {
             record->invalid = true;
             return;
         }
@@ -342,12 +400,18 @@ auto ResourceCache::get(QNetworkAccessManager* manager) -> ResourceCache* {
 }
 void ResourceCache::invalidate(const QUrl& url) {
     if (url.isEmpty()) ++d_->epoch;
-    for (auto it = d_->entries.begin(); it != d_->entries.end();) {
-        if (url.isEmpty() || it.value()->url == url) {
-            it.value()->invalid = true;
-            it                  = d_->entries.erase(it);
+    for (auto it = d_->live.begin(); it != d_->live.end();) {
+        auto record = it.value().toStrongRef();
+        if (! record || url.isEmpty() || record->url == url) {
+            if (record) record->invalid = true;
+            d_->remove_index(it.key());
+            it = d_->live.erase(it);
         } else
             ++it;
+    }
+    if (url.isEmpty()) {
+        d_->sweeping.clear();
+        d_->queued.clear();
     }
     QList<QPointer<QNetworkReply>> cancelled;
     for (auto weak : d_->operations) {
@@ -389,12 +453,35 @@ void ResourceCache::configure(ResourceOptions options) {
     d_->options = std::move(options);
 }
 auto ResourceCache::acquire(QNetworkRequest request) -> ResourceRequest {
+    ++d_->counts.acquisitions;
+    d_->prune();
     auto op     = QSharedPointer<ResourceOperation>::create();
     op->owner   = this;
     op->request = std::move(request);
     op->epoch   = d_->epoch;
-    if (d_->permitted(op->request)) op->prior = d_->entries.value(key(op->request));
+    if (d_->permitted(op->request)) {
+        const auto name    = key(op->request);
+        auto       indexed = d_->entries.find(name);
+        if (indexed != d_->entries.end()) {
+            op->prior = indexed->record;
+            ++d_->counts.metadata_hits;
+        } else {
+            op->prior = d_->live.value(name).toStrongRef();
+            if (op->prior) ++d_->counts.retained_hits;
+        }
+        if (op->prior) {
+            d_->index(op->prior);
+            if (ResourceSnapshot(op->prior).fresh()) ++d_->counts.fresh_hits;
+        }
+    }
     return ResourceRequest(std::move(op));
+}
+auto ResourceCache::statistics() const -> ResourceStatistics {
+    auto result            = d_->counts;
+    result.indexed_entries = d_->entries.size();
+    for (const auto& weak : d_->live)
+        if (! weak.isNull()) ++result.live_entries;
+    return result;
 }
 auto ResourceCache::install_disk_cache(QString directory, qint64 maximum_bytes)
     -> QNetworkDiskCache* {

@@ -57,12 +57,15 @@ TEST(AdapterPeer, QtNativeCacheResourceMetadata) {
     };
     auto fresh = acquire("/resource/fresh");
     EXPECT_TRUE(! fresh.snapshot().fresh());
+    EXPECT_TRUE(fresh.snapshot().revision() == 0);
     EXPECT_TRUE(receive(fresh));
     auto identity = fresh.snapshot().identity();
     EXPECT_TRUE(fresh.snapshot().fresh());
+    EXPECT_TRUE(fresh.snapshot().revision() > 0);
     const auto requests = manager.requests;
     auto       hit      = acquire("/resource/fresh");
     EXPECT_TRUE(hit.snapshot().fresh() && hit.snapshot().identity() == identity);
+    EXPECT_TRUE(hit.snapshot().revision() == fresh.snapshot().revision());
     EXPECT_TRUE(manager.requests == requests);
     disk->remove(QUrl(QString::fromUtf8(base) + "/resource/fresh"));
     EXPECT_TRUE(hit.snapshot().fresh());
@@ -77,6 +80,7 @@ TEST(AdapterPeer, QtNativeCacheResourceMetadata) {
     auto validated     = acquire("/resource/stale");
     EXPECT_TRUE(receive(validated));
     EXPECT_TRUE(validated.snapshot().identity() == staleIdentity);
+    EXPECT_TRUE(validated.snapshot().revision() > stale.snapshot().revision());
     EXPECT_TRUE(validated.snapshot().fresh());
 
     auto changing = acquire("/resource/changing");
@@ -84,6 +88,7 @@ TEST(AdapterPeer, QtNativeCacheResourceMetadata) {
     auto old     = changing.snapshot().identity();
     auto changed = acquire("/resource/changing");
     EXPECT_TRUE(receive(changed) && changed.snapshot().identity() != old);
+    EXPECT_TRUE(changed.snapshot().revision() > changing.snapshot().revision());
     for (auto path : { "/resource/no-store",
                        "/resource/no-cache",
                        "/resource/expired",
@@ -218,5 +223,145 @@ TEST(AdapterPeer, QtNativeCacheResourceAllOrigins) {
         auto data = resources.acquire(QNetworkRequest(QUrl("data:text/plain,cache-body")));
         EXPECT_TRUE(receive(data) && ! data.snapshot().reusable());
     }
+}
+TEST(AdapterPeer, QtNativeCacheResourceLru) {
+    auto* base = std::getenv("NCREQUEST_QT_CACHE_URL");
+    if (! base) GTEST_SKIP();
+    ResourceManager     manager;
+    qt::ResourceOptions options;
+    options.all_origins     = true;
+    options.maximum_entries = 2;
+    qt::ResourceCache resources(&manager, options);
+    QTemporaryDir     directory;
+    ASSERT_TRUE(resources.install_disk_cache(directory.path(), 1024 * 1024));
+    auto acquire = [&](const char* path) {
+        return resources.acquire(QNetworkRequest(QUrl(QString::fromUtf8(base) + path)));
+    };
+    QString firstIdentity;
+    {
+        auto first = acquire("/resource/lru/first");
+        ASSERT_TRUE(receive(first));
+        firstIdentity = first.snapshot().identity();
+    }
+    {
+        auto second = acquire("/resource/lru/second");
+        ASSERT_TRUE(receive(second));
+    }
+    EXPECT_TRUE(acquire("/resource/lru/first").snapshot().identity() == firstIdentity);
+    {
+        auto third = acquire("/resource/lru/third");
+        ASSERT_TRUE(receive(third));
+    }
+    EXPECT_TRUE(acquire("/resource/lru/first").snapshot().identity() == firstIdentity);
+    EXPECT_TRUE(! acquire("/resource/lru/second").snapshot().fresh());
+    EXPECT_TRUE(manager.requests == 3);
+    auto stats = resources.statistics();
+    EXPECT_TRUE(stats.indexed_entries == 2 && stats.live_entries == 2);
+    EXPECT_TRUE(stats.index_evictions == 1 && stats.metadata_hits == 2 && stats.fresh_hits == 2);
+    auto second = acquire("/resource/lru/second");
+    bool cached {};
+    EXPECT_TRUE(receive(second, &cached) && cached);
+    stats = resources.statistics();
+    EXPECT_TRUE(stats.opened == 4 && stats.cache_results == 1);
+}
+TEST(AdapterPeer, QtNativeCacheResourceRetainedMetadata) {
+    auto* base = std::getenv("NCREQUEST_QT_CACHE_URL");
+    if (! base) GTEST_SKIP();
+    ResourceManager     manager;
+    qt::ResourceOptions options;
+    options.all_origins     = true;
+    options.maximum_entries = 1;
+    qt::ResourceCache resources(&manager, options);
+    QTemporaryDir     directory;
+    ASSERT_TRUE(resources.install_disk_cache(directory.path(), 1024 * 1024));
+    auto url = [&](const char* path) {
+        return QUrl(QString::fromUtf8(base) + path);
+    };
+    auto acquire = [&](const char* path) {
+        return resources.acquire(QNetworkRequest(url(path)));
+    };
+    qt::ResourceSnapshot retained;
+    {
+        auto first = acquire("/resource/retained/first");
+        ASSERT_TRUE(receive(first));
+        retained = first.snapshot();
+    }
+    qt::ResourceSnapshot secondSnapshot;
+    {
+        auto second = acquire("/resource/retained/second");
+        ASSERT_TRUE(receive(second));
+        secondSnapshot = second.snapshot();
+    }
+    const auto requests = manager.requests;
+    const auto identity = retained.identity();
+    EXPECT_TRUE(retained.fresh());
+    EXPECT_TRUE(acquire("/resource/retained/first").snapshot().identity() == identity);
+    EXPECT_TRUE(manager.requests == requests);
+    auto stats = resources.statistics();
+    EXPECT_TRUE(stats.indexed_entries == 1 && stats.live_entries == 2);
+    EXPECT_TRUE(stats.retained_hits == 1 && stats.fresh_hits == 1);
+    resources.invalidate(url("/resource/retained/second"));
+    EXPECT_TRUE(! secondSnapshot.reusable() && retained.fresh());
+    resources.clear();
+    EXPECT_TRUE(! retained.reusable());
+
+    qt::ResourceSnapshot staleSnapshot;
+    {
+        auto stale = acquire("/resource/retained/stale");
+        ASSERT_TRUE(receive(stale));
+        staleSnapshot = stale.snapshot();
+        EXPECT_TRUE(staleSnapshot.reusable() && ! staleSnapshot.fresh());
+    }
+    {
+        auto other = acquire("/resource/retained/other");
+        ASSERT_TRUE(receive(other));
+    }
+    auto validated = acquire("/resource/retained/stale");
+    EXPECT_TRUE(receive(validated));
+    EXPECT_TRUE(validated.snapshot().fresh());
+    EXPECT_TRUE(validated.snapshot().identity() == staleSnapshot.identity());
+    EXPECT_TRUE(! staleSnapshot.reusable());
+
+    qt::ResourceSnapshot replaced;
+    {
+        auto changing = acquire("/resource/retained/changing");
+        ASSERT_TRUE(receive(changing));
+        replaced = changing.snapshot();
+    }
+    {
+        auto other = acquire("/resource/retained/other");
+        ASSERT_TRUE(receive(other));
+    }
+    auto changed = acquire("/resource/retained/changing");
+    EXPECT_TRUE(receive(changed));
+    EXPECT_TRUE(changed.snapshot().identity() != replaced.identity());
+    EXPECT_TRUE(! replaced.reusable());
+}
+TEST(AdapterPeer, QtNativeCacheResourceZeroIndexAndDestruction) {
+    auto* base = std::getenv("NCREQUEST_QT_CACHE_URL");
+    if (! base) GTEST_SKIP();
+    ResourceManager     manager;
+    qt::ResourceOptions options;
+    options.all_origins     = true;
+    options.maximum_entries = 0;
+    QTemporaryDir        directory;
+    qt::ResourceSnapshot retained;
+    const QUrl           url(QString::fromUtf8(base) + "/resource/retained/zero-index");
+    {
+        qt::ResourceCache resources(&manager, options);
+        ASSERT_TRUE(resources.install_disk_cache(directory.path(), 1024 * 1024));
+        {
+            auto first = resources.acquire(QNetworkRequest(url));
+            ASSERT_TRUE(receive(first));
+            retained = first.snapshot();
+        }
+        EXPECT_TRUE(retained.fresh());
+        EXPECT_TRUE(resources.statistics().indexed_entries == 0);
+        EXPECT_TRUE(resources.acquire(QNetworkRequest(url)).snapshot().identity() ==
+                    retained.identity());
+        EXPECT_TRUE(resources.statistics().retained_hits == 1);
+        EXPECT_TRUE(resources.statistics().opened == 1 && manager.requests == 1);
+    }
+    EXPECT_TRUE(! retained.reusable());
 }
 #endif

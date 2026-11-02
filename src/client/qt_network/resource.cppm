@@ -23,6 +23,11 @@ struct ResourceOptions {
     bool all_origins {};
     auto operator==(const ResourceOptions&) const -> bool = default;
 };
+struct ResourceStatistics {
+    quint64   acquisitions {}, metadata_hits {}, retained_hits {}, fresh_hits {};
+    quint64   index_evictions {}, opened {}, cache_results {};
+    qsizetype indexed_entries {}, live_entries {};
+};
 class ResourceSnapshot {
     QSharedPointer<ResourceRecord> record_;
     friend class ResourceCache;
@@ -33,6 +38,7 @@ class ResourceSnapshot {
 public:
     ResourceSnapshot() = default;
     auto identity() const -> QString;
+    auto revision() const -> quint64;
     auto reusable() const -> bool;
     auto fresh() const -> bool;
 };
@@ -63,6 +69,7 @@ public:
     ~ResourceCache() override;
     static auto get(QNetworkAccessManager*) -> ResourceCache*;
     auto        acquire(QNetworkRequest) -> ResourceRequest;
+    auto        statistics() const -> ResourceStatistics;
     void        configure(ResourceOptions);
     void        invalidate(const QUrl& = {});
     void        clear();

@@ -131,6 +131,14 @@ try:
     assert counts['/resource/fallback'] == 1 and counts['/resource/stale'] == 2, counts
     resource_stale = [e for e in server.events if e['path'] == '/resource/stale']
     assert resource_stale[1]['headers']['If-None-Match'] == '"version-1"', resource_stale
+    for path in ('/resource/lru/first', '/resource/lru/second', '/resource/lru/third',
+                 '/resource/retained/first', '/resource/retained/second',
+                 '/resource/retained/other', '/resource/retained/zero-index'):
+        assert counts[path] == 1, (path, counts[path])
+    assert counts['/resource/retained/changing'] == 2, counts
+    retained_stale = [e for e in server.events if e['path'] == '/resource/retained/stale']
+    assert len(retained_stale) == 2, retained_stale
+    assert retained_stale[1]['headers']['If-None-Match'] == '"version-1"', retained_stale
 finally:
     second.shutdown()
     second.server_close()
