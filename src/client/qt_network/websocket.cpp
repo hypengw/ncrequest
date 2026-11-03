@@ -25,13 +25,13 @@ struct WsSend {
     CompletionHandle<WebSocketResult<empty>> waiter;
 };
 struct WsFields {
-    bool                              enqueued {}, connected {}, done {}, closing_native {};
-    Option<WebSocketError>            terminal;
-    Option<lf::Error>                 cause;
-    Option<String>                    protocol;
-    Vec<liwebsocketo::Message>        incoming;
-    usize                             bytes {}, retained_bytes {}, retained_messages {};
-    Option<ncrequest::WebSocketError> failure;
+    bool                               enqueued {}, connected {}, done {}, closing_native {};
+    Option<WebSocketError>             terminal;
+    Option<lf::Error>                  cause;
+    Option<String>                     protocol;
+    Vec<liwebsocketo::Message>         incoming;
+    usize                              bytes {}, retained_bytes {}, retained_messages {};
+    Option<ncrequest::WebSocketStatus> failure;
     Option<CompletionHandle<WebSocketResult<liwebsocketo::Message>>> receiver;
     Option<WsSend>                                                   sending;
     Option<CompletionHandle<WebSocketResult<empty>>>                 closing;
@@ -77,6 +77,13 @@ struct WsState {
         f.terminal = Some(error);
         if (cause.is_some()) f.cause = rstd::move(cause);
         if (error != WebSocketError::Closed && ! f.cause.is_some()) f.cause = Some(ws_error(error));
+        if (f.failure.is_none())
+            f.failure =
+                Some(ncrequest::WebSocketError(error == WebSocketError::Overflow
+                                                   ? ncrequest::WebSocketError::IncomingLimit
+                                                   : ncrequest::WebSocketError::Code(error))
+                         .status());
+        if (f.cause.is_some()) f.failure->diagnostic = Some(lf::report_failure(*f.cause));
         if (f.receiver.is_some()) (void)f.receiver.take()->complete(Err(error));
         if (f.sending.is_some()) (void)f.sending.take()->waiter.complete(Err(error));
         if (f.closing.is_some())
@@ -102,18 +109,23 @@ struct WsState {
         }
         notify();
     }
-    auto failure() const -> Option<ncrequest::WebSocketError> {
+    auto failure() const -> Option<ncrequest::WebSocketStatus> {
         auto f = fields.lock().unwrap();
-        if (f->failure.is_some()) return Some(f->failure->clone());
         if (f->terminal.is_none()) return None();
-        if (*f->terminal == WebSocketError::Overflow) {
-            auto error = ncrequest::WebSocketError(ncrequest::WebSocketError::IncomingLimit);
-            return f->cause.is_some() ? Some(rstd::move(error).with_cause(f->cause->clone()))
-                                      : Some(rstd::move(error));
-        }
-        auto error = ncrequest::WebSocketError(*f->terminal);
-        if (f->cause.is_some()) return Some(rstd::move(error).with_cause(f->cause->clone()));
-        return Some(rstd::move(error));
+        auto status =
+            f->failure.is_some()
+                ? f->failure->clone()
+                : (*f->terminal == WebSocketError::Overflow
+                       ? ncrequest::WebSocketError(ncrequest::WebSocketError::IncomingLimit)
+                             .status()
+                       : ncrequest::WebSocketError(*f->terminal).status());
+        return Some(rstd::move(status));
+    }
+    auto take_error() const -> Option<ncrequest::WebSocketError> {
+        auto status = failure();
+        auto f      = fields.lock().unwrap();
+        if (f->cause.is_none()) return None();
+        return Some(ncrequest::WebSocketError(*status).with_cause(f->cause.take().unwrap()));
     }
     void receive(liwebsocketo::Message message) {
         bool callback = false;
@@ -128,18 +140,21 @@ struct WsState {
                 f->failure =
                     Some(ncrequest::WebSocketError(ncrequest::WebSocketError::MessageTooLarge,
                                                    options.limits.message_bytes,
-                                                   message.data.len()));
+                                                   message.data.len())
+                             .status());
                 finish_locked(*f, WebSocketError::Overflow);
             } else {
                 bool count = f->incoming.len() + f->retained_messages >= options.receive_messages;
                 bool bytes = message.data.len() > options.receive_bytes - f->bytes;
                 if (count || bytes) {
-                    f->failure = Some(ncrequest::WebSocketError(
-                        count ? ncrequest::WebSocketError::ReceiveMessagesFull
-                              : ncrequest::WebSocketError::ReceiveBytesFull,
-                        count ? options.receive_messages : options.receive_bytes,
-                        count ? f->incoming.len() + f->retained_messages + usize(1)
-                              : f->bytes + message.data.len()));
+                    f->failure =
+                        Some(ncrequest::WebSocketError(
+                                 count ? ncrequest::WebSocketError::ReceiveMessagesFull
+                                       : ncrequest::WebSocketError::ReceiveBytesFull,
+                                 count ? options.receive_messages : options.receive_bytes,
+                                 count ? f->incoming.len() + f->retained_messages + usize(1)
+                                       : f->bytes + message.data.len())
+                                 .status());
                     finish_locked(*f, WebSocketError::Overflow);
                 } else if (events.message) {
                     f->bytes += message.data.len();
@@ -210,7 +225,7 @@ auto ws_text(const QString& text) -> String {
 auto ws_native_error(QWebSocket* socket) -> lf::Error {
     return lf::Error::Extension(
         "qt websocket"_Str,
-        Arc<rstd::dyn<rstd::error::Error>>::make(WebSocketNativeError(
+        Box<rstd::dyn<rstd::error::Error>>::make(WebSocketNativeError(
             i32(socket->error()), u16(socket->closeCode()), ws_text(socket->errorString()))));
 }
 void ws_dispose(WsActive& active) {
@@ -223,9 +238,10 @@ void ws_dispose(WsActive& active) {
     bool connected = state->fields.lock().unwrap()->connected;
     if (connected && state->events.terminal) {
         auto error = state->failure();
-        state->events.terminal(error.is_some()
-                                   ? error->clone()
-                                   : ncrequest::WebSocketError(ncrequest::WebSocketError::Closed));
+        state->events.terminal(
+            error.is_some()
+                ? error->clone()
+                : ncrequest::WebSocketError(ncrequest::WebSocketError::Closed).status());
     }
     state->complete();
 }
@@ -282,9 +298,12 @@ struct WsDriver {
         co_return lf::ProtocolCompletion {
             f->terminal == Some(WebSocketError::Closed)
                 ? lf::Result<empty>(Ok(empty {}))
-                : lf::Result<empty>(
-                      Err(f->cause.is_some() ? f->cause->clone() : ws_error(*f->terminal))),
-            queued ? lf::RemoteOutcome::Unknown : lf::RemoteOutcome::NotDispatched
+                : lf::Result<empty>(Err(! published && f->cause.is_some()
+                                            ? f->cause.take().unwrap()
+                                            : ws_error(*f->terminal))),
+            queued ? lf::RemoteOutcome::Unknown : lf::RemoteOutcome::NotDispatched,
+            published && f->cause.is_some() ? Some(lf::report_failure(*f->cause))
+                                            : None<lf::FailureReport>()
         };
     }
     auto release(lf::ReleaseContext) const -> coro<lf::Result<empty>> {
@@ -312,10 +331,11 @@ struct WsNotify {
     ~WsNotify() { state->notify(); }
 };
 struct QtEndpoint {
-    lf::Transfer<empty> transfer;
-    Arc<WsState>        state;
+    Arc<lf::Transfer<empty>> transfer;
+    Arc<WsState>             state;
     QtEndpoint(lf::Transfer<empty> transfer, Arc<WsState> state)
-        : transfer(rstd::move(transfer)), state(rstd::move(state)) {}
+        : transfer(Arc<lf::Transfer<empty>>::make(rstd::move(transfer))),
+          state(rstd::move(state)) {}
     auto protocol() const -> Option<String> {
         return state->fields.lock().unwrap()->protocol.clone();
     }
@@ -367,9 +387,9 @@ struct QtEndpoint {
     }
     void cancel() const {
         state->fail(WebSocketError::Cancelled);
-        transfer.control().cancel();
+        transfer->control().cancel();
     }
-    auto completion() const -> lf::TransferControl { return transfer.control(); }
+    auto completion() const -> lf::TransferControl { return transfer->control(); }
     auto has_receiver() const -> bool { return state->fields.lock().unwrap()->receiver.is_some(); }
     auto has_messages() const -> bool {
         auto f = state->fields.lock().unwrap();
@@ -386,18 +406,19 @@ struct QtEndpoint {
         f->retained_bytes = {};
         f->retained_messages = {};
     }
-    auto        failure() const -> Option<ncrequest::WebSocketError> { return state->failure(); }
-    static auto finish(Arc<WsState> state, lf::TransferControl control) -> coro<lf::Result<empty>> {
+    auto failure() const -> Option<ncrequest::WebSocketStatus> { return state->failure(); }
+    auto take_error() const -> Option<ncrequest::WebSocketError> { return state->take_error(); }
+    static auto finish(Arc<WsState> state, Arc<lf::Transfer<empty>> transfer)
+        -> coro<lf::Result<empty>> {
         bool closed = [&] {
             auto f = state->fields.lock().unwrap();
             return f->terminal == Some(WebSocketError::Closed) || f->closing_native;
         }();
-        auto report = co_await (closed ? control.wait() : control.close());
-        if (report->cleanup.is_err()) co_return Err(report->cleanup.errors[usize()].clone());
-        co_return Ok(empty {});
+        (void)co_await (closed ? transfer->control().wait() : transfer->control().close());
+        co_return lf::collect_errors(transfer->take_cleanup_errors());
     }
     auto shutdown() const -> coro<lf::Result<empty>> {
-        return finish(state.clone(), transfer.control());
+        return finish(state.clone(), transfer.clone());
     }
 };
 struct QtMessageBackend {
@@ -430,6 +451,7 @@ struct Impl<ncrequest::WebSocketEndpoint, ncrequest::client::qt_network::QtEndpo
     auto has_receiver() const { return this->self().has_receiver(); }
     void release_received() const { this->self().release_received(); }
     auto failure() const { return this->self().failure(); }
+    auto take_error() const { return this->self().take_error(); }
     void discard_received() const { this->self().discard_received(); }
     auto has_messages() const { return this->self().has_messages(); }
 };

@@ -15,6 +15,8 @@ struct ExchangeFields {
     h::CacheObservation            cache;
     lihttpto::Headers              trailers;
     Option<lf::Error>              error;
+    Option<lf::FailureReport>      failure;
+    bool                           failed {}, published {};
     bool                           demand {}, done {}, dispatched {}, stopped {};
     bool                           trailers_available { true };
 };
@@ -45,11 +47,16 @@ struct Exchange {
         notify();
     }
     void fail(lf::Error error) const {
+        bool published;
         {
             auto f = fields.lock().unwrap();
-            if (f->error.is_none()) f->error = Some(error.clone());
+            if (f->failed) return;
+            f->failed  = true;
+            f->failure = Some(lf::report_failure(error));
+            published  = f->published;
+            if (! published) f->error = Some(rstd::move(error));
         }
-        if (ready.load()) incoming->fail(rstd::move(error));
+        if (published) incoming->fail(rstd::move(error));
         stop_upload();
         notify();
     }
@@ -156,7 +163,7 @@ auto begin_exchange(Arc<Exchange> exchange, lf::TransferContext context)
     exchange->ready.store(true);
     {
         auto f = exchange->fields.lock().unwrap();
-        if (f->error.is_some()) co_return Err(f->error->clone());
+        if (f->error.is_some()) co_return Err(f->error.take().unwrap());
     }
     auto producer = context.resources().spawn(UploadTask { exchange.clone() });
     if (producer.is_err()) co_return Err(rstd::move(producer).unwrap_err().error);
@@ -175,7 +182,7 @@ struct Source {
     auto          next() const { return exchange->incoming->next(); }
     auto          trailers() const -> lf::Result<Option<lihttpto::Headers>> {
         auto f = exchange->fields.lock().unwrap();
-        if (f->error.is_some()) return Err(f->error->clone());
+        if (f->failed) return Err(lf::Error::Closed());
         if (! f->done) return Ok(None());
         if (! f->trailers_available)
             return Err(lf::Error::Unsupported("backend does not expose response trailers"_Str));
@@ -204,16 +211,19 @@ namespace ncrequest::client
 auto deliver(Arc<Exchange> exchange, lf::OutputSender<h::ResponseMessage> output)
     -> coro<lf::ProtocolCompletion> {
     Option<lihttpto::ResponseHead> head;
+    Option<lf::Error>              pending_error;
     h::CacheObservation            cache;
     for (;;) {
         auto event = exchange->changed.listen();
         {
             auto f = exchange->fields.lock().unwrap();
             if (f->head.is_some()) {
-                head  = f->head.take();
-                cache = f->cache;
+                head          = f->head.take();
+                cache         = f->cache;
+                f->published  = true;
+                pending_error = f->error.take();
             } else if (f->error.is_some())
-                co_return lf::ProtocolCompletion { Err(f->error->clone()),
+                co_return lf::ProtocolCompletion { Err(f->error.take().unwrap()),
                                                    f->dispatched
                                                        ? lf::RemoteOutcome::Unknown
                                                        : lf::RemoteOutcome::NotDispatched };
@@ -221,13 +231,14 @@ auto deliver(Arc<Exchange> exchange, lf::OutputSender<h::ResponseMessage> output
         if (head.is_some()) break;
         co_await rstd::move(event);
     }
+    if (pending_error.is_some()) exchange->incoming->fail(pending_error.take().unwrap());
     auto body = h::ResponseBody::from_source(
         Arc<rstd::dyn<h::ResponseSource>>::make(Source { exchange.clone() }));
     auto control   = body.completion();
     auto published = output.publish({ head.take().unwrap(), rstd::move(body), cache });
     if (published.is_err()) exchange->stop();
     auto result = co_await control.wait();
-    co_return lf::ProtocolCompletion { rstd::move(result), cache.remote() };
+    co_return lf::ProtocolCompletion { rstd::move(result), cache.remote(), control.failure() };
 }
 auto release_exchange(Arc<Exchange> exchange) -> coro<lf::Result<empty>> {
     exchange->stop();

@@ -68,7 +68,8 @@ TEST(session, RejectedRequestRetainsSourceAndOptionsAcrossCanceledRelease) {
         EXPECT_EQ(counts->lock().unwrap()->releases, usize(1));
         EXPECT_EQ(counts->lock().unwrap()->finished, usize());
         EXPECT_TRUE((co_await rejected.input.close()).is_ok());
-        EXPECT_TRUE((co_await rejected.input.close()).is_ok());
+        EXPECT_TRUE((co_await rejected.input.wait_closed()).is_ok());
+        EXPECT_TRUE(rejected.input.take_close_result().is_none());
         EXPECT_EQ(counts->lock().unwrap()->releases, usize(1));
         EXPECT_EQ(counts->lock().unwrap()->finished, usize(1));
         co_return empty {};
@@ -99,10 +100,10 @@ TEST(session, ControlBeforeSendDoesNotPullOrConsumeRequest) {
     EXPECT_TRUE(sent.unwrap_err().error.is_Canceled());
     EXPECT_TRUE(runtime.block_on(session->close()).is_ok());
 }
-TEST(session, CloseReportPreservesErrorsAndTotal) {
-    lf::CloseReport left, right;
-    for (int i = 0; i < 12; ++i) left.add(lf::Error::Closed());
-    for (int i = 0; i < 12; ++i) right.add(lf::Error::Canceled());
+TEST(session, CleanupReportPreservesDiagnosticsAndTotal) {
+    lf::CleanupReport left, right;
+    for (int i = 0; i < 12; ++i) left.add(lf::report_failure(lf::Error::Closed()));
+    for (int i = 0; i < 12; ++i) right.add(lf::report_failure(lf::Error::Canceled()));
     left.merge(rstd::move(right));
     EXPECT_EQ(left.errors.len(), usize(16));
     EXPECT_EQ(left.total_errors, usize(24));
@@ -290,10 +291,13 @@ TEST(session, FailedFactoryRetainsBindingsAndClosePreservesEveryError) {
         auto report = co_await session->close();
         EXPECT_EQ(report.total_errors, usize(2));
         EXPECT_EQ(report.errors.len(), usize(2));
-        if (report.errors.len() == usize(2)) {
-            EXPECT_TRUE(report.errors[usize()].is_Extension());
-            EXPECT_TRUE(report.errors[usize(1)].is_BodySource());
+        auto errors = session->take_close_errors();
+        EXPECT_EQ(errors.len(), usize(2));
+        if (errors.len() == usize(2)) {
+            EXPECT_TRUE(errors[usize()].is_Extension());
+            EXPECT_TRUE(errors[usize(1)].is_BodySource());
         }
+        EXPECT_TRUE(session->take_close_errors().is_empty());
         auto repeated = co_await session->close();
         EXPECT_EQ(repeated.total_errors, report.total_errors);
         EXPECT_EQ(script->lock().unwrap()->backend_closes, usize(1));

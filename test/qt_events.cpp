@@ -47,6 +47,7 @@ struct Endpoint {
     auto has_receiver() const { return inner->has_receiver(); }
     void release_received() const { inner->release_received(); }
     auto failure() const { return inner->failure(); }
+    auto take_error() const { return inner->take_error(); }
     void discard_received() const { inner->discard_received(); }
     auto has_messages() const { return inner->has_messages(); }
 };
@@ -75,6 +76,7 @@ struct Impl<ncrequest::WebSocketEndpoint, qt_bench::Endpoint> : ImplBase<qt_benc
     auto has_receiver() const { return this->self().has_receiver(); }
     void release_received() const { this->self().release_received(); }
     auto failure() const { return this->self().failure(); }
+    auto take_error() const { return this->self().take_error(); }
     void discard_received() const { this->self().discard_received(); }
     auto has_messages() const { return this->self().has_messages(); }
 };

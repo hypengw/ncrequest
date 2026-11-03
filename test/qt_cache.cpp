@@ -338,7 +338,7 @@ TEST(AdapterPeer, QtNativeCacheExternalManager) {
         checks.add("owned backend close", (co_await owned->close()).is_ok());
         checks.add("sibling stops after owned backend close",
                    ! (co_await fetch(sibling.clone(), input("/external/seed"_str))).okay);
-        checks.add("repeat close barrier", (co_await backend->close()).is_ok());
+        checks.add("repeat close barrier", (co_await backend->wait_closed()).is_ok());
         checks.add("close sibling", (co_await sibling->close()).is_ok());
         checks.add("engine close", (co_await engine.close()).is_ok());
         co_return empty {};
@@ -371,7 +371,7 @@ TEST(AdapterPeer, QtNativeCacheInternalDiskAndFailures) {
             checks.add("internal cache initialized on owner",
                        backend.capabilities().cache.readiness == h::CacheReadiness::Ready);
             checks.add("internal session close", (co_await session->close()).is_ok());
-            checks.add("internal repeated close", (co_await backend.close()).is_ok());
+            checks.add("internal repeated close", (co_await backend.wait_closed()).is_ok());
         }
         for (auto suffix : array<ref<str>, 2> { "/capacity"_str, "/invalid"_str }) {
             client::qt_network::Options options;
@@ -454,7 +454,7 @@ TEST(AdapterPeer, QtNativeCacheStorageFailureAndLifetime) {
         unblock.release();
         checks.add("cancelled close can be reawaited", (co_await backend->close()).is_ok());
         (void)co_await pending.close();
-        checks.add("repeated real exit barrier", (co_await backend->close()).is_ok());
+        checks.add("repeated real exit barrier", (co_await backend->wait_closed()).is_ok());
         checks.add("external session close", (co_await session->close()).is_ok());
         (void)co_await engine.close();
         auto used = engine.resources().usage();
@@ -503,7 +503,7 @@ TEST(HttpCache, NativeQtConfigurationAndExternalDestruction) {
     auto task = [&]() -> coro<empty> {
         checks.add("external manager destroyed before close", (co_await backend->close()).is_ok());
         checks.add("external manager destruction repeat barrier",
-                   (co_await backend->close()).is_ok());
+                   (co_await backend->wait_closed()).is_ok());
         (void)co_await engine.close();
         auto used = engine.resources().usage();
         checks.add("destroyed owner returns all quota",

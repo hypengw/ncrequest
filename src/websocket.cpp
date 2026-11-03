@@ -41,7 +41,7 @@ struct CallbackState {
                 callback(rstd::move(value));
             });
     }
-    void error(WebSocketError value) {
+    void error(WebSocketStatus value) {
         if (callbacks.error)
             invoke([callback = callbacks.error.clone(), value = rstd::move(value)]() mutable {
                 callback(rstd::move(value));
@@ -99,7 +99,7 @@ struct CallbackReader {
             if (received.is_err()) {
                 auto error = rstd::move(received).unwrap_err();
                 if (error != WebSocketError::Closed && error != WebSocketError::Cancelled)
-                    state->callbacks->error(rstd::move(error));
+                    state->callbacks->error(error.status());
                 break;
             }
             state->callbacks->message(rstd::move(received).unwrap());
@@ -124,7 +124,8 @@ struct CallbackOwner {
         }();
         if (worker.is_some()) (void)co_await worker->wait();
         co_await drain_callbacks(state->callbacks.clone());
-        co_return co_await state->wire.shutdown();
+        (void)co_await state->wire.shutdown();
+        co_return lf::collect_errors(state->wire.take_cleanup_errors());
     }
 };
 struct CallbackLaunch {
@@ -176,7 +177,7 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
         hooks.message = [weak = weak.clone()](liwebsocketo::Message value) {
             if (auto state = weak.upgrade()) state->message(rstd::move(value));
         };
-        hooks.error = [weak = weak.clone()](WebSocketError value) {
+        hooks.error = [weak = weak.clone()](WebSocketStatus value) {
             if (auto state = weak.upgrade()) state->error(rstd::move(value));
         };
         hooks.disconnected = [weak = rstd::move(weak)] {
@@ -201,7 +202,8 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
     auto attached  = resources.attach(empty {}, owner.clone());
     if (attached.is_err()) {
         state->fields.lock().unwrap()->launched = true;
-        (void)co_await owner->release({});
+        auto released                           = co_await owner->release({});
+        if (released.is_err()) resources.record_cleanup_error(rstd::move(released).unwrap_err());
         co_return Err(
             WebSocketConnectFailure { .admission = Some(rstd::move(attached).unwrap_err().error),
                                       .report = Some(co_await state->wire.completion().wait()) });
@@ -222,7 +224,8 @@ auto WebSocketClient::connect(Arc<Session> session, DuplexRequest target,
         }
     }
     if (error.is_some()) {
-        (void)co_await registration->release();
+        auto released = co_await registration->release();
+        if (released.is_err()) resources.record_cleanup_error(rstd::move(released).unwrap_err());
         co_return Err(
             WebSocketConnectFailure { .admission = Some(error.take().unwrap()),
                                       .report = Some(co_await state->wire.completion().wait()) });
@@ -243,9 +246,18 @@ auto WebSocketClient::request_close(Bytes payload) const -> WebSocketResult<empt
 auto WebSocketClient::close(Bytes payload) const -> coro<WebSocketResult<empty>> {
     return state_->wire.close(rstd::move(payload));
 }
-auto WebSocketClient::failure() const -> Option<WebSocketError> { return state_->wire.failure(); }
+auto WebSocketClient::failure() const -> Option<WebSocketStatus> { return state_->wire.failure(); }
+auto WebSocketClient::take_error() const -> Option<WebSocketError> {
+    return state_->wire.take_error();
+}
 void WebSocketClient::disconnect() const { state_->stop(); }
 auto WebSocketClient::shutdown() const -> coro<lf::Result<empty>> {
     return registration_->release();
+}
+auto WebSocketClient::wait_shutdown() const -> coro<lf::CleanupReport> {
+    return registration_->wait_released();
+}
+auto WebSocketClient::take_shutdown_result() const -> Option<lf::Result<empty>> {
+    return registration_->take_release_result();
 }
 } // namespace ncrequest

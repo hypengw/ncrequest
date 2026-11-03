@@ -6,7 +6,7 @@ namespace ncrequest
 {
 auto cookie_io(rstd::io::Error cause) -> Error {
     return Error::Transport(lifetchto::Error::Extension(
-        "cookie file"_Str, Arc<rstd::dyn<rstd::error::Error>>::make(rstd::move(cause))));
+        "cookie file"_Str, Box<rstd::dyn<rstd::error::Error>>::make(rstd::move(cause))));
 }
 auto load_cookies(const CookieJar& jar, ref<rstd::path::Path> path) -> Result<empty> {
     auto bytes = rstd::fs::read(path);

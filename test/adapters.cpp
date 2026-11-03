@@ -502,10 +502,15 @@ TEST(AdapterFault, CurlFailureStopsWorkerAndRetainsCause) {
         auto response = co_await pending.response();
         if (response.is_ok()) EXPECT_TRUE((co_await (*response)->bytes()).is_err());
         EXPECT_TRUE((co_await pending.completion().wait())->logical.result.is_err());
-        auto closed = co_await backend.close();
-        EXPECT_TRUE(closed.is_err());
-        if (closed.is_err()) {
-            const auto& error = closed.as_ref().unwrap_err();
+        auto closed = co_await backend.wait_closed();
+        EXPECT_TRUE(closed.is_ok());
+        EXPECT_TRUE((co_await session->close()).is_ok());
+        auto report = co_await engine.close();
+        EXPECT_TRUE(report.is_err());
+        auto errors = engine.take_close_errors();
+        EXPECT_EQ(errors.len(), usize(1));
+        if (! errors.is_empty()) {
+            const auto& error = errors[usize()];
             EXPECT_TRUE(error.is_Extension());
             if (error.is_Extension()) {
                 auto cause = rstd::error::downcast_ref<ncrequest::client::curl::Error>(
@@ -514,7 +519,9 @@ TEST(AdapterFault, CurlFailureStopsWorkerAndRetainsCause) {
                 if (cause.is_some()) EXPECT_TRUE((*cause)->is_multi());
             }
         }
-        EXPECT_TRUE((co_await session->close()).is_err());
+        EXPECT_TRUE(engine.take_close_errors().is_empty());
+        EXPECT_TRUE((co_await backend.wait_closed()).is_ok());
+        EXPECT_TRUE(backend.take_close_result().is_none());
         EXPECT_EQ(counts->lock().unwrap()->finished, usize(1));
         EXPECT_TRUE((co_await engine.close()).is_err());
         co_return empty {};
@@ -573,7 +580,7 @@ TEST(AdapterPeer, QtExternalManagerSurvivesBackendClose) {
         EXPECT_EQ((co_await (co_await pending.response()).unwrap()->text()).unwrap().as_str(),
                   "hello"_str);
         EXPECT_TRUE((co_await session->close()).is_ok());
-        EXPECT_TRUE((co_await backend->close()).is_ok());
+        EXPECT_TRUE((co_await backend->wait_closed()).is_ok());
         EXPECT_TRUE((co_await engine.close()).is_ok());
         co_return empty {};
     };

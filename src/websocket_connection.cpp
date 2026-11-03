@@ -6,25 +6,31 @@ namespace ncrequest
 {
 namespace lf = lifetchto;
 struct NativeWebSocketWireState {
-    UpgradeConnection                    wire;
-    rstd::sync::Mutex<Option<lf::Error>> failure { None<lf::Error>() };
+    UpgradeConnection                 wire;
+    rstd::sync::Mutex<Vec<lf::Error>> failure { Vec<lf::Error> {} };
     explicit NativeWebSocketWireState(UpgradeConnection wire): wire(rstd::move(wire)) {}
-    void remember(const lf::Error& error) {
+    void remember(lf::Error error) {
         auto f = failure.lock().unwrap();
-        if (f->is_none()) *f = Some(error.clone());
+        f->push(rstd::move(error));
     }
 };
 struct NativeWebSocketWire {
     Arc<NativeWebSocketWireState> state;
     static auto read_from(Arc<NativeWebSocketWireState> state) -> coro<lf::Result<Bytes>> {
         auto result = co_await state->wire.read();
-        if (result.is_err()) state->remember(result.as_ref().unwrap_err());
+        if (result.is_err()) {
+            state->remember(rstd::move(result).unwrap_err());
+            co_return Err(lf::Error::Closed());
+        }
         co_return rstd::move(result);
     }
     static auto write_to(Arc<NativeWebSocketWireState> state, Bytes bytes)
         -> coro<lf::Result<usize>> {
         auto result = co_await state->wire.write(rstd::move(bytes));
-        if (result.is_err()) state->remember(result.as_ref().unwrap_err());
+        if (result.is_err()) {
+            state->remember(rstd::move(result).unwrap_err());
+            co_return Err(lf::Error::Closed());
+        }
         co_return rstd::move(result);
     }
     auto read() const { return read_from(state.clone()); }
@@ -60,8 +66,7 @@ struct WebSocketOwner {
         auto report   = co_await (terminal == Some(liwebsocketo::WebSocketError::Closed)
                                       ? state->control.wait()
                                       : state->control.close());
-        if (report->cleanup.is_err()) co_return Err(report->cleanup.errors[usize()].clone());
-        co_return Ok(empty {});
+        co_return lf::collect_errors(state->wire->wire.take_cleanup_errors());
     }
 };
 struct NativeEndpoint {
@@ -95,7 +100,7 @@ struct NativeEndpoint {
     void release_received() const { state->driver.release_received(); }
     void discard_received() const { state->driver.discard_received(); }
     auto has_messages() const -> bool { return state->driver.has_messages(); }
-    auto failure() const -> Option<WebSocketError> {
+    auto failure() const -> Option<WebSocketStatus> {
         auto violation = state->driver.limit_violation();
         if (violation.is_some()) {
             auto kind = violation->kind;
@@ -106,22 +111,38 @@ struct NativeEndpoint {
                             : WebSocketError::ReceiveBytesFull;
             return Some(WebSocketError(code,
                                        usize(violation->maximum.to_primitive()),
-                                       usize(violation->observed.to_primitive())));
+                                       usize(violation->observed.to_primitive()))
+                            .status());
         }
         auto terminal = state->driver.terminal();
         if (terminal.is_none()) return None();
         auto error = WebSocketError(*terminal).with_protocol(state->driver.protocol_error());
         if (error == WebSocketError::Transport) {
             auto cause = state->wire->failure.lock().unwrap();
-            if (cause->is_some()) {
-                if ((*cause)->is_Timeout())
+            if (! cause->is_empty()) {
+                if ((*cause)[usize()].is_Timeout())
                     error = WebSocketError(WebSocketError::Timeout);
-                else if ((*cause)->is_Canceled())
+                else if ((*cause)[usize()].is_Canceled())
                     error = WebSocketError(WebSocketError::Cancelled);
-                return Some(rstd::move(error).with_cause((*cause)->clone()));
+                auto status       = error.status();
+                status.diagnostic = Some(lf::report_failure((*cause)[usize()]));
+                return Some(rstd::move(status));
             }
         }
-        return Some(rstd::move(error));
+        return Some(error.status());
+    }
+    auto take_error() const -> Option<WebSocketError> {
+        auto              status = failure();
+        Option<lf::Error> cause;
+        {
+            auto causes = state->wire->failure.lock().unwrap();
+            if (! causes->is_empty()) cause = Some(causes->remove(usize()));
+        }
+        if (cause.is_none()) cause = state->wire->wire.take_write_error();
+        if (cause.is_none()) cause = state->wire->wire.take_error();
+        if (cause.is_none()) return None();
+        return Some(WebSocketError(status.is_some() ? status->code() : WebSocketError::Transport)
+                        .with_cause(cause.take().unwrap()));
     }
     auto has_receiver() const -> bool {
         auto guard = state->access.lock().unwrap();
@@ -152,6 +173,7 @@ struct Impl<ncrequest::WebSocketEndpoint, ncrequest::NativeEndpoint>
     auto has_receiver() const { return this->self().has_receiver(); }
     void release_received() const { this->self().release_received(); }
     auto failure() const { return this->self().failure(); }
+    auto take_error() const { return this->self().take_error(); }
     void discard_received() const { this->self().discard_received(); }
     auto has_messages() const { return this->self().has_messages(); }
 };
@@ -222,8 +244,9 @@ auto connect_native_websocket(Arc<Session> session, DuplexRequest target, lihttp
     auto owner    = Arc<rstd::dyn<lf::ManagedResource>>::make(WebSocketOwner { state.clone() });
     auto attached = resources.attach(empty {}, owner.clone());
     if (attached.is_err()) {
-        auto error = rstd::move(attached).unwrap_err().error;
-        (void)co_await owner->release({});
+        auto error    = rstd::move(attached).unwrap_err().error;
+        auto released = co_await owner->release({});
+        if (released.is_err()) resources.record_cleanup_error(rstd::move(released).unwrap_err());
         co_return Err(WebSocketConnectFailure { .admission = Some(rstd::move(error)),
                                                 .report    = Some(co_await control.wait()) });
     }
@@ -233,7 +256,8 @@ auto connect_native_websocket(Arc<Session> session, DuplexRequest target, lihttp
         return state->driver.launch(resources.runtime());
     }();
     if (launched.is_err()) {
-        (void)co_await registration->release();
+        auto released = co_await registration->release();
+        if (released.is_err()) resources.record_cleanup_error(rstd::move(released).unwrap_err());
         co_return Err(
             WebSocketConnectFailure { .connection = Some(WebSocketError(launched.unwrap_err())),
                                       .report     = Some(co_await control.wait()) });
@@ -244,7 +268,7 @@ auto connect_native_websocket(Arc<Session> session, DuplexRequest target, lihttp
 struct WebSocketSendFields {
     Option<liwebsocketo::Message>  message;
     Option<WebSocketResult<empty>> result;
-    bool                           started {};
+    bool                           started {}, taken {};
     Option<lf::ResourcePermit>     permit;
 };
 struct WebSocketSendState {
@@ -253,7 +277,7 @@ struct WebSocketSendState {
     lf::Event                              changed;
     WebSocketSendState(liwebsocketo::Message message, lf::ResourcePermit permit)
         : fields(WebSocketSendFields {
-              Some(rstd::move(message)), {}, false, Some(rstd::move(permit)) }),
+              Some(rstd::move(message)), {}, false, false, Some(rstd::move(permit)) }),
           bytes(fields.lock().unwrap()->message->data.len()) {}
 };
 struct WebSocketReceiveFields {
@@ -272,14 +296,16 @@ struct WebSocketFields {
     Bytes                              close_payload;
     Option<lf::Instant>                close_deadline;
     Option<WebSocketResult<empty>>     close_result;
-    Option<WebSocketError>             terminal;
+    Option<WebSocketStatus>            terminal;
+    Vec<WebSocketError>                errors;
+    bool                               close_taken {};
     Option<lf::ResourcePermit>         receive_budget;
 };
-auto websocket_transport_error(const WebSocketError& error) -> lf::Error {
+auto websocket_transport_error(const WebSocketStatus& error) -> lf::Error {
     if (error == WebSocketError::Cancelled) return lf::Error::Canceled();
     if (error == WebSocketError::Timeout) return lf::Error::Timeout();
     return lf::Error::Extension("websocket"_Str,
-                                Arc<rstd::dyn<rstd::error::Error>>::make(error.clone()));
+                                Box<rstd::dyn<rstd::error::Error>>::make(WebSocketError(error)));
 }
 struct WebSocketState {
     rstd::sync::OnceLock<Arc<rstd::dyn<WebSocketEndpoint>>> connection;
@@ -304,7 +330,7 @@ struct WebSocketState {
     }
     void discard_received() {
         Option<Arc<WebSocketReceiveState>> receiver;
-        Option<WebSocketError>             error;
+        Option<WebSocketStatus>            error;
         {
             auto f = fields.lock().unwrap();
             if (f->receiver.is_some()) receiver = Some(f->receiver->clone());
@@ -316,7 +342,7 @@ struct WebSocketState {
             if (! f->done) {
                 release     = f->pending.is_some();
                 f->pending  = None();
-                f->rejected = Some(error.is_some() ? error->clone()
+                f->rejected = Some(error.is_some() ? WebSocketError(*error)
                                                    : WebSocketError(WebSocketError::Cancelled));
                 f->done     = true;
             }
@@ -326,7 +352,7 @@ struct WebSocketState {
         release_receive_budget();
     }
     // Backend terminal events can precede endpoint publication.
-    auto finish(WebSocketError error) -> bool {
+    auto finish(WebSocketStatus error) -> bool {
         {
             auto f = fields.lock().unwrap();
             if (f->terminal.is_some()) return false;
@@ -335,11 +361,11 @@ struct WebSocketState {
             if (f->close_result.is_none())
                 f->close_result = Some(error == WebSocketError::Closed
                                            ? WebSocketResult<empty>(Ok(empty {}))
-                                           : WebSocketResult<empty>(Err(error.clone())));
+                                           : WebSocketResult<empty>(Err(WebSocketError(error))));
             for (auto& item : f->sends) {
                 auto send = item->fields.lock().unwrap();
                 if (send->result.is_none())
-                    send->result = Some(WebSocketResult<empty>(Err(error.clone())));
+                    send->result = Some(WebSocketResult<empty>(Err(WebSocketError(error))));
                 if (! send->started) {
                     send->message = None();
                     send->permit  = None();
@@ -352,22 +378,23 @@ struct WebSocketState {
         changed.notify();
         return true;
     }
-    void stop(WebSocketError error) {
+    void stop(WebSocketStatus error) {
         bool cancel = error != WebSocketError::Closed;
         if (! finish(rstd::move(error))) return;
         if (cancel) endpoint()->cancel();
         release_receive_budget();
     }
-    auto error(liwebsocketo::WebSocketError error) -> WebSocketError {
+    void stop(WebSocketError::Code error) { stop(WebSocketError(error).status()); }
+    auto error(liwebsocketo::WebSocketError error) -> WebSocketStatus {
         auto detail = endpoint()->failure();
-        return detail.is_some() ? rstd::move(detail).unwrap() : WebSocketError(error);
+        return detail.is_some() ? detail.take().unwrap() : WebSocketError(error).status();
     }
     void cancel_send(const Arc<WebSocketSendState>& item) {
         bool active = false;
         {
             auto f    = fields.lock().unwrap();
             auto send = item->fields.lock().unwrap();
-            if (send->result.is_some()) return;
+            if (send->result.is_some() || send->taken) return;
             active = send->started;
             if (! active) {
                 send->result =
@@ -402,7 +429,7 @@ struct MessageDriver {
             Option<Arc<WebSocketSendState>> item;
             Option<Bytes>                   close;
             Option<lf::Instant>             deadline;
-            Option<WebSocketError>          terminal;
+            Option<WebSocketStatus>         terminal;
             {
                 auto f   = state->fields.lock().unwrap();
                 terminal = f->terminal.clone();
@@ -472,7 +499,7 @@ struct MessageDriver {
                             break;
                         }
                 }
-                if (stopped) (void)co_await state->endpoint()->shutdown();
+                if (stopped) (void)co_await state->endpoint()->completion().close();
                 (*item)->fields.lock().unwrap()->permit = None();
                 (*item)->changed.notify();
                 continue;
@@ -497,13 +524,11 @@ struct MessageDriver {
                 auto report  = rstd::move(done).unwrap_right();
                 auto failure = state->endpoint()->failure();
                 if (failure.is_some())
-                    state->stop(rstd::move(failure).unwrap());
+                    state->stop(failure.take().unwrap());
                 else if (report->logical.result.is_ok())
                     state->stop(WebSocketError::Closed);
                 else
-                    state->stop(
-                        WebSocketError(WebSocketError::Transport)
-                            .with_cause(report->logical.result.as_ref().unwrap_err().clone()));
+                    state->stop(WebSocketError::Transport);
             }
         }
         auto error = state->fields.lock().unwrap()->terminal->clone();
@@ -511,10 +536,16 @@ struct MessageDriver {
                                                ? lf::Result<empty>(Ok(empty {}))
                                                : lf::Result<empty>(
                                                      Err(websocket_transport_error(error))),
-                                           lf::RemoteOutcome::Unknown };
+                                           lf::RemoteOutcome::Unknown,
+                                           rstd::move(error.diagnostic) };
     }
     auto release(lf::ReleaseContext) const -> coro<lf::Result<empty>> {
         auto result = co_await state->endpoint()->shutdown();
+        for (;;) {
+            auto error = state->endpoint()->take_error();
+            if (error.is_none()) break;
+            state->fields.lock().unwrap()->errors.push(error.take().unwrap());
+        }
         state->release_receive_budget();
         co_return rstd::move(result);
     }
@@ -543,9 +574,10 @@ auto wait_written(Arc<WebSocketSendState> state) -> coro<WebSocketResult<empty>>
         auto event = state->changed.listen();
         {
             auto f = state->fields.lock().unwrap();
+            if (f->taken) co_return Err(WebSocketError(WebSocketError::Closed));
             if (f->result.is_some()) {
-                if (f->result->is_err()) co_return Err(f->result->as_ref().unwrap_err().clone());
-                co_return Ok(empty {});
+                f->taken = true;
+                co_return f->result.take().unwrap();
             }
         }
         co_await rstd::move(event);
@@ -560,12 +592,12 @@ struct ReceiveWait {
     Arc<WebSocketReceiveState> state;
     auto poll(mut_ref<ReceiveWait> self, rstd::task::Context& cx) -> rstd::task::Poll<Output> {
         using Poll = rstd::task::Poll<Output>;
-        Option<WebSocketError> failure;
+        Option<WebSocketStatus> failure;
         {
             auto f = self->state->fields.lock().unwrap();
             if (f->rejected.is_some()) {
                 f->done = true;
-                return Poll::Ready(Err(f->rejected->clone()));
+                return Poll::Ready(Err(f->rejected.take().unwrap()));
             }
             if (f->done) return Poll::Ready(Err(WebSocketError(WebSocketError::Closed)));
             auto ready = rstd::future::poll(*f->pending, cx);
@@ -574,7 +606,7 @@ struct ReceiveWait {
             f->pending    = None();
             f->done       = true;
             if (received.is_err())
-                failure = Some(WebSocketError(WebSocketError::Cancelled));
+                failure = Some(WebSocketError(WebSocketError::Cancelled).status());
             else {
                 auto value = rstd::move(received).unwrap();
                 if (value.is_err())
@@ -585,8 +617,9 @@ struct ReceiveWait {
                 }
             }
         }
-        self->owner->stop(failure->clone());
-        return Poll::Ready(Err(failure.take().unwrap()));
+        auto error = WebSocketError(*failure);
+        self->owner->stop(failure.take().unwrap());
+        return Poll::Ready(Err(rstd::move(error)));
     }
 };
 struct ReceiveGuard {
@@ -723,7 +756,7 @@ auto WebSocketConnection::connect_with_events(Arc<Session> session, DuplexReques
         notifications.terminal  = [weak         = state.downgrade(),
                                    error        = rstd::move(events.error),
                                    disconnected = rstd::move(events.disconnected)](
-                                      WebSocketError reason) mutable {
+                                      WebSocketStatus reason) mutable {
             auto owner = weak.upgrade();
             if (! owner) return;
             owner->finish(rstd::move(reason));
@@ -780,7 +813,7 @@ auto WebSocketConnection::send(liwebsocketo::Message message) const
         auto reject = [&](WebSocketError error) -> rstd::Result<PendingSend, RejectedMessage> {
             return Err(RejectedMessage { rstd::move(error), rstd::move(message) });
         };
-        if (f->terminal.is_some()) return reject(f->terminal->clone());
+        if (f->terminal.is_some()) return reject(WebSocketError(*f->terminal));
         if (f->closing) return reject(WebSocketError::Closed);
         if (message.kind == liwebsocketo::Kind::Pong || message.kind == liwebsocketo::Kind::Close)
             return reject(WebSocketError::Protocol);
@@ -860,10 +893,10 @@ auto close_connection(Arc<WebSocketState> state, Bytes payload) -> coro<WebSocke
         auto event = state->changed.listen();
         {
             auto f = state->fields.lock().unwrap();
+            if (f->close_taken) co_return Err(WebSocketError(WebSocketError::Closed));
             if (f->close_result.is_some()) {
-                if (f->close_result->is_err())
-                    co_return Err(f->close_result->as_ref().unwrap_err().clone());
-                co_return Ok(empty {});
+                f->close_taken = true;
+                co_return f->close_result.take().unwrap();
             }
         }
         co_await rstd::move(event);
@@ -881,18 +914,25 @@ void WebSocketConnection::cancel() const {
 }
 auto WebSocketConnection::completion() const -> lf::TransferControl { return transfer_.control(); }
 auto shutdown_connection(Arc<WebSocketState> state, lf::TransferControl control)
-    -> coro<lf::Result<empty>> {
+    -> coro<lf::CleanupReport> {
     state->stop(WebSocketError::Cancelled);
     state->discard_received();
     auto report = co_await control.wait();
-    if (report->cleanup.is_err()) co_return Err(report->cleanup.errors[usize()].clone());
-    co_return Ok(empty {});
+    co_return report->cleanup.clone();
 }
-auto WebSocketConnection::shutdown() const -> coro<lf::Result<empty>> {
+auto WebSocketConnection::shutdown() const -> coro<lf::CleanupReport> {
     return shutdown_connection(state_.clone(), transfer_.control());
 }
-auto WebSocketConnection::failure() const -> Option<WebSocketError> {
+auto WebSocketConnection::failure() const -> Option<WebSocketStatus> {
     return state_->fields.lock().unwrap()->terminal.clone();
+}
+auto WebSocketConnection::take_error() const -> Option<WebSocketError> {
+    auto f = state_->fields.lock().unwrap();
+    if (f->errors.is_empty()) return None();
+    return Some(f->errors.remove(usize()));
+}
+auto WebSocketConnection::take_cleanup_errors() -> Vec<lf::Error> {
+    return transfer_.take_cleanup_errors();
 }
 WebSocketConnection::MessageStream::MessageStream(Arc<WebSocketState> state)
     : state_(rstd::move(state)) {}

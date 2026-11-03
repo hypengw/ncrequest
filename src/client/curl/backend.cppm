@@ -61,6 +61,8 @@ public:
                         lifetchto::Rejected<lifetchto::http::ExchangeInput>>;
     void request_close() const;
     auto close() const -> coro<lifetchto::Result<empty>>;
+    auto wait_closed() const -> coro<lifetchto::CleanupReport>;
+    auto take_close_result() const -> Option<lifetchto::Result<empty>>;
 };
 } // namespace ncrequest::client::curl
 export namespace rstd

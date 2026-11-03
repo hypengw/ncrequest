@@ -69,7 +69,7 @@ TEST(websocket, LocalEchoText) {
                 }
                 probe->changed.notify();
             };
-            callbacks.error = [probe = probe.clone()](WebSocketError) {
+            callbacks.error = [probe = probe.clone()](WebSocketStatus) {
                 ++probe->counts.lock().unwrap()->errors;
                 probe->changed.notify();
             };

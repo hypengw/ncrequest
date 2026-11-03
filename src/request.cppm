@@ -74,5 +74,9 @@ public:
     }
     void request_close() const { body_.request_close(); }
     auto close() const -> coro<lifetchto::Result<empty>> { return body_.close(); }
+    auto wait_closed() const -> coro<lifetchto::CleanupReport> { return body_.wait_closed(); }
+    auto take_close_result() const -> Option<lifetchto::Result<empty>> {
+        return body_.take_close_result();
+    }
 };
 } // namespace ncrequest

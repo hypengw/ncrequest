@@ -175,8 +175,8 @@ TEST(QtWebSocket, SharedSessionBackendCloseAndRepeatedShutdown) {
         (void)co_await rstd::async::timeout(b.shutdown().into_future(), Duration {});
         EXPECT_TRUE((co_await b.shutdown()).is_ok());
         EXPECT_TRUE((co_await b.shutdown()).is_ok());
-        EXPECT_TRUE(
-            (co_await b.completion().wait())->logical.result.as_ref().unwrap_err().is_Canceled());
+        EXPECT_EQ((co_await b.completion().wait())->logical.result.as_ref().unwrap_err().message,
+                  lf::report_failure(lf::Error::Canceled()).message);
         EXPECT_TRUE((co_await a.shutdown()).is_ok());
         EXPECT_TRUE((co_await second->close()).is_ok());
         EXPECT_EQ(engine.resources().usage().bytes, usize());
@@ -287,10 +287,9 @@ TEST(QtWebSocket, ExternalManagerDestructionDrainsWebSocketsOnItsThread) {
         EXPECT_TRUE((co_await pending.message()).is_err());
         EXPECT_TRUE((co_await first.shutdown()).is_ok());
         EXPECT_TRUE((co_await first.completion().wait())->cleanup.is_ok());
-        EXPECT_TRUE((co_await first.completion().wait())
-                        ->logical.result.as_ref()
-                        .unwrap_err()
-                        .is_Canceled());
+        EXPECT_EQ(
+            (co_await first.completion().wait())->logical.result.as_ref().unwrap_err().message,
+            lf::report_failure(lf::Error::Canceled()).message);
         EXPECT_TRUE((co_await session->close()).is_ok());
         EXPECT_TRUE((co_await backend->close()).is_ok());
         EXPECT_EQ(engine.resources().usage().bytes, usize());
@@ -343,7 +342,8 @@ TEST(QtWebSocket, ProtocolValidationAndDroppedStreamStopTheOwner) {
             EXPECT_TRUE(canceled.is_err());
         }
         auto report = co_await connection.completion().wait();
-        EXPECT_TRUE(report->logical.result.as_ref().unwrap_err().is_Canceled());
+        EXPECT_EQ(report->logical.result.as_ref().unwrap_err().message,
+                  lf::report_failure(lf::Error::Canceled()).message);
         EXPECT_TRUE((co_await connection.shutdown()).is_ok());
         auto abrupt   = (co_await qt_ws_open(session.clone(), "/abrupt"_str)).unwrap();
         auto received = (co_await read_ws(abrupt));
@@ -377,13 +377,10 @@ auto check_callback_terminal(const Arc<TerminalProbe>& probe, WebSocketError::Co
                              bool disconnect) -> bool {
     auto client = probe->client.lock().unwrap();
     if (client->is_none()) return false;
-    auto matches = [expected](const Option<WebSocketError>& failure) {
+    auto matches = [expected](const Option<WebSocketStatus>& failure) {
         if (failure.is_none() || failure->code() != expected) return false;
         if (expected != WebSocketError::Transport) return true;
-        return failure->cause().is_some() && failure->cause()->is_Extension() &&
-               rstd::error::downcast_ref<qt::WebSocketNativeError>(
-                   failure->cause()->as_Extension().cause.deref())
-                   .is_some();
+        return failure->diagnostic.is_some() && ! failure->diagnostic->message.is_empty();
     };
     bool valid    = matches((*client)->failure()) && ! (*client)->is_connected();
     auto rejected = (*client)->send(
@@ -419,7 +416,7 @@ TEST(QtWebSocket, TerminalCallbacksObserveSealedAdmissionAndPreserveTheCause) {
             callbacks.connected = [probe = probe.clone()] {
                 probe->sequence.lock().unwrap()->push(0);
             };
-            callbacks.error = [probe = probe.clone(), expected, mode](WebSocketError error) {
+            callbacks.error = [probe = probe.clone(), expected, mode](WebSocketStatus error) {
                 bool valid = check_callback_terminal(probe, expected, mode == 2);
                 *probe->valid.lock().unwrap() &= error.code() == expected && mode && valid;
                 probe->sequence.lock().unwrap()->push(1);
@@ -456,9 +453,28 @@ TEST(QtWebSocket, TerminalCallbacksObserveSealedAdmissionAndPreserveTheCause) {
             }
             auto shutdown = (*probe->client.lock().unwrap())->shutdown();
             valid         = (co_await rstd::move(shutdown)).is_ok() && valid;
-            auto close    = (*probe->client.lock().unwrap())->close();
-            auto closed   = co_await rstd::move(close);
-            valid         = closed.is_ok() == ! mode && valid;
+            {
+                auto client   = probe->client.lock().unwrap();
+                auto original = (*client)->take_error();
+                if (mode) {
+                    valid = original.is_some() && valid;
+                    if (original.is_some()) {
+                        auto& cause = original->cause();
+                        valid       = cause.is_some() && cause->is_Extension() && valid;
+                        if (cause.is_some() && cause->is_Extension())
+                            valid = rstd::error::downcast_ref<qt::WebSocketNativeError>(
+                                        cause->as_Extension().cause.deref())
+                                        .is_some() &&
+                                    valid;
+                    }
+                } else
+                    valid = original.is_none() && valid;
+                valid = (*client)->take_error().is_none() && valid;
+            }
+            valid       = check_callback_terminal(probe, expected, false) && valid;
+            auto close  = (*probe->client.lock().unwrap())->close();
+            auto closed = co_await rstd::move(close);
+            valid       = closed.is_ok() == ! mode && valid;
             if (mode && closed.is_err())
                 valid = closed.as_ref().unwrap_err().code() == expected && valid;
             auto sequence = probe->sequence.lock().unwrap();
@@ -505,7 +521,7 @@ TEST(QtWebSocket, NativeCallbacksConsumeAnImmediateBurstWithinOneReceiveSlot) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             probe->changed.notify();
         };
-        callbacks.error = [probe = probe.clone()](WebSocketError) {
+        callbacks.error = [probe = probe.clone()](WebSocketStatus) {
             probe->sequence.lock().unwrap()->push(-2);
             probe->changed.notify();
         };
@@ -596,7 +612,7 @@ TEST(QtWebSocket, NativeCallbackThreadOrderAndActiveShutdownBarrier) {
                 }
                 probe->changed.notify();
             };
-            callbacks.error = [probe = probe.clone(), &thread](WebSocketError) {
+            callbacks.error = [probe = probe.clone(), &thread](WebSocketStatus) {
                 EXPECT_EQ(QThread::currentThread(), &thread);
                 probe->sequence.lock().unwrap()->push(2);
                 probe->changed.notify();
@@ -696,7 +712,7 @@ TEST(QtWebSocket, OwnedSessionClosesTheSharedBackend) {
         EXPECT_TRUE((co_await pending.message()).is_err());
         EXPECT_TRUE((co_await wire.shutdown()).is_ok());
         EXPECT_TRUE((co_await sibling->close()).is_ok());
-        EXPECT_TRUE((co_await backend.close()).is_ok());
+        EXPECT_TRUE((co_await backend.wait_closed()).is_ok());
         EXPECT_EQ(engine.resources().usage().bytes, usize());
         EXPECT_TRUE((co_await engine.close()).is_ok());
         co_return empty {};

@@ -18,11 +18,11 @@ namespace lf = lifetchto;
 namespace h  = lifetchto::http;
 auto failure(CURLcode code) -> lf::Error {
     return lf::Error::Extension("curl"_Str,
-                                Arc<rstd::dyn<rstd::error::Error>>::make(Error(i32(code))));
+                                Box<rstd::dyn<rstd::error::Error>>::make(Error(i32(code))));
 }
 auto failure(CURLMcode code) -> lf::Error {
     return lf::Error::Extension("curl"_Str,
-                                Arc<rstd::dyn<rstd::error::Error>>::make(Error::multi(i32(code))));
+                                Box<rstd::dyn<rstd::error::Error>>::make(Error::multi(i32(code))));
 }
 auto configure_tls(CURL* easy, const h::TlsOptions& options, bool proxy = false)
     -> lf::Result<empty> {
@@ -135,6 +135,7 @@ struct RawFields {
     Option<lf::DuplexChannel>  channel;
     Option<lf::ResourcePermit> permit;
     Option<lf::Error>          error;
+    bool                       failed {}, published {};
     bool                       dispatched {}, ready {}, done {};
 };
 struct RawExchange {
@@ -153,8 +154,12 @@ struct RawExchange {
     }
     void fail(lf::Error error) const {
         auto f = fields.lock().unwrap();
-        if (f->error.is_none()) f->error = Some(error.clone());
-        if (f->channel.is_some()) f->channel->fail(rstd::move(error));
+        if (f->failed) return;
+        f->failed = true;
+        if (f->published)
+            f->channel->fail(rstd::move(error));
+        else
+            f->error = Some(rstd::move(error));
         stopped.cancel(lf::StopReason::Canceled);
         changed.notify();
     }
@@ -177,7 +182,7 @@ struct BackendState {
     explicit BackendState(Options options): options(rstd::move(options)) {}
 };
 void stop(const Arc<BackendState>& state) { state->fields.lock().unwrap()->closed = true; }
-void fail_pending(const Arc<BackendState>& state, const lf::Error& error) {
+void fail_pending(const Arc<BackendState>& state) {
     Vec<Arc<Exchange>>    queued;
     Vec<Arc<RawExchange>> raw;
     {
@@ -187,11 +192,11 @@ void fail_pending(const Arc<BackendState>& state, const lf::Error& error) {
         raw       = rstd::move(f->raw);
     }
     for (const auto& exchange : queued) {
-        exchange->fail(error.clone());
+        exchange->fail(lf::Error::Closed());
         exchange->complete();
     }
     for (const auto& exchange : raw) {
-        exchange->fail(error.clone());
+        exchange->fail(lf::Error::Closed());
         exchange->complete();
     }
 }
@@ -525,7 +530,7 @@ struct Worker {
     static auto                perform(Arc<BackendState> state) -> lf::Result<empty> {
         auto* multi = curl_multi_init();
         if (! multi) {
-            fail_pending(state, failure(CURLE_FAILED_INIT));
+            fail_pending(state);
             return Err(failure(CURLE_FAILED_INIT));
         }
         Vec<Box<Active>>    active;
@@ -604,7 +609,7 @@ struct Worker {
                 bool  canceled;
                 {
                     auto f   = operation.exchange->fields.lock().unwrap();
-                    canceled = f->stopped || f->error.is_some();
+                    canceled = f->stopped || f->failed;
                 }
                 if (closed || canceled) {
                     auto removed = curl_multi_remove_handle(multi, operation.easy);
@@ -671,13 +676,13 @@ struct Worker {
             }
         }
         if (fatal.is_some()) {
-            fail_pending(state, *fatal);
+            fail_pending(state);
             for (const auto& operation : active) {
-                operation->exchange->fail(fatal->clone());
+                operation->exchange->fail(lf::Error::Closed());
                 (void)curl_multi_remove_handle(multi, operation->easy);
             }
             for (const auto& operation : raw) {
-                operation->exchange->fail(fatal->clone());
+                operation->exchange->fail(lf::Error::Closed());
                 (void)curl_multi_remove_handle(multi, operation->easy);
             }
         }
@@ -692,9 +697,10 @@ struct Worker {
             operation->exchange->complete();
         }
         raw.clear();
-        if (fatal.is_some()) return Err(fatal.take().unwrap());
-        if (cleaned != CURLM_OK) return Err(failure(cleaned));
-        return Ok(empty {});
+        Vec<lf::Error> errors;
+        if (fatal.is_some()) errors.push(fatal.take().unwrap());
+        if (cleaned != CURLM_OK) errors.push(failure(cleaned));
+        return lf::collect_errors(rstd::move(errors));
     }
     auto run(lf::Cancellation) const -> coro<lf::Result<empty>> {
         auto job = runtime.spawn_blocking([state = state.clone()]() mutable {
@@ -702,12 +708,12 @@ struct Worker {
         });
         if (job.is_err()) {
             auto error = lf::Error::Connect(job.unwrap_err());
-            fail_pending(state, error);
+            fail_pending(state);
             co_return Err(rstd::move(error));
         }
         auto joined = co_await rstd::move(job).unwrap();
         if (joined.is_err()) {
-            fail_pending(state, lf::Error::Closed());
+            fail_pending(state);
             co_return Err(lf::Error::Closed());
         }
         co_return rstd::move(joined).unwrap();
@@ -718,7 +724,7 @@ struct Owner {
     void              request_stop(lf::StopReason) const { stop(state); }
     auto              release(lf::ReleaseContext) const -> coro<lf::Result<empty>> {
         stop(state);
-        if (state->worker.is_some()) co_return co_await state->worker->wait();
+        if (state->worker.is_some()) (void)co_await state->worker->wait();
         co_return Ok(empty {});
     }
 };
@@ -774,15 +780,19 @@ struct RawDriver {
             {
                 auto f = exchange->fields.lock().unwrap();
                 if (f->error.is_some())
-                    co_return lf::ProtocolCompletion { Err(f->error->clone()),
+                    co_return lf::ProtocolCompletion { Err(f->error.take().unwrap()),
                                                        lf::RemoteOutcome::Unknown };
-                if (f->ready) break;
+                if (f->ready) {
+                    f->published = true;
+                    break;
+                }
             }
             co_await rstd::move(event);
         }
         if (output.publish(channel->take_stream().unwrap()).is_err()) channel->request_stop();
         co_return lf::ProtocolCompletion { co_await channel->wait_finished(),
-                                           lf::RemoteOutcome::Unknown };
+                                           lf::RemoteOutcome::Unknown,
+                                           channel->failure() };
     }
 };
 struct Driver {
@@ -994,5 +1004,12 @@ void Backend::request_close() const { stop(state_); }
 auto Backend::close() const -> coro<lf::Result<empty>> {
     request_close();
     return registration_->release();
+}
+auto Backend::wait_closed() const -> coro<lf::CleanupReport> {
+    request_close();
+    return registration_->wait_released();
+}
+auto Backend::take_close_result() const -> Option<lf::Result<empty>> {
+    return registration_->take_release_result();
 }
 } // namespace ncrequest::client::curl

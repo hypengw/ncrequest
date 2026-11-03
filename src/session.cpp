@@ -201,13 +201,21 @@ auto Session::post(Request request, Bytes body, Option<Arc<RequestControl>> cont
     return post(rstd::move(request), rstd::move(control));
 }
 void Session::request_close() const { stop_session(state_); }
-auto finish_session(Arc<SessionState> state) -> coro<lifetchto::CloseReport> {
+auto finish_session(Arc<SessionState> state) -> coro<lifetchto::CleanupReport> {
     auto report = co_await state->client.close();
-    if (state->engine.is_some()) report.merge(co_await (*state->engine)->close());
+    if (state->engine.is_some()) co_return co_await (*state->engine)->close();
     co_return rstd::move(report);
 }
-auto Session::close() const -> coro<lifetchto::CloseReport> {
+auto Session::close() const -> coro<lifetchto::CleanupReport> {
     request_close();
     return finish_session(state_.clone());
+}
+auto Session::take_close_errors() const -> Vec<lifetchto::Error> {
+    auto errors = state_->client.take_close_errors();
+    if (state_->engine.is_some()) {
+        auto remaining = (*state_->engine)->take_close_errors();
+        for (auto& error : remaining) errors.push(rstd::move(error));
+    }
+    return errors;
 }
 } // namespace ncrequest

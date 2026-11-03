@@ -32,8 +32,11 @@ auto read_chunk(Arc<BodyState> state) -> coro<Result<Option<Bytes>>> {
     if (part.is_err()) co_return Err(Error::Transport(rstd::move(part).unwrap_err()));
     if (part->is_none()) {
         auto report = co_await state->transfer.control().wait();
-        if (report->logical.result.is_err())
-            co_return Err(Error::Transport(report->logical.result.as_ref().unwrap_err().clone()));
+        if (report->logical.result.is_err()) {
+            auto error = state->transfer.take_error();
+            co_return Err(error.is_some() ? Error::Transport(error.take().unwrap())
+                                          : Error::Closed());
+        }
     }
     co_return Ok(rstd::move(part).unwrap());
 }
@@ -113,6 +116,9 @@ auto ResponseBody::completion() const -> lifetchto::TransferControl {
     return state_->transfer.control();
 }
 void ResponseBody::cancel() const { stop_body(state_); }
+auto ResponseBody::take_cleanup_errors() -> Vec<lifetchto::Error> {
+    return state_->transfer.take_cleanup_errors();
+}
 auto ResponseBody::close() const -> coro<Arc<lifetchto::TransferReport>> {
     return completion().close();
 }

@@ -124,7 +124,7 @@ struct Backend {
         if (f->fail_close)
             co_return Err(lf::Error::Extension(
                 "backend"_Str,
-                Arc<rstd::dyn<rstd::error::Error>>::make(rstd::io::Error::from_kind(
+                Box<rstd::dyn<rstd::error::Error>>::make(rstd::io::Error::from_kind(
                     rstd::io::ErrorKind { rstd::io::ErrorKind::Other }))));
         co_return Ok(empty {});
     }

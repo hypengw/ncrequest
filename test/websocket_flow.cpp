@@ -14,6 +14,8 @@ struct Fields {
     Option<CompletionHandle<ws::WebSocketResult<empty>>>       writer;
     Option<CompletionHandle<ws::WebSocketResult<ws::Message>>> receiver;
     Option<ws::WebSocketError>                                 terminal;
+    Option<lf::Error>                                          error;
+    Option<lf::FailureReport>                                  diagnostic;
     bool                                                       closing {};
     usize                                                      receipts {};
 };
@@ -110,11 +112,17 @@ struct Endpoint {
     }
     void discard_received() const {}
     auto has_messages() const -> bool { return state->fields.lock().unwrap()->receipts > usize(); }
-    auto failure() const -> Option<WebSocketError> {
+    auto failure() const -> Option<WebSocketStatus> {
         auto f = state->fields.lock().unwrap();
-        return f->terminal.map([](auto code) {
-            return WebSocketError(code);
-        });
+        if (f->terminal.is_none()) return None();
+        auto status = WebSocketError(*f->terminal).status();
+        if (f->diagnostic.is_some()) status.diagnostic = Some(f->diagnostic->clone());
+        return Some(rstd::move(status));
+    }
+    auto take_error() const -> Option<WebSocketError> {
+        auto f = state->fields.lock().unwrap();
+        if (f->error.is_none()) return None();
+        return Some(WebSocketError(*f->terminal).with_cause(f->error.take().unwrap()));
     }
 };
 struct Backend {
@@ -152,6 +160,7 @@ struct Impl<ncrequest::WebSocketEndpoint, flow_test::Endpoint> : ImplBase<flow_t
     auto has_receiver() const { return this->self().has_receiver(); }
     void release_received() const { this->self().release_received(); }
     auto failure() const { return this->self().failure(); }
+    auto take_error() const { return this->self().take_error(); }
     void discard_received() const { this->self().discard_received(); }
     auto has_messages() const { return this->self().has_messages(); }
 };
@@ -183,7 +192,7 @@ auto Backend::connect(lf::ResourceContext resources, lf::http::ConnectionPlan, l
     if (finish_during_connect) {
         if (events.connected) events.connected();
         state->stop(ws::WebSocketError::Closed);
-        if (events.terminal) events.terminal(WebSocketError::Closed);
+        if (events.terminal) events.terminal(WebSocketError(WebSocketError::Closed).status());
     }
     co_return Ok(
         Arc<rstd::dyn<WebSocketEndpoint>>::make(Endpoint { state.clone(), rstd::move(transfer) }));
@@ -554,6 +563,47 @@ TEST(WebSocketFlow, WriterAndCallbackAdmissionFailuresPreserveCleanupReports) {
     runtime.block_on(test());
 }
 
+TEST(WebSocketFlow, TerminalCauseHasOneOwnerAndDiagnosticsSurviveTakingIt) {
+    using namespace flow_test;
+    auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
+    auto test    = [&]() -> coro<empty> {
+        auto engine  = lf::Engine::make(runtime.handle()).unwrap();
+        auto state   = Arc<State>::make();
+        auto owner   = session(engine, state.clone());
+        auto wire    = (co_await WebSocketConnection::connect(owner.clone(), target())).unwrap();
+        auto pending = wire.receive();
+        {
+            auto f        = state->fields.lock().unwrap();
+            f->error      = Some(lf::Error::Connect(rstd::io::Error::from_raw_os_error(i32(32))));
+            f->diagnostic = Some(lf::report_failure(*f->error));
+        }
+        state->stop(ws::WebSocketError::Transport);
+        auto received = co_await pending.message();
+        EXPECT_TRUE(received.is_err());
+        EXPECT_TRUE(received.as_ref().unwrap_err().cause().is_none());
+        auto report = co_await wire.completion().wait();
+        auto status = wire.failure().unwrap();
+        EXPECT_TRUE(status.diagnostic.is_some());
+        EXPECT_EQ(report->logical.result.as_ref().unwrap_err().message, status.diagnostic->message);
+        {
+            auto error = wire.take_error();
+            EXPECT_TRUE(error.is_some() && error->cause().is_some());
+            if (error.is_some() && error->cause().is_some()) {
+                EXPECT_TRUE(error->cause()->is_Connect());
+                if (error->cause()->is_Connect())
+                    EXPECT_EQ(error->cause()->as_Connect().cause.raw_os_error(), Some(i32(32)));
+            }
+        }
+        EXPECT_TRUE(wire.take_error().is_none());
+        EXPECT_EQ(wire.failure()->diagnostic->message, status.diagnostic->message);
+        EXPECT_TRUE((co_await wire.shutdown()).is_ok());
+        EXPECT_TRUE((co_await owner->close()).is_ok());
+        EXPECT_TRUE((co_await engine.close()).is_ok());
+        co_return empty {};
+    };
+    runtime.block_on(test());
+}
+
 TEST(WebSocketFlow, CallbacksConsumeMessagesAndReportTerminalInOrder) {
     using namespace flow_test;
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
@@ -571,7 +621,7 @@ TEST(WebSocketFlow, CallbacksConsumeMessagesAndReportTerminalInOrder) {
                 EXPECT_TRUE(value.data.as_slice() == "payload"_str.as_bytes());
                 sequence.push(1);
             };
-            callbacks.error = [&sequence](WebSocketError error) {
+            callbacks.error = [&sequence](WebSocketStatus error) {
                 EXPECT_EQ(error, WebSocketError::Overflow);
                 sequence.push(2);
             };
@@ -595,7 +645,11 @@ TEST(WebSocketFlow, CallbacksConsumeMessagesAndReportTerminalInOrder) {
             if (failure) EXPECT_EQ(sequence[usize(2)], 2);
             EXPECT_EQ(sequence[sequence.len() - usize(1)], 3);
             EXPECT_FALSE(client.is_connected());
-            EXPECT_TRUE((co_await client.shutdown()).is_ok());
+            EXPECT_TRUE((co_await client.wait_shutdown()).is_ok());
+            auto shutdown = client.take_shutdown_result();
+            EXPECT_TRUE(shutdown.is_some() && shutdown->is_ok());
+            EXPECT_TRUE((co_await client.wait_shutdown()).is_ok());
+            EXPECT_TRUE(client.take_shutdown_result().is_none());
             EXPECT_EQ(state->fields.lock().unwrap()->receipts, usize());
             EXPECT_TRUE((co_await owner->close()).is_ok());
             EXPECT_EQ(engine.resources().usage().bytes, usize());

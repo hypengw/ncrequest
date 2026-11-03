@@ -61,6 +61,7 @@ public:
     auto cache_capabilities() const -> lifetchto::http::CacheCapabilities;
     auto resources() const -> lifetchto::ResourceContext;
     void request_close() const;
-    auto close() const -> coro<lifetchto::CloseReport>;
+    auto close() const -> coro<lifetchto::CleanupReport>;
+    auto take_close_errors() const -> Vec<lifetchto::Error>;
 };
 } // namespace ncrequest

@@ -9,6 +9,7 @@ export namespace ncrequest
 struct WebSocketLimit {
     usize maximum {}, observed {};
 };
+struct WebSocketStatus;
 class WebSocketError {
 public:
     enum Code
@@ -37,6 +38,7 @@ private:
 
 public:
     WebSocketError(Code code): code_(code) {}
+    explicit WebSocketError(const WebSocketStatus&);
     WebSocketError(liwebsocketo::WebSocketError code): code_(Code(code)) {}
     WebSocketError(Code code, usize maximum, usize observed)
         : code_(code), limit_(Some(WebSocketLimit { maximum, observed })) {}
@@ -52,16 +54,36 @@ public:
         cause_ = Some(rstd::move(cause));
         return rstd::move(*this);
     }
-    auto clone() const -> WebSocketError {
-        auto error      = WebSocketError(code_);
-        error.limit_    = limit_;
-        error.protocol_ = protocol_;
-        if (cause_.is_some()) error.cause_ = Some(cause_->clone());
-        return error;
-    }
+    auto status() const -> WebSocketStatus;
     auto operator==(Code code) const -> bool { return code_ == code; }
     auto operator==(const WebSocketError& other) const -> bool { return code_ == other.code_; }
 };
+struct WebSocketStatus {
+    WebSocketError::Code               value;
+    Option<WebSocketLimit>             bounds;
+    Option<liwebsocketo::MessageError> protocol;
+    Option<lifetchto::FailureReport>   diagnostic;
+    auto                               code() const -> WebSocketError::Code { return value; }
+    auto                               limit() const -> Option<WebSocketLimit> { return bounds; }
+    auto protocol_error() const -> Option<liwebsocketo::MessageError> { return protocol; }
+    auto clone() const -> WebSocketStatus {
+        return { value,
+                 bounds,
+                 protocol,
+                 diagnostic.is_some() ? Some(diagnostic->clone())
+                                      : None<lifetchto::FailureReport>() };
+    }
+    auto operator==(WebSocketError::Code code) const -> bool { return value == code; }
+};
+inline WebSocketError::WebSocketError(const WebSocketStatus& status)
+    : code_(status.value), limit_(status.bounds), protocol_(status.protocol) {}
+inline auto WebSocketError::status() const -> WebSocketStatus {
+    return { code_,
+             limit_,
+             protocol_,
+             cause_.is_some() ? Some(lifetchto::report_failure(*cause_))
+                              : None<lifetchto::FailureReport>() };
+}
 template<class T>
 using WebSocketResult = rstd::Result<T, WebSocketError>;
 using liwebsocketo::ReceivePolicy;
@@ -83,13 +105,13 @@ struct WebSocketCapabilities {
 struct WebSocketCallbacks {
     client::Callback<void()>                      connected, disconnected;
     client::Callback<void(liwebsocketo::Message)> message;
-    client::Callback<void(WebSocketError)>        error;
+    client::Callback<void(WebSocketStatus)>       error;
 };
 struct WebSocketBackendEvents {
     client::Callback<void()>                      connected;
     client::Callback<void(liwebsocketo::Message)> message;
     // Reports the terminal reason synchronously before native cleanup completes.
-    client::Callback<void(WebSocketError)> terminal;
+    client::Callback<void(WebSocketStatus)> terminal;
 };
 struct WebSocketConnectFailure {
     Option<lifetchto::Error>               admission;
@@ -127,15 +149,16 @@ struct WebSocketEndpoint {
         }
         auto has_receiver() const -> bool { return rstd::trait_call<7>(this); }
         void release_received() const { rstd::trait_call<8>(this); }
-        auto failure() const -> Option<WebSocketError> { return rstd::trait_call<9>(this); }
+        auto failure() const -> Option<WebSocketStatus> { return rstd::trait_call<9>(this); }
         void discard_received() const { rstd::trait_call<10>(this); }
         auto has_messages() const -> bool { return rstd::trait_call<11>(this); }
+        auto take_error() const -> Option<WebSocketError> { return rstd::trait_call<12>(this); }
     };
     template<class T>
     using Funcs =
         rstd::TraitFuncs<&T::protocol, &T::send, &T::receive, &T::close, &T::cancel, &T::completion,
                          &T::shutdown, &T::has_receiver, &T::release_received, &T::failure,
-                         &T::discard_received, &T::has_messages>;
+                         &T::discard_received, &T::has_messages, &T::take_error>;
 };
 struct WebSocketBackend {
     template<class Self, class = void>
@@ -163,8 +186,8 @@ struct WebSocketBackend {
 export namespace rstd
 {
 template<>
-struct Impl<clone::Clone, ncrequest::WebSocketError>
-    : DefaultInImpl<clone::Clone, ncrequest::WebSocketError> {
+struct Impl<clone::Clone, ncrequest::WebSocketStatus>
+    : DefaultInImpl<clone::Clone, ncrequest::WebSocketStatus> {
     auto clone() const { return this->self().clone(); }
 };
 template<>
@@ -182,6 +205,16 @@ struct Impl<fmt::Display, ncrequest::WebSocketError> : ImplBase<ncrequest::WebSo
 template<>
 struct Impl<fmt::Debug, ncrequest::WebSocketError> : Impl<fmt::Display, ncrequest::WebSocketError> {
 };
+template<>
+struct Impl<fmt::Display, ncrequest::WebSocketStatus> : ImplBase<ncrequest::WebSocketStatus> {
+    auto fmt(fmt::Formatter& f) const -> bool {
+        auto error = ncrequest::WebSocketError(this->self());
+        return rstd::as<fmt::Display>(error).fmt(f);
+    }
+};
+template<>
+struct Impl<fmt::Debug, ncrequest::WebSocketStatus>
+    : Impl<fmt::Display, ncrequest::WebSocketStatus> {};
 template<>
 struct Impl<error::Error, ncrequest::WebSocketError>
     : DefaultInImpl<error::Error, ncrequest::WebSocketError> {

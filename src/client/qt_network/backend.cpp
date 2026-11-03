@@ -81,13 +81,13 @@ auto text(const QByteArray& value) -> String {
 }
 auto failure(QNetworkReply* reply) -> lf::Error {
     return lf::Error::Extension("qt"_Str,
-                                Arc<rstd::dyn<rstd::error::Error>>::make(Error(
+                                Box<rstd::dyn<rstd::error::Error>>::make(Error(
                                     i32(reply->error()), text(reply->errorString().toUtf8()))));
 }
 struct Fields {
     Vec<rstd::tuple<Arc<Exchange>, Dispatch>> queued;
     bool                                      closed {}, finished {}, cache_ready {};
-    Option<lf::Error>                         initialization_error;
+    Option<lf::FailureReport>                 initialization_error;
     usize                                     handles { 1 };
 };
 struct BackendState {
@@ -120,12 +120,12 @@ void fail_pending(const Arc<BackendState>& state, const lf::Error& error) {
     {
         auto f                  = state->fields.lock().unwrap();
         f->closed               = true;
-        f->initialization_error = Some(error.clone());
+        f->initialization_error = Some(lf::report_failure(error));
         queued                  = rstd::move(f->queued);
     }
     for (const auto& queued_exchange : queued) {
         auto& exchange = queued_exchange.get<0>();
-        exchange->fail(error.clone());
+        exchange->fail(lf::Error::Closed());
         exchange->complete();
     }
     state->changed.notify();
@@ -279,7 +279,7 @@ class Router : public QObject {
         bool stop;
         {
             auto f = active.exchange->fields.lock().unwrap();
-            stop   = f->stopped || f->error.is_some();
+            stop   = f->stopped || f->failed;
         }
         if (stop) {
             dispose(active);
@@ -558,7 +558,7 @@ struct Owner {
     void              request_stop(lf::StopReason) const { stop(state); }
     auto              release(lf::ReleaseContext) const -> coro<lf::Result<empty>> {
         stop(state);
-        if (state->worker.is_some()) co_return co_await state->worker->wait();
+        if (state->worker.is_some()) (void)co_await state->worker->wait();
         co_return Ok(empty {});
     }
 };
@@ -742,8 +742,7 @@ auto Backend::prepare(lihttpto::RequestParts p, h::UploadMetadata u, h::RouteCho
                       h::CacheDirective directive) const -> lf::Result<h::PreparedExchange> {
     {
         auto fields = state_->fields.lock().unwrap();
-        if (fields->initialization_error.is_some())
-            return Err(fields->initialization_error->clone());
+        if (fields->initialization_error.is_some()) return Err(lf::Error::Closed());
         if (fields->closed) return Err(lf::Error::Closed());
     }
     auto cached = capabilities().validate_cache(directive, p, u);
@@ -791,5 +790,12 @@ void Backend::request_close() const { stop(state_); }
 auto Backend::close() const -> coro<lf::Result<empty>> {
     request_close();
     return registration_->release();
+}
+auto Backend::wait_closed() const -> coro<lf::CleanupReport> {
+    request_close();
+    return registration_->wait_released();
+}
+auto Backend::take_close_result() const -> Option<lf::Result<empty>> {
+    return registration_->take_release_result();
 }
 } // namespace ncrequest::client::qt_network

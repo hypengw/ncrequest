@@ -143,9 +143,13 @@ static auto scenario(Arc<Session> session, unsigned mode) -> rstd::async::coro<b
         if (! session->websocket_capabilities().receive_limit_details && (mode == 10 || mode == 11))
             code = WebSocketError::IncomingLimit;
         ok = done.is_err() && done.as_ref().unwrap_err() == code;
+        EXPECT_TRUE(done.is_err());
+        if (done.is_err()) EXPECT_EQ(done.as_ref().unwrap_err().code(), code);
         if (ok && code != WebSocketError::IncomingLimit) {
             auto limit = done.as_ref().unwrap_err().limit();
-            ok         = limit.is_some() && limit->observed > limit->maximum;
+            EXPECT_TRUE(limit.is_some());
+            if (limit.is_some()) EXPECT_TRUE(limit->observed > limit->maximum);
+            ok = limit.is_some() && limit->observed > limit->maximum;
         }
     } else if (mode == 18) {
         (void)co_await connection.completion().wait();

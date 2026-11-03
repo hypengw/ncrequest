@@ -11,23 +11,13 @@ using rstd::bytes::Bytes;
 using rstd::sync::Arc;
 class Error {
     RSTD_ENUM(Error, (Transport, (lifetchto::Error cause;)),
-              (Decode, (Arc<rstd::dyn<rstd::error::Error>> cause;)),
+              (Decode, (Box<rstd::dyn<rstd::error::Error>> cause;)),
               (InvalidOptions, (String message;)), (TooLarge, (usize limit;)), (Busy), (BodyTaken),
               (Consumed), (Closed))
 public:
     template<class E>
     static auto decode(E cause) -> Error {
-        return Decode(Arc<rstd::dyn<rstd::error::Error>>::make(rstd::move(cause)));
-    }
-    auto clone() const -> Error {
-        if (is_Transport()) return Transport(as_Transport().cause.clone());
-        if (is_Decode()) return Decode(as_Decode().cause.clone());
-        if (is_InvalidOptions()) return InvalidOptions(as_InvalidOptions().message.clone());
-        if (is_TooLarge()) return TooLarge(as_TooLarge().limit);
-        if (is_Busy()) return Busy();
-        if (is_BodyTaken()) return BodyTaken();
-        if (is_Consumed()) return Consumed();
-        return Closed();
+        return Decode(Box<rstd::dyn<rstd::error::Error>>::make(rstd::move(cause)));
     }
 };
 template<class T>

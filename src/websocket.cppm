@@ -22,8 +22,11 @@ public:
     auto send(liwebsocketo::Message) const -> rstd::Result<PendingSend, RejectedMessage>;
     auto request_close(Bytes = {}) const -> WebSocketResult<empty>;
     auto close(Bytes = {}) const -> coro<WebSocketResult<empty>>;
-    auto failure() const -> Option<WebSocketError>;
+    auto failure() const -> Option<WebSocketStatus>;
+    auto take_error() const -> Option<WebSocketError>;
     void disconnect() const;
     auto shutdown() const -> coro<lifetchto::Result<empty>>;
+    auto wait_shutdown() const -> coro<lifetchto::CleanupReport>;
+    auto take_shutdown_result() const -> Option<lifetchto::Result<empty>>;
 };
 } // namespace ncrequest

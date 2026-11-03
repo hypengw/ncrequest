@@ -31,6 +31,7 @@ public:
     auto completion() const -> lifetchto::TransferControl;
     void cancel() const;
     auto close() const -> coro<Arc<lifetchto::TransferReport>>;
+    auto take_cleanup_errors() -> Vec<lifetchto::Error>;
 };
 struct ResponseTiming {
     rstd::time::Instant         started;

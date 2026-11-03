@@ -99,7 +99,7 @@ TEST(ManagedDuplexPeer, CancellationDeadlineDropBoundsAndConnectFailure) {
             auto connected      = co_await failed.connected();
             EXPECT_TRUE(connected.is_err());
             if (connected.is_err())
-                EXPECT_TRUE(connected.as_ref().unwrap_err().clone().is_Connect() ||
+                EXPECT_TRUE(connected.as_ref().unwrap_err().is_Connect() ||
                             connected.as_ref().unwrap_err().is_Extension());
             EXPECT_TRUE((co_await session->close()).is_ok());
             EXPECT_EQ(engine.resources().usage().bytes, usize());

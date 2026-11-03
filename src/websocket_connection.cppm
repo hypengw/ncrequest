@@ -83,7 +83,9 @@ public:
     auto close(Bytes payload = {}) const -> coro<WebSocketResult<empty>>;
     void cancel() const;
     auto completion() const -> lifetchto::TransferControl;
-    auto shutdown() const -> coro<lifetchto::Result<empty>>;
-    auto failure() const -> Option<WebSocketError>;
+    auto shutdown() const -> coro<lifetchto::CleanupReport>;
+    auto failure() const -> Option<WebSocketStatus>;
+    auto take_error() const -> Option<WebSocketError>;
+    auto take_cleanup_errors() -> Vec<lifetchto::Error>;
 };
 } // namespace ncrequest
