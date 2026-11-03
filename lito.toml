@@ -1,6 +1,6 @@
 [package]
 name = "ncrequest"
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT"
 authors = ["hypengw <hypengwip@gmail.com>"]
 
@@ -20,20 +20,15 @@ module = "libcurl"
 version = ">= 7.77"
 condition = "feature.curl"
 
-[external-dependencies.pkg-config.qtcore]
-module = "Qt6Core"
-version = ">= 6.8"
+[external-dependencies.cmake.qt6]
 condition = "feature.qt"
-
-[external-dependencies.pkg-config.qtnetwork]
-module = "Qt6Network"
-version = ">= 6.8"
-condition = "feature.qt"
-
-[external-dependencies.pkg-config.qtwebsockets]
-module = "Qt6WebSockets"
-version = ">= 6.8"
-condition = "feature.qt"
+package = "Qt6"
+components = ["Core", "Network", "WebSockets"]
+targets = [
+  { name = "Qt6::Core", pub = true },
+  { name = "Qt6::Network", pub = true },
+  { name = "Qt6::WebSockets", pub = true },
+]
 
 [dependencies]
 rstd-std = { version = "0.1.11", pub = true }
