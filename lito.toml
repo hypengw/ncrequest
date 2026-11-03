@@ -36,11 +36,11 @@ version = ">= 6.8"
 condition = "feature.qt"
 
 [dependencies]
-rstd-std = { version = "0.1.9", pub = true }
-rstd-json = { version = "0.1.9", pub = true }
-lihttpto = { version = "0.1.1", pub = true }
+rstd-std = { version = "0.1.11", pub = true }
+rstd-json = { version = "0.1.11", pub = true }
+lihttpto = { version = "0.1.2", pub = true }
 lifetchto = { version = "0.1.0", features = ["http", "tls"], pub = true }
-liwebsocketo = { version = "0.1.0", pub = true }
+liwebsocketo = { version = "0.1.1", pub = true }
 
 [[test]]
 name = "ncrequest-tests"
@@ -48,8 +48,8 @@ sources = ["test/main.cpp", "test/session.cpp", "test/http.cpp", "test/upload.cp
 link-stdlib = true
 
 [dev-dependencies]
-rstd-test = { version = "0.1.9" }
-rstd-nostd = { version = "0.1.9", usage = "link" }
+rstd-test = { version = "0.1.11" }
+rstd-nostd = { version = "0.1.11", usage = "link" }
 
 [profile.base]
 exceptions = false
