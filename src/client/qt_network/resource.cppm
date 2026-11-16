@@ -53,6 +53,8 @@ public:
     auto operator=(ResourceRequest&&) -> ResourceRequest&      = default;
     ResourceRequest(const ResourceRequest&)                    = delete;
     auto operator=(const ResourceRequest&) -> ResourceRequest& = delete;
+    // Stable request selection identity, including headers, before any response is available.
+    auto selection_identity() const -> QString;
     auto snapshot() const -> ResourceSnapshot;
     auto open() -> QNetworkReply*;
     void discard();

@@ -39,6 +39,29 @@ auto receive(qt::ResourceRequest& request, bool* cached = nullptr) -> bool {
 }
 } // namespace
 
+TEST(AdapterPeer, QtResourceSelectionIdentityBeforeResponse) {
+    ResourceManager   manager;
+    qt::ResourceCache resources(&manager);
+    QNetworkRequest   first(QUrl(QStringLiteral("https://example.invalid/image")));
+    first.setRawHeader("Referer", "https://first.invalid/");
+    first.setRawHeader("User-Agent", "selection-test");
+    auto selected = resources.acquire(first);
+    EXPECT_TRUE(selected.snapshot().identity().isEmpty());
+    EXPECT_TRUE(! selected.selection_identity().isEmpty());
+    auto same = resources.acquire(first);
+    EXPECT_TRUE(selected.selection_identity() == same.selection_identity());
+    QNetworkRequest reordered(first.url());
+    reordered.setRawHeader("User-Agent", "selection-test");
+    reordered.setRawHeader("Referer", "https://first.invalid/");
+    EXPECT_TRUE(resources.acquire(reordered).selection_identity() == selected.selection_identity());
+    auto second = first;
+    second.setRawHeader("Referer", "https://second.invalid/");
+    EXPECT_TRUE(resources.acquire(second).selection_identity() != selected.selection_identity());
+    first.setUrl(QUrl(QStringLiteral("https://example.invalid/other")));
+    EXPECT_TRUE(resources.acquire(first).selection_identity() != selected.selection_identity());
+    EXPECT_TRUE(manager.requests == 0);
+}
+
 TEST(AdapterPeer, QtNativeCacheResourceMetadata) {
     auto* base = std::getenv("NCREQUEST_QT_CACHE_URL");
     if (! base) GTEST_SKIP();

@@ -1,5 +1,6 @@
 module;
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QHash>
 #include <QMutex>
@@ -499,6 +500,13 @@ auto ResourceCache::install_disk_cache(QString directory, qint64 maximum_bytes)
 }
 ResourceRequest::ResourceRequest(QSharedPointer<ResourceOperation> operation)
     : operation_(std::move(operation)) {}
+auto ResourceRequest::selection_identity() const -> QString {
+    if (! operation_) return {};
+    return QStringLiteral("ncrequest-selection:") +
+           QString::fromLatin1(QCryptographicHash::hash(key(operation_->request).toUtf8(),
+                                                        QCryptographicHash::Sha256)
+                                   .toHex());
+}
 auto ResourceRequest::snapshot() const -> ResourceSnapshot {
     if (! operation_ || operation_->discarded) return {};
     if (operation_->selected) return ResourceSnapshot(operation_->selected);
