@@ -1,3 +1,11 @@
+<release version="0.2.2" date="2026-11-17">
+  <description>
+    <ul>
+      <li>Add ResourceRequest::selection_identity() for stable request identity before a response.</li>
+      <li>Update rstd to 0.1.13, lihttpto to 0.1.4 and lifetchto to 0.1.2.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.2.1" date="2026-11-04">
   <description>
     <ul>
