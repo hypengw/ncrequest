@@ -1,14 +1,21 @@
 module;
-#include <QNetworkAccessManager>
-#include <QNetworkDiskCache>
-#include <QNetworkReply>
-#include <QNetworkRequest>
-#include <QSharedPointer>
+#include <QByteArray>
 #include <QList>
+#include <QObject>
+#include <QSharedPointer>
+#include <QString>
+#include <QUrl>
 #include <memory>
 #include <functional>
 export module ncrequest:client.qt_network.resource;
 export import :response;
+
+extern "C++" {
+QT_FORWARD_DECLARE_CLASS(QNetworkAccessManager)
+QT_FORWARD_DECLARE_CLASS(QNetworkDiskCache)
+QT_FORWARD_DECLARE_CLASS(QNetworkReply)
+QT_FORWARD_DECLARE_CLASS(QNetworkRequest)
+}
 
 export namespace ncrequest::client::qt_network
 {

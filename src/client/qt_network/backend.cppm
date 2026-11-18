@@ -1,8 +1,13 @@
 module;
-#include <QNetworkAccessManager>
+#include <QtCore/qtconfigmacros.h>
 #include <rstd/enum.hpp>
 export module ncrequest:client.qt_network.backend;
 export import :session;
+
+extern "C++" {
+QT_FORWARD_DECLARE_CLASS(QNetworkAccessManager)
+}
+
 using namespace rstd::prelude;
 using namespace rstd::literals;
 namespace ncrequest::client::qt_network
