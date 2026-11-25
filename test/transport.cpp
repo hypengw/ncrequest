@@ -39,9 +39,11 @@ auto tls_backend(int mode, lf::ResourceContext resources, h::TlsOptions options,
 #endif
     h::TransportOptions config;
     config.proxy = rstd::move(proxy);
+#if LITO_FEAT_NATIVE_TLS
     auto profile = h::TlsProfile::make(rstd::move(options), h::VersionPolicy::Http1);
     if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
-    config.tls   = Some(rstd::move(profile).unwrap());
+    config.tls = Some(rstd::move(profile).unwrap());
+#endif
     auto backend = h::NativeBackend::make(rstd::move(resources), rstd::move(config));
     if (backend.is_err()) return Err(rstd::move(backend).unwrap_err());
     return Ok(backend->backend());
@@ -49,6 +51,9 @@ auto tls_backend(int mode, lf::ResourceContext resources, h::TlsOptions options,
 TEST(TransportPeer, SharedTlsOptionsVerifyCaNameAndClientIdentity) {
     if (! ::getenv("LIFETCHTO_MTLS_PORT")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
+#if ! LITO_FEAT_NATIVE_TLS
+        if (mode == 0) continue;
+#endif
 #if ! LITO_FEAT_CURL
         if (mode == 1) continue;
 #endif
@@ -294,6 +299,9 @@ TEST(ProxyOptions, SnapshotSelectsCanonicalHostsPortsAndBypass) {
 TEST(ProxyPeer, HttpProxyConnectAndManagedDuplexUseSelectedBackend) {
     if (! ::getenv("LIFETCHTO_PROXY_PORT")) GTEST_SKIP();
     for (int mode {}; mode < 3; ++mode) {
+#if ! LITO_FEAT_NATIVE_TLS
+        if (mode == 0) continue;
+#endif
 #if ! LITO_FEAT_CURL
         if (mode == 1) continue;
 #endif

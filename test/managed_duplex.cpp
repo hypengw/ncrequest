@@ -124,20 +124,25 @@ TEST(ManagedDuplexPeer, NativeTcpUnixAndTlsOwnTheirNativeExit) {
     if (! ::getenv("LIFETCHTO_DUPLEX_PORT")) GTEST_SKIP();
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
     auto task    = [&]() -> coro<empty> {
-        auto engine = lf::Engine::make(runtime.handle()).unwrap();
+        auto                engine = lf::Engine::make(runtime.handle()).unwrap();
+        h::TransportOptions transport;
+#if LITO_FEAT_NATIVE_TLS
         auto pem =
             rstd::fs::read(rstd::path::PathBuf::from(variable("LIFETCHTO_CA")).as_path()).unwrap();
         lifetchto::http::TlsOptions trust;
         trust.use_system_roots = false;
         trust.ca_pem.push(Bytes::copy_from_slice(pem.as_slice()));
-        h::TransportOptions transport;
         transport.tls =
             Some(h::TlsProfile::make(rstd::move(trust), h::VersionPolicy::Http1).unwrap());
+#endif
         auto backend = h::NativeBackend::make(engine.resources(), rstd::move(transport)).unwrap();
         auto session = ncrequest::Session::from_http_backend(
                            engine.handle(), h::BackendBinding::Shared(backend.backend()))
                            .unwrap();
         for (int mode {}; mode < 3; ++mode) {
+#if ! LITO_FEAT_NATIVE_TLS
+            if (mode == 2) continue;
+#endif
             auto           url = lihttpto::Url::parse_http(
                                      mode == 2 ? rstd::format("https://127.0.0.1:{}/",
                                                               variable("LIFETCHTO_DUPLEX_TLS_PORT"))

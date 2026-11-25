@@ -9,6 +9,7 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", required=True)
 parser.add_argument("--work-dir", required=True)
+parser.add_argument("--native-tls", action="store_true", help="require HTTPS coverage from a binary built with native-tls")
 args = parser.parse_args()
 work = Path(args.work_dir).resolve()
 peer = Path(__file__).resolve().parents[2] / "lifetchto/tests/peer.py"
@@ -30,6 +31,7 @@ assert bytes(uploads[0]["body"]) == b"custom"
 assert json.loads(bytes(uploads[1]["body"])) == {"value": 1}
 assert bytes(uploads[2]["body"]) == b"key=a+b"
 assert bytes(uploads[3]["body"]) == b"bytes"
-assert "origin.test" in [event.get("sni") for event in events["tls"]]
+if args.native_tls:
+    assert "origin.test" in [event.get("sni") for event in events["tls"]]
 assert any(event.get("target") == "/ok" for event in events["unix"])
-print("ncrequest wire headers, bodies, policy counts, cache, TLS and Unix assertions passed")
+print("ncrequest wire assertions passed" + (" with native TLS" if args.native_tls else ""))

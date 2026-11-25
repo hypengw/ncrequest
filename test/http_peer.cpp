@@ -236,14 +236,17 @@ TEST(http, LocalHttpsAndUnixRouteUseLogicalIdentity) {
     if (! ::getenv("LIFETCHTO_PEER_PORT")) GTEST_SKIP();
     auto runtime = rstd::async::RuntimeBuilder::current_thread().enable_all().build().unwrap();
     auto task    = [&]() -> coro<empty> {
+        h::TransportOptions transport;
+#if LITO_FEAT_NATIVE_TLS
         auto pem =
             rstd::fs::read(rstd::path::PathBuf::from(env_text("LIFETCHTO_CA")).as_path()).unwrap();
         lifetchto::http::TlsOptions trust;
         trust.use_system_roots = false;
         trust.ca_pem.push(Bytes::copy_from_slice(pem.as_slice()));
-        h::TransportOptions transport;
         transport.tls = Some(h::TlsProfile::make(rstd::move(trust)).unwrap());
-        auto session  = Session::make(runtime.handle(), rstd::move(transport)).unwrap();
+#endif
+        auto session = Session::make(runtime.handle(), rstd::move(transport)).unwrap();
+#if LITO_FEAT_NATIVE_TLS
         auto tls =
             Request::from_url(
                 rstd::format("https://origin.test:{}/ok", port("LIFETCHTO_TLS_PORT")).as_str())
@@ -255,6 +258,7 @@ TEST(http, LocalHttpsAndUnixRouteUseLogicalIdentity) {
                              h::Route::tcp(tls.url_info(), rstd::move(addresses)).unwrap())) });
         auto value = (co_await response(*session, rstd::move(tls))).unwrap();
         EXPECT_EQ((co_await value->text()).unwrap().as_str(), "hello"_str);
+#endif
         auto unix_request = Request::from_url("http://unix.invalid/ok"_str).unwrap();
         unix_request.options().execution.routing = Some(
             h::Routing { .route = Some(Arc<h::Route>::make(

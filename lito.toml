@@ -15,6 +15,10 @@ default = false
 [features.qt]
 default = false
 
+[features.native-tls]
+default = false
+enables = ["lifetchto/tls"]
+
 [external-dependencies.pkg-config.curl]
 module = "libcurl"
 version = ">= 7.77"
@@ -34,7 +38,7 @@ targets = [
 rstd-std = { version = "0.1.13", pub = true }
 rstd-json = { version = "0.1.13", pub = true }
 lihttpto = { version = "0.1.4", pub = true }
-lifetchto = { version = "0.1.2", features = ["http", "tls"], pub = true }
+lifetchto = { version = "0.1.2", features = ["http"], pub = true }
 liwebsocketo = { version = "0.1.1", pub = true }
 
 [[test]]
