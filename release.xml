@@ -1,3 +1,11 @@
+<release version="0.2.4" date="2026-11-25">
+  <description>
+    <ul>
+      <li>Make native TLS opt-in via the native-tls feature.</li>
+      <li>Update lihttpto to 0.1.5.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.2.3" date="2026-11-18">
   <description>
     <ul>

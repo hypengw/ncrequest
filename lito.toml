@@ -1,6 +1,6 @@
 [package]
 name = "ncrequest"
-version = "0.2.3"
+version = "0.2.4"
 license = "MIT"
 authors = ["hypengw <hypengwip@gmail.com>"]
 
@@ -37,7 +37,7 @@ targets = [
 [dependencies]
 rstd-std = { version = "0.1.13", pub = true }
 rstd-json = { version = "0.1.13", pub = true }
-lihttpto = { version = "0.1.4", pub = true }
+lihttpto = { version = "0.1.5", pub = true }
 lifetchto = { version = "0.1.2", features = ["http"], pub = true }
 liwebsocketo = { version = "0.1.1", pub = true }
 

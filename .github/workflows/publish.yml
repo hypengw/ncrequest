@@ -27,6 +27,7 @@ jobs:
         uses: hypengw/lito-action@v0.1.1
         with:
           command: publish
+          lito-version: v0.8.11
           token: ${{ secrets.LITO_TOKEN }}
           package: ncrequest
 
